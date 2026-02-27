@@ -8,6 +8,52 @@ const ComponentSchema = struct {
     schema: types.OpenApiSchema,
 };
 
+const OperationIdRegistry = struct {
+    allocator: std.mem.Allocator,
+    used: std.StringHashMapUnmanaged(void) = .empty,
+    owned: std.ArrayList([]u8) = .empty,
+
+    fn init(allocator: std.mem.Allocator) OperationIdRegistry {
+        return .{ .allocator = allocator };
+    }
+
+    fn deinit(self: *OperationIdRegistry) void {
+        for (self.owned.items) |value| {
+            self.allocator.free(value);
+        }
+        self.owned.deinit(self.allocator);
+        self.used.deinit(self.allocator);
+    }
+
+    fn reserve(self: *OperationIdRegistry, candidate_raw: []const u8) ![]const u8 {
+        const candidate = if (candidate_raw.len == 0) "operation" else candidate_raw;
+
+        if (try self.addIfUnique(candidate)) |registered| {
+            return registered;
+        }
+
+        var suffix: usize = 2;
+        while (true) : (suffix += 1) {
+            const with_suffix = try std.fmt.allocPrint(self.allocator, "{s}_{d}", .{ candidate, suffix });
+            defer self.allocator.free(with_suffix);
+            if (try self.addIfUnique(with_suffix)) |registered| {
+                return registered;
+            }
+        }
+    }
+
+    fn addIfUnique(self: *OperationIdRegistry, candidate: []const u8) !?[]const u8 {
+        if (self.used.contains(candidate)) return null;
+
+        const owned = try self.allocator.dupe(u8, candidate);
+        errdefer self.allocator.free(owned);
+
+        try self.owned.append(self.allocator, owned);
+        try self.used.put(self.allocator, owned, {});
+        return owned;
+    }
+};
+
 const deterministic_http_method_order = [_]types.RouteMethod{
     .GET,
     .POST,
@@ -38,6 +84,9 @@ pub fn generate(
     var response_components: std.ArrayList(ComponentSchema) = .empty;
     defer response_components.deinit(allocator);
     try collectResponseComponents(allocator, &response_components, http_routes);
+
+    var operation_ids = OperationIdRegistry.init(allocator);
+    defer operation_ids.deinit();
 
     if (cfg.openapi_deterministic) {
         std.mem.sort([]const u8, unique_paths.items, {}, lessThanString);
@@ -105,6 +154,7 @@ pub fn generate(
                         route,
                         security_schemes,
                         response_components.items,
+                        &operation_ids,
                     );
                 }
             }
@@ -120,6 +170,7 @@ pub fn generate(
                     route,
                     security_schemes,
                     response_components.items,
+                    &operation_ids,
                 );
             }
         }
@@ -128,7 +179,7 @@ pub fn generate(
             if (!std.mem.eql(u8, route.path, path)) continue;
             if (field_count != 0) try writer.writeAll(",");
             field_count += 1;
-            try writeWebSocketOperation(&writer, allocator, route);
+            try writeWebSocketOperation(&writer, allocator, route, &operation_ids);
         }
 
         try writer.writeAll("}");
@@ -139,7 +190,7 @@ pub fn generate(
     if (cfg.webhooks.len > 0) {
         try writer.writeAll(",");
         try writeFieldName(&writer, "webhooks");
-        try writeWebhooks(&writer, allocator, cfg.webhooks);
+        try writeWebhooks(&writer, allocator, cfg.webhooks, &operation_ids);
     }
     try writeOpenApiExtensions(&writer, allocator, cfg.openapi_extensions);
     try writer.writeAll("}");
@@ -161,6 +212,7 @@ fn writeHttpOperation(
     route: router_mod.HttpRoute,
     security_schemes: []const security.NamedScheme,
     response_components: []const ComponentSchema,
+    operation_ids: *OperationIdRegistry,
 ) !void {
     try writeJsonString(writer, route.method.asString());
     try writer.writeAll(":{");
@@ -170,11 +222,12 @@ fn writeHttpOperation(
         if (owned_operation_id) |op_id| allocator.free(op_id);
     }
 
-    const operation_id = route.options.operation_id orelse route.options.name orelse blk: {
+    const candidate_operation_id = route.options.operation_id orelse route.options.name orelse blk: {
         const generated = try buildDefaultHttpOperationId(allocator, route.method, route.path);
         owned_operation_id = generated;
         break :blk generated;
     };
+    const operation_id = try operation_ids.reserve(candidate_operation_id);
     const summary = route.options.summary orelse operation_id;
     const description = route.options.description orelse "";
 
@@ -249,7 +302,7 @@ fn writeHttpOperation(
     if (route.options.openapi_callbacks.len > 0) {
         try writer.writeAll(",");
         try writeFieldName(writer, "callbacks");
-        try writeOperationCallbacks(writer, allocator, route.options.openapi_callbacks);
+        try writeOperationCallbacks(writer, allocator, route.options.openapi_callbacks, operation_ids);
     }
 
     try writer.writeAll(",");
@@ -265,6 +318,7 @@ fn writeWebSocketOperation(
     writer: anytype,
     allocator: std.mem.Allocator,
     route: router_mod.WebSocketRoute,
+    operation_ids: *OperationIdRegistry,
 ) !void {
     try writeFieldName(writer, "x-zigmund-websocket");
     try writer.writeAll("{");
@@ -273,11 +327,12 @@ fn writeWebSocketOperation(
         if (owned_ws_operation_id) |op_id| allocator.free(op_id);
     }
 
-    const operation_id = route.options.operation_id orelse route.options.name orelse blk: {
+    const candidate_operation_id = route.options.operation_id orelse route.options.name orelse blk: {
         const generated = try buildDefaultWebSocketOperationId(allocator, route.path);
         owned_ws_operation_id = generated;
         break :blk generated;
     };
+    const operation_id = try operation_ids.reserve(candidate_operation_id);
     try writeFieldName(writer, "operationId");
     try writeJsonString(writer, operation_id);
     if (route.options.allowed_origins.len > 0) {
@@ -1126,11 +1181,21 @@ fn writeOperationCallbacks(
     writer: anytype,
     allocator: std.mem.Allocator,
     callbacks: []const types.OpenApiCallback,
+    operation_ids: *OperationIdRegistry,
 ) !void {
-    _ = allocator;
     try writer.writeAll("{");
     for (callbacks, 0..) |callback, idx| {
         if (idx != 0) try writer.writeAll(",");
+        var owned_default_operation_id: ?[]u8 = null;
+        defer {
+            if (owned_default_operation_id) |value| allocator.free(value);
+        }
+
+        const operation_id = callback.operation_id orelse blk: {
+            const generated = try buildDefaultOperationId(allocator, "callback", callback.name);
+            owned_default_operation_id = generated;
+            break :blk generated;
+        };
         try writeJsonString(writer, callback.name);
         try writer.writeAll(":{");
         try writeJsonString(writer, callback.expression);
@@ -1138,7 +1203,7 @@ fn writeOperationCallbacks(
         try writeJsonString(writer, callback.method.asString());
         try writer.writeAll(":{");
         try writeCallbackOrWebhookOperationFields(writer, .{
-            .operation_id = callback.operation_id,
+            .operation_id = operation_id,
             .summary = callback.summary,
             .description = callback.description,
             .tags = callback.tags,
@@ -1149,7 +1214,7 @@ fn writeOperationCallbacks(
             .response_description = callback.response_description,
             .response_content_type = callback.response_content_type,
             .response_schema = callback.response_schema,
-        });
+        }, operation_ids);
         try writer.writeAll("}}}");
     }
     try writer.writeAll("}");
@@ -1159,17 +1224,27 @@ fn writeWebhooks(
     writer: anytype,
     allocator: std.mem.Allocator,
     webhooks: []const types.OpenApiWebhook,
+    operation_ids: *OperationIdRegistry,
 ) !void {
-    _ = allocator;
     try writer.writeAll("{");
     for (webhooks, 0..) |webhook, idx| {
         if (idx != 0) try writer.writeAll(",");
+        var owned_default_operation_id: ?[]u8 = null;
+        defer {
+            if (owned_default_operation_id) |value| allocator.free(value);
+        }
+
+        const operation_id = webhook.operation_id orelse blk: {
+            const generated = try buildDefaultOperationId(allocator, "webhook", webhook.name);
+            owned_default_operation_id = generated;
+            break :blk generated;
+        };
         try writeJsonString(writer, webhook.name);
         try writer.writeAll(":{");
         try writeJsonString(writer, webhook.method.asString());
         try writer.writeAll(":{");
         try writeCallbackOrWebhookOperationFields(writer, .{
-            .operation_id = webhook.operation_id,
+            .operation_id = operation_id,
             .summary = webhook.summary,
             .description = webhook.description,
             .tags = webhook.tags,
@@ -1180,7 +1255,7 @@ fn writeWebhooks(
             .response_description = webhook.response_description,
             .response_content_type = webhook.response_content_type,
             .response_schema = webhook.response_schema,
-        });
+        }, operation_ids);
         try writer.writeAll("}}");
     }
     try writer.writeAll("}");
@@ -1189,7 +1264,7 @@ fn writeWebhooks(
 fn writeCallbackOrWebhookOperationFields(
     writer: anytype,
     options: struct {
-        operation_id: ?[]const u8,
+        operation_id: []const u8,
         summary: ?[]const u8,
         description: ?[]const u8,
         tags: []const []const u8,
@@ -1201,14 +1276,11 @@ fn writeCallbackOrWebhookOperationFields(
         response_content_type: []const u8,
         response_schema: ?types.OpenApiSchema,
     },
+    operation_ids: *OperationIdRegistry,
 ) !void {
-    if (options.operation_id) |operation_id| {
-        try writeFieldName(writer, "operationId");
-        try writeJsonString(writer, operation_id);
-    } else {
-        try writeFieldName(writer, "operationId");
-        try writeJsonString(writer, "generated_operation");
-    }
+    const operation_id = try operation_ids.reserve(options.operation_id);
+    try writeFieldName(writer, "operationId");
+    try writeJsonString(writer, operation_id);
 
     if (options.summary) |summary| {
         try writer.writeAll(",");

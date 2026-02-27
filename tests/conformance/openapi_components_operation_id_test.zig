@@ -15,6 +15,16 @@ fn wsHandler(conn: *zigmund.runtime.websocket.Connection, allocator: std.mem.All
     _ = allocator;
 }
 
+fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
+    var count: usize = 0;
+    var idx: usize = 0;
+    while (std.mem.indexOfPos(u8, haystack, idx, needle)) |pos| {
+        count += 1;
+        idx = pos + needle.len;
+    }
+    return count;
+}
+
 test "openapi emits components refs and stable default operation ids" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "openapi-components-opid",
@@ -51,4 +61,43 @@ test "openapi emits components refs and stable default operation ids" {
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"schemas\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"$ref\":\"#/components/schemas/") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"id\":{\"type\":\"integer\",\"format\":\"int64\"}") != null);
+}
+
+test "openapi deduplicates repeated operation ids across operation kinds" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "openapi-opid-dedupe",
+        .version = "0.0.1",
+        .webhooks = &.{.{
+            .name = "pet.updated",
+            .method = .POST,
+            .operation_id = "shared_operation",
+            .response_status = .ok,
+        }},
+    });
+    defer app.deinit();
+
+    try app.get("/alpha", itemHandler, .{
+        .operation_id = "shared_operation",
+        .openapi_callbacks = &.{.{
+            .name = "pet_callback",
+            .expression = "{$request.body#/callback_url}",
+            .method = .POST,
+            .operation_id = "shared_operation",
+            .response_status = .ok,
+        }},
+    });
+    try app.post("/beta", itemHandler, .{
+        .operation_id = "shared_operation",
+    });
+    try app.websocket("/ws/alpha", wsHandler, .{
+        .operation_id = "shared_operation",
+    });
+
+    const doc = try app.openapi();
+
+    try std.testing.expectEqual(@as(usize, 1), countOccurrences(doc, "\"operationId\":\"shared_operation\""));
+    try std.testing.expectEqual(@as(usize, 1), countOccurrences(doc, "\"operationId\":\"shared_operation_2\""));
+    try std.testing.expectEqual(@as(usize, 1), countOccurrences(doc, "\"operationId\":\"shared_operation_3\""));
+    try std.testing.expectEqual(@as(usize, 1), countOccurrences(doc, "\"operationId\":\"shared_operation_4\""));
+    try std.testing.expectEqual(@as(usize, 1), countOccurrences(doc, "\"operationId\":\"shared_operation_5\""));
 }
