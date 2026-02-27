@@ -211,6 +211,16 @@ fn parseServeFlags(args: anytype, cfg: *zigmund.ServerConfig) !void {
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--trusted-proxy-headers")) {
+            cfg.trusted_proxy_headers = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--no-trusted-proxy-headers")) {
+            cfg.trusted_proxy_headers = false;
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--tls-cert")) {
             tls_cert = args.next() orelse return error.MissingTlsCertValue;
             continue;
@@ -515,8 +525,8 @@ fn usage() !void {
     try writeStdout(
         "Usage: zigmund <command> [options]\n" ++
             "Commands:\n" ++
-            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
-            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
             "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
             "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>]\n" ++
@@ -930,6 +940,28 @@ test "parse serve flags supports header timeout option" {
     try std.testing.expectEqual(@as(i32, 321), cfg.header_timeout_ms);
     try std.testing.expectEqual(@as(i32, 777), cfg.body_timeout_ms);
     try std.testing.expectEqual(@as(i32, 654), cfg.idle_timeout_ms);
+}
+
+test "parse serve flags supports trusted proxy header toggles" {
+    var enabled_cfg = zigmund.ServerConfig{};
+    var enabled_iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--trusted-proxy-headers",
+    ));
+    defer enabled_iter.deinit();
+
+    try parseServeFlags(&enabled_iter, &enabled_cfg);
+    try std.testing.expect(enabled_cfg.trusted_proxy_headers);
+
+    var disabled_cfg = zigmund.ServerConfig{ .trusted_proxy_headers = true };
+    var disabled_iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--no-trusted-proxy-headers",
+    ));
+    defer disabled_iter.deinit();
+
+    try parseServeFlags(&disabled_iter, &disabled_cfg);
+    try std.testing.expect(!disabled_cfg.trusted_proxy_headers);
 }
 
 test "routes json renderer includes operation and dependency metadata" {
