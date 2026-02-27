@@ -3,7 +3,7 @@
 ## Baseline
 - FastAPI upstream version: `0.133.1` (`fastapi/__init__.py` on `master`).
 - FastAPI docs targets in scope (`tutorial|advanced|reference|how-to`): `116` pages.
-- Current Zigmund parity matrix: `10 implemented / 106 stub / 0 missing files`.
+- Current Zigmund parity matrix: `16 implemented / 100 stub / 0 missing files`.
 - Machine-readable parity summary now emitted to `tools/parity/parity-summary.json`.
 
 ## What Is Already In Place
@@ -20,7 +20,7 @@
 - Runtime validation mapping to 422 for request parsing/coercion failures.
 
 ## High-Severity Gaps vs FastAPI-Level Capability
-- Docs parity: only `10/116` behaviorally implemented examples.
+- Docs parity: only `16/116` behaviorally implemented examples.
 - Validation engine depth:
   - missing rich constraints (length/range/regex/strictness),
   - no model-level validators/serializers equivalent to Pydantic v2 behavior.
@@ -56,8 +56,14 @@
     - `tutorial/body/`,
     - `tutorial/response-status-code/`,
     - `tutorial/handling-errors/`,
-    - `tutorial/security/first-steps/`.
-  - local parity baseline now enforces 10 implemented tutorial examples without stub markers.
+    - `tutorial/security/first-steps/`,
+    - `tutorial/path-params-numeric-validations/`,
+    - `tutorial/query-params-str-validations/`,
+    - `tutorial/path-operation-configuration/`,
+    - `tutorial/response-model/`,
+    - `tutorial/request-forms/`,
+    - `tutorial/request-files/`.
+  - local parity baseline now enforces 16 implemented tutorial examples without stub markers.
 - Exception handlers are now runtime-active (previously registration-only metadata).
 - Handler matching supports typed error-set registration and wildcard `anyerror` fallback.
 - Unhandled route/dispatch errors now return deterministic HTTP 500 responses instead of bubbling transport errors.

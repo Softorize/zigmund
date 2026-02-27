@@ -1,20 +1,24 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/path-params-numeric-validations/
-
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
+fn readVersion(
+    version: zigmund.Path(i64, .{
+        .alias = "version",
+        .ge = 1,
+        .le = 10,
+    }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/path-params-numeric-validations/",
+        .version = version.value.?,
+        .valid = true,
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/path-params-numeric-validations", placeholder, .{
-        .summary = "Parity stub for tutorial/path-params-numeric-validations/",
-        .tags = &.{"parity", "tutorial"},
+    try app.get("/tutorial/path-params-numeric-validations/{version}", readVersion, .{
+        .summary = "Validate numeric path params with constraints",
+        .tags = &.{ "parity", "tutorial" },
+        .operation_id = "tutorial_validate_numeric_path_params",
     });
 }

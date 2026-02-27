@@ -29,6 +29,12 @@ test "parity baseline tutorial examples are implemented (no stub markers)" {
         "examples/parity/tutorial/response-status-code.zig",
         "examples/parity/tutorial/handling-errors.zig",
         "examples/parity/tutorial/security__first-steps.zig",
+        "examples/parity/tutorial/path-params-numeric-validations.zig",
+        "examples/parity/tutorial/query-params-str-validations.zig",
+        "examples/parity/tutorial/path-operation-configuration.zig",
+        "examples/parity/tutorial/response-model.zig",
+        "examples/parity/tutorial/request-forms.zig",
+        "examples/parity/tutorial/request-files.zig",
     };
 
     for (implemented_examples) |example_path| {

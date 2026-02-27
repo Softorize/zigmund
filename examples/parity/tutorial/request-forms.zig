@@ -1,20 +1,25 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/request-forms/
+const LoginForm = struct {
+    username: []const u8,
+    password: []const u8,
+};
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
+fn login(
+    form: zigmund.Form(LoginForm, .{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/request-forms/",
+        .username = form.value.?.username,
+        .accepted = true,
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/request-forms", placeholder, .{
-        .summary = "Parity stub for tutorial/request-forms/",
-        .tags = &.{"parity", "tutorial"},
+    try app.post("/tutorial/request-forms/login", login, .{
+        .summary = "Submit form-urlencoded login payload",
+        .tags = &.{ "parity", "tutorial" },
+        .operation_id = "tutorial_request_forms_login",
     });
 }

@@ -1,6 +1,6 @@
 # FastAPI Parity Matrix
 
-Generated: 2026-02-27T08:50:28Z
+Generated: 2026-02-27T08:53:56Z
 
 Total docs targets: 116
 
@@ -101,17 +101,17 @@ Total docs targets: 116
 | `tutorial/header-params/` | `examples/parity/tutorial/header-params.zig` | stub |
 | `tutorial/metadata/` | `examples/parity/tutorial/metadata.zig` | implemented |
 | `tutorial/middleware/` | `examples/parity/tutorial/middleware.zig` | stub |
-| `tutorial/path-operation-configuration/` | `examples/parity/tutorial/path-operation-configuration.zig` | stub |
-| `tutorial/path-params-numeric-validations/` | `examples/parity/tutorial/path-params-numeric-validations.zig` | stub |
+| `tutorial/path-operation-configuration/` | `examples/parity/tutorial/path-operation-configuration.zig` | implemented |
+| `tutorial/path-params-numeric-validations/` | `examples/parity/tutorial/path-params-numeric-validations.zig` | implemented |
 | `tutorial/path-params/` | `examples/parity/tutorial/path-params.zig` | implemented |
 | `tutorial/query-param-models/` | `examples/parity/tutorial/query-param-models.zig` | stub |
-| `tutorial/query-params-str-validations/` | `examples/parity/tutorial/query-params-str-validations.zig` | stub |
+| `tutorial/query-params-str-validations/` | `examples/parity/tutorial/query-params-str-validations.zig` | implemented |
 | `tutorial/query-params/` | `examples/parity/tutorial/query-params.zig` | implemented |
-| `tutorial/request-files/` | `examples/parity/tutorial/request-files.zig` | stub |
+| `tutorial/request-files/` | `examples/parity/tutorial/request-files.zig` | implemented |
 | `tutorial/request-form-models/` | `examples/parity/tutorial/request-form-models.zig` | stub |
 | `tutorial/request-forms-and-files/` | `examples/parity/tutorial/request-forms-and-files.zig` | stub |
-| `tutorial/request-forms/` | `examples/parity/tutorial/request-forms.zig` | stub |
-| `tutorial/response-model/` | `examples/parity/tutorial/response-model.zig` | stub |
+| `tutorial/request-forms/` | `examples/parity/tutorial/request-forms.zig` | implemented |
+| `tutorial/response-model/` | `examples/parity/tutorial/response-model.zig` | implemented |
 | `tutorial/response-status-code/` | `examples/parity/tutorial/response-status-code.zig` | implemented |
 | `tutorial/schema-extra-example/` | `examples/parity/tutorial/schema-extra-example.zig` | stub |
 | `tutorial/security/` | `examples/parity/tutorial/security.zig` | stub |
@@ -123,6 +123,6 @@ Total docs targets: 116
 | `tutorial/static-files/` | `examples/parity/tutorial/static-files.zig` | stub |
 | `tutorial/testing/` | `examples/parity/tutorial/testing.zig` | stub |
 
-Implemented: 10/116
-Stub: 106/116
+Implemented: 16/116
+Stub: 100/116
 Missing: 0/116

@@ -1,20 +1,30 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/path-operation-configuration/
-
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn readConfiguredOperation(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/path-operation-configuration/",
+        .operation = "configured",
+        .ok = true,
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/path-operation-configuration", placeholder, .{
-        .summary = "Parity stub for tutorial/path-operation-configuration/",
-        .tags = &.{"parity", "tutorial"},
+    try app.get("/tutorial/path-operation-configuration/items", readConfiguredOperation, .{
+        .name = "configured_operation",
+        .summary = "Configured path operation",
+        .description = "Demonstrates route metadata fields used for docs and OpenAPI generation.",
+        .tags = &.{ "parity", "tutorial", "configuration" },
+        .operation_id = "tutorial_path_operation_configuration_items",
+        .responses = &.{
+            .{
+                .status_code = .bad_request,
+                .description = "Validation or input error",
+            },
+            .{
+                .status_code = .internal_server_error,
+                .description = "Unhandled server error",
+            },
+        },
     });
 }
