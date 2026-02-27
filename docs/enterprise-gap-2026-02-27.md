@@ -240,6 +240,7 @@
   - governance check script added at `tools/release/check_governance.sh`:
     - runs dependency policy allowlist gate (`tools/release/check_dependency_policy.sh`, `tools/release/allowed-dependencies.txt`),
     - runs SAST baseline scan (`tools/release/check_sast_baseline.sh`) for high-risk secret/key markers,
+    - enforces migration-notes presence for pre-1.0 breaking/behavior changes (`tools/release/check_migration_notes.sh`, `docs/migrations/`),
     - validates public API surface against snapshot (breaking-export drift guard),
     - validates MIT license marker,
     - enforces pinned Zig version in `build.zig.zon`,

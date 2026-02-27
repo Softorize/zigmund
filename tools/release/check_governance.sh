@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 sh tools/release/check_dependency_policy.sh
 sh tools/release/check_sast_baseline.sh
+sh tools/release/check_migration_notes.sh
 
 if [ ! -f LICENSE ]; then
   echo "missing LICENSE file" >&2
