@@ -63,6 +63,55 @@ test "openapi exposes openid connect security schemes and route security" {
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"oidc_auth\":[]}]") != null);
 }
 
+test "openapi exposes oauth2 flows for implicit password client-credentials and authorization-code" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "security-oauth2-flows",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addSecurityScheme("oauth_auth", .{
+        .oauth2 = .{
+            .flows = .{
+                .implicit = .{
+                    .authorization_url = "https://issuer.example/oauth/authorize",
+                    .refresh_url = "https://issuer.example/oauth/refresh",
+                    .scopes = &.{.{ .name = "items:read" }},
+                },
+                .password = .{
+                    .token_url = "https://issuer.example/oauth/token",
+                    .scopes = &.{.{ .name = "items:write" }},
+                },
+                .client_credentials = .{
+                    .token_url = "https://issuer.example/oauth/token",
+                    .scopes = &.{.{ .name = "items:admin" }},
+                },
+                .authorization_code = .{
+                    .authorization_url = "https://issuer.example/oauth/authorize",
+                    .token_url = "https://issuer.example/oauth/token",
+                    .refresh_url = "https://issuer.example/oauth/refresh",
+                    .scopes = &.{.{ .name = "items:sync" }},
+                },
+            },
+        },
+    });
+
+    try app.get("/oauth-secure", protected, .{
+        .dependencies = &.{.{ .name = "oauth_auth", .scopes = &.{"items:read"} }},
+    });
+
+    const doc = try app.openapi();
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"oauth_auth\":{\"type\":\"oauth2\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"implicit\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"password\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"clientCredentials\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"authorizationCode\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"authorizationUrl\":\"https://issuer.example/oauth/authorize\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"tokenUrl\":\"https://issuer.example/oauth/token\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"refreshUrl\":\"https://issuer.example/oauth/refresh\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"oauth_auth\":[\"items:read\"]}]") != null);
+}
+
 test "openapi deterministic mode sorts security schemes by name" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "security-order",

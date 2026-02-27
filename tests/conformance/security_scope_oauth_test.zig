@@ -114,7 +114,7 @@ test "oauth2 password request form helper parses valid form and rejects invalid 
     try std.testing.expectEqualStrings("invalid_grant_type", bad_req.validationIssues()[0].issue_type);
 }
 
-test "oauth2 client-credentials and implicit helpers resolve bearer token consistently" {
+test "oauth2 bearer helpers resolve client-credentials implicit authorization-code and openid consistently" {
     var req = try zigmund.Request.initSyntheticWithHeaders(
         std.testing.allocator,
         .GET,
@@ -135,12 +135,18 @@ test "oauth2 client-credentials and implicit helpers resolve bearer token consis
         .authorization_url = "/authorize",
         .scopes = &.{"items:read"},
     };
+    const authorization_code = zigmund.OAuth2AuthorizationCodeBearer{
+        .authorization_url = "/authorize",
+        .token_url = "/token",
+        .scopes = &.{"items:read"},
+    };
     const openid = zigmund.OpenIdConnect{
         .openid_connect_url = "https://issuer.example/.well-known/openid-configuration",
     };
 
     try std.testing.expectEqualStrings("tok-client-1", (try client_credentials.resolve(&req)).?);
     try std.testing.expectEqualStrings("tok-client-1", (try implicit.resolve(&req)).?);
+    try std.testing.expectEqualStrings("tok-client-1", (try authorization_code.resolve(&req)).?);
     try std.testing.expectEqualStrings("tok-client-1", (try openid.resolve(&req)).?);
 
     var missing_auth_req = try zigmund.Request.initSynthetic(std.testing.allocator, .GET, "/secure", "");
@@ -157,4 +163,11 @@ test "oauth2 client-credentials and implicit helpers resolve bearer token consis
         .auto_error = false,
     };
     try std.testing.expect((try openid_no_auto_error.resolve(&missing_auth_req)) == null);
+
+    const auth_code_no_auto_error = zigmund.OAuth2AuthorizationCodeBearer{
+        .authorization_url = "/authorize",
+        .token_url = "/token",
+        .auto_error = false,
+    };
+    try std.testing.expect((try auth_code_no_auto_error.resolve(&missing_auth_req)) == null);
 }

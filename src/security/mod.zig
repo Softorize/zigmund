@@ -218,11 +218,13 @@ pub const OAuth2ImplicitBearer = struct {
 pub const OAuth2AuthorizationCodeBearer = struct {
     authorization_url: []const u8,
     token_url: []const u8,
+    scopes: []const []const u8 = &.{},
     auto_error: bool = true,
 
     pub fn resolve(self: OAuth2AuthorizationCodeBearer, req: *const Request) ResolveError!?[]const u8 {
         _ = self.authorization_url;
         _ = self.token_url;
+        _ = self.scopes;
         return resolveBearerToken(req, self.auto_error);
     }
 };

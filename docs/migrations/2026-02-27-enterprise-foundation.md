@@ -83,6 +83,10 @@
      - `--send-buffer-bytes <n>`,
      - `--reuse-address|--no-reuse-address`.
    - lifecycle startup audit payloads now include `reuse_address` for runtime-policy visibility.
+22. OAuth2 helper/API parity extension:
+   - `OAuth2AuthorizationCodeBearer` now includes `scopes` for parity with other OAuth2 bearer helper types.
+   - conformance now validates authorization-code bearer resolver behavior (`auto_error` + bearer extraction).
+   - OpenAPI conformance now validates full OAuth2 flow object emission (`implicit`, `password`, `clientCredentials`, `authorizationCode`).
 
 ## Migration Actions
 
@@ -114,6 +118,7 @@
 13. If you consume trace/access sink payloads programmatically, update schemas/handlers to include the additive `baggage` field.
 14. If your CI/ops tooling parses route inventory JSON, migrate from count-only dependency fields to the new detailed dependency arrays when richer policy/governance checks are needed.
 15. If you operate runtime policy through CLI wrappers, include new socket/tcp knobs (`recv/send buffer`, `reuse_address`) where explicit transport tuning is required.
+16. For OAuth2 helper usage, you can now configure `scopes` on `OAuth2AuthorizationCodeBearer` in the same pattern as other OAuth2 bearer helper types.
 
 ## Compatibility Notes
 
