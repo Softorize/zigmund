@@ -8,6 +8,11 @@ const ComponentSchema = struct {
     schema: types.OpenApiSchema,
 };
 
+const ParameterComponent = struct {
+    name: []const u8,
+    parameter: types.InjectedParameter,
+};
+
 const OperationIdRegistry = struct {
     allocator: std.mem.Allocator,
     used: std.StringHashMapUnmanaged(void) = .empty,
@@ -85,12 +90,27 @@ pub fn generate(
     defer response_components.deinit(allocator);
     try collectResponseComponents(allocator, &response_components, http_routes);
 
+    var parameter_components: std.ArrayList(ParameterComponent) = .empty;
+    defer parameter_components.deinit(allocator);
+    var owned_parameter_component_names: std.ArrayList([]u8) = .empty;
+    defer {
+        for (owned_parameter_component_names.items) |name| allocator.free(name);
+        owned_parameter_component_names.deinit(allocator);
+    }
+    try collectParameterComponents(
+        allocator,
+        &parameter_components,
+        &owned_parameter_component_names,
+        http_routes,
+    );
+
     var operation_ids = OperationIdRegistry.init(allocator);
     defer operation_ids.deinit();
 
     if (cfg.openapi_deterministic) {
         std.mem.sort([]const u8, unique_paths.items, {}, lessThanString);
         std.mem.sort(ComponentSchema, response_components.items, {}, lessThanComponentSchema);
+        std.mem.sort(ParameterComponent, parameter_components.items, {}, lessThanParameterComponent);
     }
 
     var out: std.ArrayList(u8) = .empty;
@@ -122,10 +142,15 @@ pub fn generate(
     }
     try writer.writeAll("]");
 
-    if (security_schemes.len > 0 or response_components.items.len > 0) {
+    if (security_schemes.len > 0 or response_components.items.len > 0 or parameter_components.items.len > 0) {
         try writer.writeAll(",");
         try writeFieldName(&writer, "components");
-        try writeComponents(&writer, security_schemes, response_components.items);
+        try writeComponents(
+            &writer,
+            security_schemes,
+            response_components.items,
+            parameter_components.items,
+        );
     }
 
     try writer.writeAll(",");
@@ -154,6 +179,7 @@ pub fn generate(
                         route,
                         security_schemes,
                         response_components.items,
+                        parameter_components.items,
                         &operation_ids,
                     );
                 }
@@ -170,6 +196,7 @@ pub fn generate(
                     route,
                     security_schemes,
                     response_components.items,
+                    parameter_components.items,
                     &operation_ids,
                 );
             }
@@ -206,12 +233,17 @@ fn lessThanComponentSchema(_: void, lhs: ComponentSchema, rhs: ComponentSchema) 
     return std.mem.order(u8, lhs.name, rhs.name) == .lt;
 }
 
+fn lessThanParameterComponent(_: void, lhs: ParameterComponent, rhs: ParameterComponent) bool {
+    return std.mem.order(u8, lhs.name, rhs.name) == .lt;
+}
+
 fn writeHttpOperation(
     writer: anytype,
     allocator: std.mem.Allocator,
     route: router_mod.HttpRoute,
     security_schemes: []const security.NamedScheme,
     response_components: []const ComponentSchema,
+    parameter_components: []const ParameterComponent,
     operation_ids: *OperationIdRegistry,
 ) !void {
     try writeJsonString(writer, route.method.asString());
@@ -256,7 +288,7 @@ fn writeHttpOperation(
     if (pathParamCount(route.path) > 0 or injected_parameters.len > 0) {
         try writer.writeAll(",");
         try writeFieldName(writer, "parameters");
-        try writeOperationParameterArray(writer, route.path, injected_parameters);
+        try writeOperationParameterArray(writer, route.path, injected_parameters, parameter_components);
     }
 
     const explicit_dependencies = route.options.dependencies;
@@ -448,6 +480,129 @@ fn responseComponentName(
     return null;
 }
 
+fn collectParameterComponents(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(ParameterComponent),
+    owned_names: *std.ArrayList([]u8),
+    routes: []const router_mod.HttpRoute,
+) !void {
+    for (routes) |route| {
+        if (!route.options.include_in_schema) continue;
+        for (route.options.injected_parameters) |parameter| {
+            if (parameterComponentName(parameter, list.items) != null) continue;
+
+            const name = try uniqueParameterComponentName(allocator, list.items, parameter);
+            errdefer allocator.free(name);
+
+            try owned_names.append(allocator, name);
+            try list.append(allocator, .{
+                .name = name,
+                .parameter = parameter,
+            });
+        }
+    }
+}
+
+fn uniqueParameterComponentName(
+    allocator: std.mem.Allocator,
+    components: []const ParameterComponent,
+    parameter: types.InjectedParameter,
+) ![]u8 {
+    const base_name = try buildParameterComponentBaseName(allocator, parameter);
+    errdefer allocator.free(base_name);
+
+    if (!hasParameterComponentName(components, base_name)) {
+        return base_name;
+    }
+
+    var suffix: usize = 2;
+    while (true) : (suffix += 1) {
+        const candidate = try std.fmt.allocPrint(allocator, "{s}_{d}", .{ base_name, suffix });
+        errdefer allocator.free(candidate);
+        if (hasParameterComponentName(components, candidate)) {
+            allocator.free(candidate);
+            continue;
+        }
+        allocator.free(base_name);
+        return candidate;
+    }
+}
+
+fn buildParameterComponentBaseName(
+    allocator: std.mem.Allocator,
+    parameter: types.InjectedParameter,
+) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    try appendNormalizedIdentifierPart(&out, allocator, parameter.in.asString());
+    if (out.items.len > 0 and out.items[out.items.len - 1] != '_') {
+        try out.append(allocator, '_');
+    }
+    try appendNormalizedIdentifierPart(&out, allocator, parameter.name);
+    if (out.items.len == 0) {
+        try out.appendSlice(allocator, "parameter");
+    }
+
+    while (out.items.len > 0 and out.items[out.items.len - 1] == '_') {
+        _ = out.pop();
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn hasParameterComponentName(components: []const ParameterComponent, name: []const u8) bool {
+    for (components) |component| {
+        if (std.mem.eql(u8, component.name, name)) return true;
+    }
+    return false;
+}
+
+fn parameterComponentName(
+    target: types.InjectedParameter,
+    components: []const ParameterComponent,
+) ?[]const u8 {
+    for (components) |component| {
+        if (sameInjectedParameter(target, component.parameter)) return component.name;
+    }
+    return null;
+}
+
+fn sameInjectedParameter(lhs: types.InjectedParameter, rhs: types.InjectedParameter) bool {
+    if (!std.mem.eql(u8, lhs.name, rhs.name)) return false;
+    if (lhs.in != rhs.in) return false;
+    if (lhs.required != rhs.required) return false;
+    if (lhs.deprecated != rhs.deprecated) return false;
+    if (!optionalStringEql(lhs.description, rhs.description)) return false;
+    if (!std.mem.eql(u8, lhs.schema_type, rhs.schema_type)) return false;
+    if (!optionalStringEql(lhs.schema_format, rhs.schema_format)) return false;
+    if (lhs.is_array != rhs.is_array) return false;
+    if (lhs.gt != rhs.gt) return false;
+    if (lhs.ge != rhs.ge) return false;
+    if (lhs.lt != rhs.lt) return false;
+    if (lhs.le != rhs.le) return false;
+    if (lhs.min_length != rhs.min_length) return false;
+    if (lhs.max_length != rhs.max_length) return false;
+    if (!optionalStringEql(lhs.pattern, rhs.pattern)) return false;
+    if (!stringSliceArrayEql(lhs.enum_values, rhs.enum_values)) return false;
+    if (lhs.strict != rhs.strict) return false;
+    return true;
+}
+
+fn optionalStringEql(lhs: ?[]const u8, rhs: ?[]const u8) bool {
+    if (lhs == null and rhs == null) return true;
+    if (lhs == null or rhs == null) return false;
+    return std.mem.eql(u8, lhs.?, rhs.?);
+}
+
+fn stringSliceArrayEql(lhs: []const []const u8, rhs: []const []const u8) bool {
+    if (lhs.len != rhs.len) return false;
+    for (lhs, rhs) |lhs_item, rhs_item| {
+        if (!std.mem.eql(u8, lhs_item, rhs_item)) return false;
+    }
+    return true;
+}
+
 fn buildDefaultHttpOperationId(
     allocator: std.mem.Allocator,
     method: types.RouteMethod,
@@ -539,6 +694,7 @@ fn writeOperationParameterArray(
     writer: anytype,
     path: []const u8,
     injected_parameters: []const types.InjectedParameter,
+    parameter_components: []const ParameterComponent,
 ) !void {
     try writer.writeAll("[");
 
@@ -546,7 +702,11 @@ fn writeOperationParameterArray(
     for (injected_parameters) |param| {
         if (wrote != 0) try writer.writeAll(",");
         wrote += 1;
-        try writeInjectedParameter(writer, param);
+        if (parameterComponentName(param, parameter_components)) |component_name| {
+            try writeComponentParameterRef(writer, component_name);
+        } else {
+            try writeInjectedParameter(writer, param);
+        }
     }
 
     var idx: usize = 0;
@@ -643,6 +803,14 @@ fn writeInjectedParameter(writer: anytype, parameter: types.InjectedParameter) !
     );
     try writer.writeAll("}");
     try writer.writeAll("}");
+}
+
+fn writeComponentParameterRef(writer: anytype, component_name: []const u8) !void {
+    try writer.writeAll("{");
+    try writeFieldName(writer, "$ref");
+    try writer.writeAll("\"#/components/parameters/");
+    try writer.writeAll(component_name);
+    try writer.writeAll("\"}");
 }
 
 fn writeFallbackPathParameter(writer: anytype, name: []const u8) !void {
@@ -1626,6 +1794,7 @@ fn writeComponents(
     writer: anytype,
     security_schemes: []const security.NamedScheme,
     response_components: []const ComponentSchema,
+    parameter_components: []const ParameterComponent,
 ) !void {
     try writer.writeAll("{");
 
@@ -1646,6 +1815,7 @@ fn writeComponents(
 
     if (response_components.len > 0) {
         if (wrote != 0) try writer.writeAll(",");
+        wrote += 1;
         try writeFieldName(writer, "schemas");
         try writer.writeAll("{");
         for (response_components, 0..) |entry, idx| {
@@ -1653,6 +1823,19 @@ fn writeComponents(
             try writeJsonString(writer, entry.name);
             try writer.writeAll(":");
             try writeOpenApiSchema(writer, entry.schema);
+        }
+        try writer.writeAll("}");
+    }
+
+    if (parameter_components.len > 0) {
+        if (wrote != 0) try writer.writeAll(",");
+        try writeFieldName(writer, "parameters");
+        try writer.writeAll("{");
+        for (parameter_components, 0..) |entry, idx| {
+            if (idx != 0) try writer.writeAll(",");
+            try writeJsonString(writer, entry.name);
+            try writer.writeAll(":");
+            try writeInjectedParameter(writer, entry.parameter);
         }
         try writer.writeAll("}");
     }
