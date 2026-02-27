@@ -1,4 +1,5 @@
 const std = @import("std");
+const Request = @import("../http/request.zig").Request;
 
 pub const QueryOptions = struct {
     alias: ?[]const u8 = null,
@@ -112,6 +113,7 @@ pub const DependsOptions = struct {
     cache_scope: DependsCacheScope = .request,
     name: ?[]const u8 = null,
     depends_on: []const []const u8 = &.{},
+    cleanup: ?Request.DependencyCleanupFn = null,
 };
 
 pub const MarkerKind = enum {
@@ -162,6 +164,15 @@ pub fn Depends(comptime provider: anytype, opts: DependsOptions) type {
     const ValueType = StripOptional(RawReturn);
     const ProviderReturnsOptional = RawReturn != ValueType;
 
+    if (opts.cleanup != null) {
+        if (opts.cache_scope == .app) {
+            @compileError("Depends cleanup only supports request-scoped dependencies");
+        }
+        if (!supportsDependsCleanupValue(ValueType)) {
+            @compileError("Depends cleanup requires provider return type `[]const u8` or `?[]const u8`");
+        }
+    }
+
     return struct {
         pub const marker_kind = MarkerKind.depends;
         pub const Provider = provider;
@@ -172,6 +183,12 @@ pub fn Depends(comptime provider: anytype, opts: DependsOptions) type {
 
         value: ?ValueType = null,
     };
+}
+
+fn supportsDependsCleanupValue(comptime T: type) bool {
+    if (@typeInfo(T) != .pointer) return false;
+    const ptr = @typeInfo(T).pointer;
+    return ptr.size == .slice and ptr.child == u8;
 }
 
 pub fn Security(comptime provider: anytype, scopes: []const []const u8) type {

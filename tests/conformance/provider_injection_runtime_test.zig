@@ -4,6 +4,10 @@ const zigmund = @import("zigmund");
 var cache_calls: usize = 0;
 var no_cache_calls: usize = 0;
 var tenant_calls: usize = 0;
+var cleanup_provider_calls: usize = 0;
+var cleanup_calls: usize = 0;
+var cleanup_key_non_empty: bool = false;
+var cleanup_value_matches: bool = false;
 
 fn tokenProvider(req: *zigmund.Request) ?[]const u8 {
     return req.queryParam("token");
@@ -79,6 +83,40 @@ fn noCacheHandler(
         .one = one.value orelse "",
         .two = two.value orelse "",
     });
+}
+
+fn cleanupProvider(req: *zigmund.Request) ?[]const u8 {
+    _ = req;
+    cleanup_provider_calls += 1;
+    return "resource";
+}
+
+fn cleanupHook(req: *zigmund.Request, key: []const u8, value: []const u8, allocator: std.mem.Allocator) !void {
+    _ = req;
+    _ = allocator;
+    cleanup_calls += 1;
+    cleanup_key_non_empty = key.len != 0;
+    cleanup_value_matches = std.mem.eql(u8, value, "resource");
+}
+
+fn cleanupHandler(
+    one: zigmund.Depends(cleanupProvider, .{ .cleanup = cleanupHook }),
+    two: zigmund.Depends(cleanupProvider, .{ .cleanup = cleanupHook }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .one = one.value orelse "",
+        .two = two.value orelse "",
+    });
+}
+
+fn cleanupErrorHandler(
+    dep: zigmund.Depends(cleanupProvider, .{ .cleanup = cleanupHook }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    _ = dep;
+    _ = allocator;
+    return error.Outage;
 }
 
 fn tenantProvider(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
@@ -222,6 +260,58 @@ test "app scoped cache works for named injected dependency when registered" {
     try std.testing.expect(std.mem.indexOf(u8, second.body, "\"tenant\":\"acme\"") != null);
 
     try std.testing.expectEqual(@as(usize, 1), tenant_calls);
+}
+
+test "unnamed depends markers use callable cache key and run cleanup once" {
+    cleanup_provider_calls = 0;
+    cleanup_calls = 0;
+    cleanup_key_non_empty = false;
+    cleanup_value_matches = false;
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "depends-cleanup-cache",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/cleanup", cleanupHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    var res = try client.get("/cleanup");
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, res.status);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"one\":\"resource\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"two\":\"resource\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), cleanup_provider_calls);
+    try std.testing.expectEqual(@as(usize, 1), cleanup_calls);
+    try std.testing.expect(cleanup_key_non_empty);
+    try std.testing.expect(cleanup_value_matches);
+}
+
+test "depends cleanup runs for error responses" {
+    cleanup_provider_calls = 0;
+    cleanup_calls = 0;
+    cleanup_key_non_empty = false;
+    cleanup_value_matches = false;
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "depends-cleanup-error",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/cleanup-error", cleanupErrorHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    var res = try client.get("/cleanup-error");
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.internal_server_error, res.status);
+    try std.testing.expectEqual(@as(usize, 1), cleanup_provider_calls);
+    try std.testing.expectEqual(@as(usize, 1), cleanup_calls);
+    try std.testing.expect(cleanup_key_non_empty);
+    try std.testing.expect(cleanup_value_matches);
 }
 
 test "optional security marker allows unauthenticated access when scopes are empty" {

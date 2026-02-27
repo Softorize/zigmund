@@ -11,6 +11,9 @@
 5. Additive API extensions:
    - `AppConfig.request_id_enabled` to disable request-id generation/propagation when desired.
    - `SecurityOptional(...)` and `SecurityNamedOptional(...)` for optional auth marker behavior (best-effort auth without scope requirements).
+   - `DependsOptions.cleanup` for request-scoped provider cleanup hooks on `Depends(...)` markers.
+6. Dependency injection runtime behavior:
+   - unnamed provider markers now use callable-identity cache keys, so `Depends(provider, .{})` with `use_cache=true` caches once per request without requiring explicit `name`.
 
 ## Migration Actions
 
@@ -24,6 +27,9 @@
 4. Optional auth behavior can be migrated explicitly:
    - keep `Security(...)` / `SecurityNamed(...)` for required-auth behavior,
    - use `SecurityOptional(...)` / `SecurityNamedOptional(...)` for optional auth behavior when scopes are empty.
+5. For provider lifecycle hooks, attach cleanup at marker definition:
+   - `Depends(myProvider, .{ .cleanup = myCleanup })`
+   - cleanup is request-scoped; app-scoped cache + cleanup is intentionally rejected at compile-time.
 
 ## Compatibility Notes
 

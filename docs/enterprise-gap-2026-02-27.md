@@ -206,7 +206,8 @@
   - App-scoped dependency caching is implemented with thread-safe shared cache reuse across requests.
   - Nested provider execution is now supported for `Depends(...)`/`Security(...)` providers (provider parameters can use marker injection recursively).
   - Runtime now pre-executes registered injected dependencies (derived from handler markers) through the same registry/DAG/scoped-cache path as explicit route dependencies.
-  - Provider marker request-cache semantics now honor `use_cache` for named dependencies during a request.
+  - Provider marker request-cache semantics now honor `use_cache` for both named and unnamed provider markers during a request (callable-identity cache keys).
+  - Marker-level provider cleanup lifecycle is now supported via `DependsOptions.cleanup` for request-scoped dependencies, with deterministic LIFO cleanup execution on success and error paths.
 - Integrations and operational parity progress (M4 slice):
   - placeholder-only `src/integrations` has been replaced with concrete first-class modules:
     - settings integration with env-map loading, required/default handling, and typed getters (`bool`/int),

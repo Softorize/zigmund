@@ -568,6 +568,7 @@ fn resolveProviderMarker(
 ) anyerror!Marker {
     const use_cache = markerUsesCache(Marker);
     const cache_key = markerRuntimeCacheKey(Marker);
+    const cleanup_fn = markerDependsCleanup(Marker);
     const optional_security = markerOptionalSecurity(Marker);
 
     if (use_cache and cache_key != null) {
@@ -615,6 +616,17 @@ fn resolveProviderMarker(
     }
 
     out.value = value_opt;
+
+    if (cleanup_fn) |cleanup| {
+        if (@hasDecl(Marker, "options") and Marker.options.cache_scope == .request) {
+            if (value_opt) |value| {
+                if (cacheableProviderValue(Marker.ProviderValueType, value)) |cleanup_value| {
+                    const cleanup_key = cache_key orelse @typeName(@TypeOf(Marker.Provider));
+                    try req.registerDependencyCleanup(cleanup_key, cleanup_value, cleanup);
+                }
+            }
+        }
+    }
 
     if (use_cache) {
         if (value_opt) |value| {
@@ -665,6 +677,7 @@ fn markerRuntimeCacheKey(comptime Marker: type) ?[]const u8 {
     if (@hasDecl(Marker, "dependency_name")) {
         if (Marker.dependency_name) |name| return name;
     }
+    if (@hasDecl(Marker, "Provider")) return @typeName(@TypeOf(Marker.Provider));
     return null;
 }
 
@@ -679,6 +692,12 @@ fn markerOptionalSecurity(comptime Marker: type) bool {
     if (Marker.marker_kind != .security) return false;
     if (@hasDecl(Marker, "optional_security_marker")) return Marker.optional_security_marker;
     return false;
+}
+
+fn markerDependsCleanup(comptime Marker: type) ?Request.DependencyCleanupFn {
+    if (Marker.marker_kind != .depends) return null;
+    if (!@hasDecl(Marker, "options")) return null;
+    return Marker.options.cleanup;
 }
 
 fn loadCachedMarkerValue(
