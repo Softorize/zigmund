@@ -1,20 +1,27 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/response-status-code/
+const TaskPayload = struct {
+    title: []const u8,
+};
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
-    return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/response-status-code/",
+fn createTask(
+    payload: zigmund.Body(TaskPayload, .{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    var response = try zigmund.Response.json(allocator, .{
+        .title = payload.value.?.title,
+        .status = "created",
     });
+    response.status = .created;
+    return response;
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/response-status-code", placeholder, .{
-        .summary = "Parity stub for tutorial/response-status-code/",
-        .tags = &.{"parity", "tutorial"},
+    try app.post("/tutorial/response-status-code/tasks", createTask, .{
+        .summary = "Create with explicit 201 response status",
+        .tags = &.{ "parity", "tutorial" },
+        .status_code = .created,
+        .operation_id = "tutorial_create_task_with_created_status",
     });
 }

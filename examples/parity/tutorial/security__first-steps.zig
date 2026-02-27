@@ -1,20 +1,34 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/security/first-steps/
+fn tokenProvider(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = allocator;
+    const bearer = zigmund.HTTPBearer{};
+    const auth = (try bearer.resolve(req)) orelse return null;
+    return auth.credentials;
+}
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
+fn readCurrentToken(
+    token: zigmund.Security(tokenProvider, &.{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/security/first-steps/",
+        .token = token.value.?,
+        .authenticated = true,
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/security__first-steps", placeholder, .{
-        .summary = "Parity stub for tutorial/security/first-steps/",
-        .tags = &.{"parity", "tutorial"},
+    try app.addSecurityScheme("bearerAuth", .{
+        .http = .{
+            .scheme = "bearer",
+            .bearer_format = "JWT",
+        },
+    });
+
+    try app.get("/tutorial/security/first-steps/me", readCurrentToken, .{
+        .summary = "Extract bearer token from Authorization header",
+        .tags = &.{ "parity", "tutorial", "security" },
+        .operation_id = "tutorial_security_first_steps_me",
     });
 }

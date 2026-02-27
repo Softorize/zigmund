@@ -1,20 +1,40 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/handling-errors/
+const InventoryError = error{ItemUnavailable};
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
+fn readInventoryItem(
+    item_id: zigmund.Path(u32, .{ .alias = "item_id" }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    if (item_id.value.? == 0) {
+        return InventoryError.ItemUnavailable;
+    }
+
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/handling-errors/",
+        .item_id = item_id.value.?,
+        .available = true,
     });
 }
 
+fn inventoryErrorHandler(
+    req: *zigmund.Request,
+    err: anyerror,
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    _ = req;
+    _ = err;
+    var response = try zigmund.Response.json(allocator, .{
+        .detail = "Item is unavailable",
+    });
+    return response.withStatus(.not_found);
+}
+
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/handling-errors", placeholder, .{
-        .summary = "Parity stub for tutorial/handling-errors/",
-        .tags = &.{"parity", "tutorial"},
+    try app.addExceptionHandler(InventoryError, inventoryErrorHandler);
+    try app.get("/tutorial/handling-errors/items/{item_id}", readInventoryItem, .{
+        .summary = "Handle route errors with exception handlers",
+        .tags = &.{ "parity", "tutorial" },
+        .operation_id = "tutorial_read_inventory_item_with_error_handler",
     });
 }

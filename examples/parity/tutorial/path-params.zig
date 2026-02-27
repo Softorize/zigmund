@@ -1,20 +1,20 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/path-params/
-
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
+fn readItem(
+    item_id: zigmund.Path(u32, .{ .alias = "item_id" }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/path-params/",
+        .item_id = item_id.value.?,
+        .route = "path-params",
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/path-params", placeholder, .{
-        .summary = "Parity stub for tutorial/path-params/",
-        .tags = &.{"parity", "tutorial"},
+    try app.get("/tutorial/path-params/items/{item_id}", readItem, .{
+        .summary = "Read an item by path parameter",
+        .tags = &.{ "parity", "tutorial" },
+        .operation_id = "tutorial_read_item_by_path_param",
     });
 }

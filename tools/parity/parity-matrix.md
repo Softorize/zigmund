@@ -1,6 +1,6 @@
 # FastAPI Parity Matrix
 
-Generated: 2026-02-27T08:45:27Z
+Generated: 2026-02-27T08:50:28Z
 
 Total docs targets: 116
 
@@ -74,14 +74,14 @@ Total docs targets: 116
 | `reference/testclient/` | `examples/parity/reference/testclient.zig` | stub |
 | `reference/uploadfile/` | `examples/parity/reference/uploadfile.zig` | stub |
 | `reference/websockets/` | `examples/parity/reference/websockets.zig` | stub |
-| `tutorial/` | `examples/parity/tutorial/index.zig` | stub |
+| `tutorial/` | `examples/parity/tutorial/index.zig` | implemented |
 | `tutorial/background-tasks/` | `examples/parity/tutorial/background-tasks.zig` | implemented |
 | `tutorial/bigger-applications/` | `examples/parity/tutorial/bigger-applications.zig` | stub |
 | `tutorial/body-fields/` | `examples/parity/tutorial/body-fields.zig` | stub |
 | `tutorial/body-multiple-params/` | `examples/parity/tutorial/body-multiple-params.zig` | stub |
 | `tutorial/body-nested-models/` | `examples/parity/tutorial/body-nested-models.zig` | stub |
 | `tutorial/body-updates/` | `examples/parity/tutorial/body-updates.zig` | stub |
-| `tutorial/body/` | `examples/parity/tutorial/body.zig` | stub |
+| `tutorial/body/` | `examples/parity/tutorial/body.zig` | implemented |
 | `tutorial/cookie-param-models/` | `examples/parity/tutorial/cookie-param-models.zig` | stub |
 | `tutorial/cookie-params/` | `examples/parity/tutorial/cookie-params.zig` | stub |
 | `tutorial/cors/` | `examples/parity/tutorial/cors.zig` | stub |
@@ -96,26 +96,26 @@ Total docs targets: 116
 | `tutorial/extra-data-types/` | `examples/parity/tutorial/extra-data-types.zig` | stub |
 | `tutorial/extra-models/` | `examples/parity/tutorial/extra-models.zig` | stub |
 | `tutorial/first-steps/` | `examples/parity/tutorial/first-steps.zig` | implemented |
-| `tutorial/handling-errors/` | `examples/parity/tutorial/handling-errors.zig` | stub |
+| `tutorial/handling-errors/` | `examples/parity/tutorial/handling-errors.zig` | implemented |
 | `tutorial/header-param-models/` | `examples/parity/tutorial/header-param-models.zig` | stub |
 | `tutorial/header-params/` | `examples/parity/tutorial/header-params.zig` | stub |
-| `tutorial/metadata/` | `examples/parity/tutorial/metadata.zig` | stub |
+| `tutorial/metadata/` | `examples/parity/tutorial/metadata.zig` | implemented |
 | `tutorial/middleware/` | `examples/parity/tutorial/middleware.zig` | stub |
 | `tutorial/path-operation-configuration/` | `examples/parity/tutorial/path-operation-configuration.zig` | stub |
 | `tutorial/path-params-numeric-validations/` | `examples/parity/tutorial/path-params-numeric-validations.zig` | stub |
-| `tutorial/path-params/` | `examples/parity/tutorial/path-params.zig` | stub |
+| `tutorial/path-params/` | `examples/parity/tutorial/path-params.zig` | implemented |
 | `tutorial/query-param-models/` | `examples/parity/tutorial/query-param-models.zig` | stub |
 | `tutorial/query-params-str-validations/` | `examples/parity/tutorial/query-params-str-validations.zig` | stub |
-| `tutorial/query-params/` | `examples/parity/tutorial/query-params.zig` | stub |
+| `tutorial/query-params/` | `examples/parity/tutorial/query-params.zig` | implemented |
 | `tutorial/request-files/` | `examples/parity/tutorial/request-files.zig` | stub |
 | `tutorial/request-form-models/` | `examples/parity/tutorial/request-form-models.zig` | stub |
 | `tutorial/request-forms-and-files/` | `examples/parity/tutorial/request-forms-and-files.zig` | stub |
 | `tutorial/request-forms/` | `examples/parity/tutorial/request-forms.zig` | stub |
 | `tutorial/response-model/` | `examples/parity/tutorial/response-model.zig` | stub |
-| `tutorial/response-status-code/` | `examples/parity/tutorial/response-status-code.zig` | stub |
+| `tutorial/response-status-code/` | `examples/parity/tutorial/response-status-code.zig` | implemented |
 | `tutorial/schema-extra-example/` | `examples/parity/tutorial/schema-extra-example.zig` | stub |
 | `tutorial/security/` | `examples/parity/tutorial/security.zig` | stub |
-| `tutorial/security/first-steps/` | `examples/parity/tutorial/security__first-steps.zig` | stub |
+| `tutorial/security/first-steps/` | `examples/parity/tutorial/security__first-steps.zig` | implemented |
 | `tutorial/security/get-current-user/` | `examples/parity/tutorial/security__get-current-user.zig` | stub |
 | `tutorial/security/oauth2-jwt/` | `examples/parity/tutorial/security__oauth2-jwt.zig` | stub |
 | `tutorial/security/simple-oauth2/` | `examples/parity/tutorial/security__simple-oauth2.zig` | stub |
@@ -123,6 +123,6 @@ Total docs targets: 116
 | `tutorial/static-files/` | `examples/parity/tutorial/static-files.zig` | stub |
 | `tutorial/testing/` | `examples/parity/tutorial/testing.zig` | stub |
 
-Implemented: 2/116
-Stub: 114/116
+Implemented: 10/116
+Stub: 106/116
 Missing: 0/116

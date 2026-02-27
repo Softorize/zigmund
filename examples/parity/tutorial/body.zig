@@ -1,20 +1,27 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/body/
+const ItemPayload = struct {
+    name: []const u8,
+    price: f64,
+    in_stock: bool = true,
+};
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
+fn createItem(
+    item: zigmund.Body(ItemPayload, .{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/body/",
+        .name = item.value.?.name,
+        .price = item.value.?.price,
+        .in_stock = item.value.?.in_stock,
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/body", placeholder, .{
-        .summary = "Parity stub for tutorial/body/",
-        .tags = &.{"parity", "tutorial"},
+    try app.post("/tutorial/body/items", createItem, .{
+        .summary = "Create an item from JSON body",
+        .tags = &.{ "parity", "tutorial" },
+        .operation_id = "tutorial_create_item_from_body",
     });
 }

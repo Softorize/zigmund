@@ -1,20 +1,28 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/
-
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn readRoot(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/",
+        .message = "Hello World",
+    });
+}
+
+fn readHealth(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    return zigmund.Response.json(allocator, .{
+        .status = "ok",
+        .framework = "zigmund",
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/index", placeholder, .{
-        .summary = "Parity stub for tutorial/",
-        .tags = &.{"parity", "tutorial"},
+    try app.get("/tutorial", readRoot, .{
+        .summary = "Tutorial root endpoint",
+        .tags = &.{ "parity", "tutorial" },
+    });
+    try app.get("/tutorial/health", readHealth, .{
+        .summary = "Tutorial health endpoint",
+        .tags = &.{ "parity", "tutorial" },
     });
 }
