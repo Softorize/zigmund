@@ -144,6 +144,7 @@
   - insufficient-scope failures now return deterministic `403` with `WWW-Authenticate` challenge details (`Bearer error=\"insufficient_scope\"`) and required scope list when available.
   - OAuth2 password form helper added (`parseOAuth2PasswordRequestForm` / `OAuth2PasswordRequestForm.fromRequest`) with media-type and `grant_type=password` validation.
   - OAuth2 password form parity expanded with `client_id` and `client_secret` support in parser/form model.
+  - API key helper conformance coverage now includes query/header/cookie resolver behavior and `auto_error` parity.
   - OAuth2 helper coverage expanded with `OAuth2ClientCredentialsBearer` and `OAuth2ImplicitBearer` bearer-token resolvers.
   - OAuth2 helper coverage expanded with `OAuth2AuthorizationCodeBearer` scope parity and resolver conformance behavior.
   - OpenID Connect helper resolver now supports bearer-token extraction with `auto_error` parity (`OpenIdConnect.resolve(...)`).
@@ -334,6 +335,7 @@
   - deep response-model include/exclude path shaping,
   - `TestClient` cookie persistence/deletion behavior,
   - security scope enforcement for both route dependencies and `Security(...)` marker providers,
+  - API key helper resolver behavior for query/header/cookie and OpenAPI `apiKey` scheme emission across all `in` variants,
   - OAuth2 password request form parsing and grant-type validation behavior,
   - OAuth2 password form client credentials fields and additional OAuth2 bearer helper resolver behavior (including authorization-code helper parity),
   - OpenID Connect bearer helper resolver behavior and OpenAPI `openIdConnect` scheme emission,

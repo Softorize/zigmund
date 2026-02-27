@@ -112,6 +112,51 @@ test "openapi exposes oauth2 flows for implicit password client-credentials and 
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"oauth_auth\":[\"items:read\"]}]") != null);
 }
 
+test "openapi exposes api key security schemes for query header and cookie" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "security-api-key-schemes",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addSecurityScheme("key_query", .{
+        .api_key = .{
+            .name = "api_key",
+            .in = .query,
+        },
+    });
+    try app.addSecurityScheme("key_header", .{
+        .api_key = .{
+            .name = "x-api-key",
+            .in = .header,
+        },
+    });
+    try app.addSecurityScheme("key_cookie", .{
+        .api_key = .{
+            .name = "session",
+            .in = .cookie,
+        },
+    });
+
+    try app.get("/query-secure", protected, .{
+        .dependencies = &.{.{ .name = "key_query" }},
+    });
+    try app.get("/header-secure", protected, .{
+        .dependencies = &.{.{ .name = "key_header" }},
+    });
+    try app.get("/cookie-secure", protected, .{
+        .dependencies = &.{.{ .name = "key_cookie" }},
+    });
+
+    const doc = try app.openapi();
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"key_query\":{\"type\":\"apiKey\",\"name\":\"api_key\",\"in\":\"query\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"key_header\":{\"type\":\"apiKey\",\"name\":\"x-api-key\",\"in\":\"header\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"key_cookie\":{\"type\":\"apiKey\",\"name\":\"session\",\"in\":\"cookie\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"key_query\":[]}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"key_header\":[]}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"key_cookie\":[]}]") != null);
+}
+
 test "openapi deterministic mode sorts security schemes by name" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "security-order",

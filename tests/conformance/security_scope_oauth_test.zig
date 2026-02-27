@@ -171,3 +171,39 @@ test "oauth2 bearer helpers resolve client-credentials implicit authorization-co
     };
     try std.testing.expect((try auth_code_no_auto_error.resolve(&missing_auth_req)) == null);
 }
+
+test "api key helpers resolve query header and cookie credentials with auto_error parity" {
+    var req = try zigmund.Request.initSyntheticWithHeaders(
+        std.testing.allocator,
+        .GET,
+        "/secure?api_key=q-key-1",
+        "",
+        &.{
+            .{ .name = "x-api-key", .value = "h-key-1" },
+            .{ .name = "cookie", .value = "session=sess-1; api_key=c-key-1" },
+        },
+    );
+    defer req.deinit();
+
+    const query = zigmund.APIKeyQuery{ .name = "api_key" };
+    const header = zigmund.APIKeyHeader{ .name = "x-api-key" };
+    const cookie = zigmund.APIKeyCookie{ .name = "api_key" };
+
+    try std.testing.expectEqualStrings("q-key-1", (try query.resolve(&req)).?);
+    try std.testing.expectEqualStrings("h-key-1", (try header.resolve(&req)).?);
+    try std.testing.expectEqualStrings("c-key-1", (try cookie.resolve(&req)).?);
+
+    var missing_req = try zigmund.Request.initSynthetic(std.testing.allocator, .GET, "/secure", "");
+    defer missing_req.deinit();
+
+    try std.testing.expectError(error.Unauthorized, query.resolve(&missing_req));
+    try std.testing.expectError(error.Unauthorized, header.resolve(&missing_req));
+    try std.testing.expectError(error.Unauthorized, cookie.resolve(&missing_req));
+
+    const query_no_error = zigmund.APIKeyQuery{ .name = "api_key", .auto_error = false };
+    const header_no_error = zigmund.APIKeyHeader{ .name = "x-api-key", .auto_error = false };
+    const cookie_no_error = zigmund.APIKeyCookie{ .name = "api_key", .auto_error = false };
+    try std.testing.expect((try query_no_error.resolve(&missing_req)) == null);
+    try std.testing.expect((try header_no_error.resolve(&missing_req)) == null);
+    try std.testing.expect((try cookie_no_error.resolve(&missing_req)) == null);
+}
