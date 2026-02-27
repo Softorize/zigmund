@@ -18,6 +18,9 @@
    - marker `pattern` constraints now evaluate full regex expressions (POSIX ERE), not only literal prefix/suffix/contains matching.
 8. WebSocket handler API extension:
    - request-aware handlers are now supported via `fn(*websocket.Connection, *Request, std.mem.Allocator) !void` while preserving compatibility with legacy `fn(*websocket.Connection, std.mem.Allocator) !void`.
+9. WebSocket marker injection behavior:
+   - websocket handlers now support FastAPI-style marker injection (`Path/Query/Header/Cookie/Depends/Security`) via injector binding.
+   - registered injected websocket dependencies are now executed during handshake dependency checks (pre-upgrade), matching HTTP dependency pre-execution semantics.
 
 ## Migration Actions
 

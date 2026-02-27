@@ -19,6 +19,7 @@ pub const WebSocketRoute = struct {
     path: []const u8,
     handler: WebSocketHandler,
     options: types.WebSocketRouteOptions,
+    injected_dependencies: []const types.DependencySpec = &.{},
 };
 
 pub const Router = struct {
@@ -93,6 +94,7 @@ pub const Router = struct {
             .path = owned_path,
             .handler = normalizeWebSocketHandler(handler),
             .options = opts,
+            .injected_dependencies = injector.deriveOpenApiDependencies(handler),
         });
     }
 
@@ -101,6 +103,7 @@ pub const Router = struct {
         path: []const u8,
         handler: WebSocketHandler,
         opts: types.WebSocketRouteOptions,
+        injected_dependencies: []const types.DependencySpec,
     ) !void {
         const canonical = try canonicalizePath(path);
         const owned_path = try self.allocator.dupe(u8, canonical);
@@ -110,6 +113,7 @@ pub const Router = struct {
             .path = owned_path,
             .handler = handler,
             .options = opts,
+            .injected_dependencies = injected_dependencies,
         });
     }
 
@@ -296,6 +300,7 @@ pub const Router = struct {
             if (comptime isLegacyWebSocketHandlerType(T)) {
                 return adaptLegacyWebSocketHandler(handler);
             }
+            return injector.bindWebSocketHandler(handler);
         }
         @compileError(
             "WebSocket handler must be fn(*websocket.Connection, *Request, std.mem.Allocator) !void or fn(*websocket.Connection, std.mem.Allocator) !void",

@@ -140,6 +140,26 @@ fn requestAwareWsHandler(
     try conn.sendText(if (trace.len != 0) trace else item_id);
 }
 
+fn wsInjectedTokenProvider(req: *zigmund.Request) ?[]const u8 {
+    return req.queryParam("token");
+}
+
+fn injectedWsMarkerHandler(
+    conn: *zigmund.runtime.websocket.Connection,
+    item_id: zigmund.Path([]const u8, .{ .alias = "item_id" }),
+    token: zigmund.Depends(wsInjectedTokenProvider, .{}),
+    allocator: std.mem.Allocator,
+) !void {
+    _ = allocator;
+    var payload_buf: [256]u8 = undefined;
+    const payload = try std.fmt.bufPrint(
+        &payload_buf,
+        "{s}:{s}",
+        .{ item_id.value orelse "", token.value orelse "" },
+    );
+    try conn.sendText(payload);
+}
+
 fn wsAuthDependency(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
     _ = allocator;
 
@@ -207,6 +227,25 @@ test "websocket handler can read request path params and headers" {
     const fallback = try from_path.receiveSmall();
     try std.testing.expectEqual(.text, fallback.opcode);
     try std.testing.expectEqualStrings("99", fallback.data);
+}
+
+test "websocket handler marker injection resolves path and provider dependencies" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "ws-marker-injection",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.websocket("/ws/injected/{item_id}", injectedWsMarkerHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var session = try client.websocketConnect("/ws/injected/item-7?token=tok-55");
+    defer session.deinit();
+
+    const msg = try session.receiveSmall();
+    try std.testing.expectEqual(.text, msg.opcode);
+    try std.testing.expectEqualStrings("item-7:tok-55", msg.data);
 }
 
 test "testclient websocket connect enforces dependency auth scopes" {

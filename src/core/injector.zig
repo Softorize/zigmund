@@ -5,6 +5,7 @@ const security = @import("../security/mod.zig");
 const BackgroundTasks = @import("background.zig").BackgroundTasks;
 const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
+const websocket = @import("../runtime/websocket.zig");
 const c = @cImport({
     @cInclude("regex.h");
 });
@@ -13,6 +14,7 @@ pub const HttpHandler = *const fn (*Request, std.mem.Allocator) anyerror!Respons
 
 const ResolveContext = struct {
     allocator: std.mem.Allocator,
+    ws_conn: ?*websocket.Connection = null,
     stack: std.ArrayListUnmanaged([]const u8) = .empty,
     request_cache: std.StringHashMapUnmanaged([]u8) = .empty,
 
@@ -64,6 +66,17 @@ pub fn bindHttpHandler(comptime handler: anytype) HttpHandler {
     const Handler = struct {
         fn run(req: *Request, allocator: std.mem.Allocator) anyerror!Response {
             return invokeInjected(handler, req, allocator);
+        }
+    };
+    return Handler.run;
+}
+
+pub const WebSocketHandler = *const fn (*websocket.Connection, *Request, std.mem.Allocator) anyerror!void;
+
+pub fn bindWebSocketHandler(comptime handler: anytype) WebSocketHandler {
+    const Handler = struct {
+        fn run(conn: *websocket.Connection, req: *Request, allocator: std.mem.Allocator) anyerror!void {
+            return invokeWebSocketInjected(handler, conn, req, allocator);
         }
     };
     return Handler.run;
@@ -129,12 +142,42 @@ fn invokeInjected(comptime handler: anytype, req: *Request, allocator: std.mem.A
     return adaptReturn(HandlerType, result);
 }
 
+fn invokeWebSocketInjected(
+    comptime handler: anytype,
+    conn: *websocket.Connection,
+    req: *Request,
+    allocator: std.mem.Allocator,
+) anyerror!void {
+    const HandlerType = @TypeOf(handler);
+    if (@typeInfo(HandlerType) != .@"fn") {
+        @compileError("Injected websocket handler must be a function");
+    }
+
+    const fn_info = @typeInfo(HandlerType).@"fn";
+    const ArgsTuple = std.meta.ArgsTuple(HandlerType);
+    var context = ResolveContext.init(allocator);
+    context.ws_conn = conn;
+    defer context.deinit();
+
+    var args: ArgsTuple = undefined;
+    inline for (fn_info.params, 0..) |param, idx| {
+        const ParamType = param.type orelse @compileError("Websocket handler parameters must have concrete types");
+        @field(args, std.fmt.comptimePrint("{d}", .{idx})) = try resolveArg(ParamType, req, allocator, &context);
+    }
+
+    const result = @call(.auto, handler, args);
+    return adaptVoidReturn(HandlerType, result);
+}
+
 fn resolveArg(
     comptime ParamType: type,
     req: *Request,
     allocator: std.mem.Allocator,
     context: *ResolveContext,
 ) anyerror!ParamType {
+    if (ParamType == *websocket.Connection) {
+        return context.ws_conn orelse error.WebSocketConnectionUnavailable;
+    }
     if (ParamType == *Request) return req;
     if (ParamType == *BackgroundTasks) return req.backgroundTasks();
     if (ParamType == std.mem.Allocator) return allocator;
@@ -1226,6 +1269,24 @@ fn adaptReturn(comptime HandlerType: type, result: anytype) anyerror!Response {
 
     if (ReturnType != Response) {
         @compileError("Handler return type must be zigmund.Response or !zigmund.Response");
+    }
+    return result;
+}
+
+fn adaptVoidReturn(comptime HandlerType: type, result: anytype) anyerror!void {
+    const ReturnType = @typeInfo(HandlerType).@"fn".return_type orelse @compileError("Handler must return a value");
+
+    if (@typeInfo(ReturnType) == .error_union) {
+        const payload = @typeInfo(ReturnType).error_union.payload;
+        if (payload != void) {
+            @compileError("WebSocket handler error union payload must be void, got " ++ @typeName(payload));
+        }
+        try result;
+        return;
+    }
+
+    if (ReturnType != void) {
+        @compileError("WebSocket handler return type must be void or !void");
     }
     return result;
 }

@@ -317,7 +317,12 @@ pub const App = struct {
                 route.options.dependencies,
                 opts.dependencies,
             );
-            try self.router.addWebSocketRouteStored(combined, route.handler, merged_ws_opts);
+            try self.router.addWebSocketRouteStored(
+                combined,
+                route.handler,
+                merged_ws_opts,
+                route.injected_dependencies,
+            );
         }
 
         self.invalidateGeneratedCaches();
@@ -550,9 +555,15 @@ pub const App = struct {
                     std.log.err("dependency cleanup failed: {s}", .{@errorName(err)});
                 };
 
+                const runtime_ws_deps = try self.buildRuntimeDependencies(
+                    ws_route.options.dependencies,
+                    ws_route.injected_dependencies,
+                );
+                defer if (runtime_ws_deps.owned) self.allocator.free(runtime_ws_deps.items);
+
                 self.dependency_registry.runRouteDependencies(
                     &req,
-                    ws_route.options.dependencies,
+                    runtime_ws_deps.items,
                     self.allocator,
                 ) catch |err| {
                     switch (err) {

@@ -440,12 +440,13 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
         if (wrote != 0) try writer.writeAll(",");
         wrote += 1;
         try writer.print(
-            "{{\"kind\":\"websocket\",\"path\":{f},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"allowed_origins\":{d},\"require_subprotocol\":{},\"subprotocols\":{d}}}",
+            "{{\"kind\":\"websocket\",\"path\":{f},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"injected_dependencies\":{d},\"allowed_origins\":{d},\"require_subprotocol\":{},\"subprotocols\":{d}}}",
             .{
                 std.json.fmt(route.path, .{}),
                 std.json.fmt(route.options.operation_id orelse "", .{}),
                 std.json.fmt(route.options.name orelse "", .{}),
                 route.options.dependencies.len,
+                route.injected_dependencies.len,
                 route.options.allowed_origins.len,
                 route.options.require_subprotocol,
                 route.options.subprotocols.len,
@@ -1041,8 +1042,13 @@ test "routes json renderer includes operation and dependency metadata" {
         }
     };
     const ws_handler = struct {
-        fn run(conn: *zigmund.runtime.websocket.Connection, allocator: std.mem.Allocator) !void {
+        fn run(
+            conn: *zigmund.runtime.websocket.Connection,
+            auth: zigmund.Depends(auth_dep.resolve, .{ .name = "auth" }),
+            allocator: std.mem.Allocator,
+        ) !void {
             _ = conn;
+            _ = auth;
             _ = allocator;
         }
     };
@@ -1068,6 +1074,7 @@ test "routes json renderer includes operation and dependency metadata" {
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"name\":\"meta_route\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"dependencies\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"operation_id\":\"websocket_meta\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"injected_dependencies\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"require_subprotocol\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"allowed_origins\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"subprotocols\":1") != null);

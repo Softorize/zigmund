@@ -1,6 +1,7 @@
 const std = @import("std");
 const App = @import("../core/app.zig").App;
 const router_mod = @import("../core/router.zig");
+const types = @import("../core/types.zig");
 const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
 const websocket = @import("../runtime/websocket.zig");
@@ -25,6 +26,11 @@ pub const TestClient = struct {
             if (self.owned_headers) |merged| allocator.free(merged);
             self.* = .{ .headers = &.{} };
         }
+    };
+
+    const RuntimeDependencies = struct {
+        items: []const types.DependencySpec,
+        owned: bool = false,
     };
 
     const WebSocketSessionState = struct {
@@ -175,7 +181,13 @@ pub const TestClient = struct {
 
         const ws_route = try self.app.router.findWebSocket(req.path, &req) orelse return error.WebSocketRouteNotFound;
 
-        try self.app.dependency_registry.runRouteDependencies(&req, ws_route.options.dependencies, self.allocator);
+        const runtime_deps = try self.buildRuntimeDependencies(
+            ws_route.options.dependencies,
+            ws_route.injected_dependencies,
+        );
+        defer if (runtime_deps.owned) self.allocator.free(runtime_deps.items);
+
+        try self.app.dependency_registry.runRouteDependencies(&req, runtime_deps.items, self.allocator);
 
         if (!isWebSocketOriginAllowed(req.header("origin"), ws_route.options.allowed_origins)) {
             return error.WebSocketOriginForbidden;
@@ -284,6 +296,58 @@ pub const TestClient = struct {
                 state.thread_err = err;
                 std.log.warn("test websocket handler failed: {s}", .{@errorName(err)});
             }
+        };
+    }
+
+    fn buildRuntimeDependencies(
+        self: *TestClient,
+        route_dependencies: []const types.DependencySpec,
+        injected_dependencies: []const types.DependencySpec,
+    ) !RuntimeDependencies {
+        var injected_registered_count: usize = 0;
+        for (injected_dependencies) |dep| {
+            if (self.app.dependency_registry.lookup(dep.name) != null) injected_registered_count += 1;
+        }
+
+        if (injected_registered_count == 0) {
+            return .{
+                .items = route_dependencies,
+                .owned = false,
+            };
+        }
+
+        if (route_dependencies.len == 0 and injected_registered_count == injected_dependencies.len) {
+            return .{
+                .items = injected_dependencies,
+                .owned = false,
+            };
+        }
+
+        const count = route_dependencies.len + injected_registered_count;
+        if (count == 0) {
+            return .{
+                .items = &.{},
+                .owned = false,
+            };
+        }
+
+        const merged = try self.allocator.alloc(types.DependencySpec, count);
+        var idx: usize = 0;
+
+        for (route_dependencies) |dep| {
+            merged[idx] = dep;
+            idx += 1;
+        }
+
+        for (injected_dependencies) |dep| {
+            if (self.app.dependency_registry.lookup(dep.name) == null) continue;
+            merged[idx] = dep;
+            idx += 1;
+        }
+
+        return .{
+            .items = merged,
+            .owned = true,
         };
     }
 
