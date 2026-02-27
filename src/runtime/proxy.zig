@@ -128,3 +128,35 @@ test "cidr trust accepts only allowed peer ranges" {
     try std.testing.expectEqualStrings("203.0.113.10", allowed.client_ip.?);
     try std.testing.expectEqualStrings("https", allowed.proto.?);
 }
+
+test "cidr trust supports ipv6 peers and exact host matching" {
+    const headers = [_]std.http.Header{
+        .{ .name = "x-forwarded-for", .value = "2001:db8::1234" },
+        .{ .name = "x-forwarded-proto", .value = "https" },
+    };
+
+    var req = try Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/", "", &headers);
+    defer req.deinit();
+
+    req.setPeerAddress(try std.net.Address.parseIp("2001:db8::42", 443));
+
+    const allowed_cidr = extractProxyInfoWithConfig(&req, .{
+        .trusted_proxy_headers = true,
+        .trusted_proxy_cidrs = &.{"2001:db8::/64"},
+    });
+    try std.testing.expectEqualStrings("2001:db8::1234", allowed_cidr.client_ip.?);
+    try std.testing.expectEqualStrings("https", allowed_cidr.proto.?);
+
+    const denied_cidr = extractProxyInfoWithConfig(&req, .{
+        .trusted_proxy_headers = true,
+        .trusted_proxy_cidrs = &.{"2001:db9::/64"},
+    });
+    try std.testing.expect(denied_cidr.client_ip == null);
+    try std.testing.expect(denied_cidr.proto == null);
+
+    const allowed_exact = extractProxyInfoWithConfig(&req, .{
+        .trusted_proxy_headers = true,
+        .trusted_proxy_cidrs = &.{"2001:db8::42"},
+    });
+    try std.testing.expectEqualStrings("2001:db8::1234", allowed_exact.client_ip.?);
+}
