@@ -25,6 +25,8 @@
    - `x-zigmund-websocket` operations now include merged `dependencies` metadata and derived `security` requirements from both explicit and injected websocket dependencies.
 11. Test client lifecycle helpers:
    - `TestClient` now starts app startup hooks lazily on first request/connect, supports explicit `start()` / `close()`, and runs shutdown hooks automatically on `deinit`.
+12. Trace context propagation:
+   - `tracestate` headers are now captured into request dependency state and propagated through trace/access-log sink payloads.
 
 ## Migration Actions
 

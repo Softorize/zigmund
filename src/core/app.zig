@@ -58,6 +58,7 @@ pub const App = struct {
     pub const TraceEvent = struct {
         request_id: []const u8,
         trace_context: []const u8,
+        tracestate: []const u8,
         trace_id: []const u8,
         span_id: []const u8,
         method: std.http.Method,
@@ -69,6 +70,7 @@ pub const App = struct {
     pub const AccessLogEvent = struct {
         request_id: []const u8,
         trace_context: []const u8,
+        tracestate: []const u8,
         trace_id: []const u8,
         span_id: []const u8,
         method: std.http.Method,
@@ -1116,6 +1118,13 @@ pub const App = struct {
         req.setDependencyValueBorrowed("trace_context", trace_context) catch |err| {
             std.log.warn("failed to set trace_context dependency: {s}", .{@errorName(err)});
         };
+        if (req.header("tracestate")) |tracestate| {
+            if (tracestate.len != 0) {
+                req.setDependencyValueBorrowed("tracestate", tracestate) catch |err| {
+                    std.log.warn("failed to set tracestate dependency: {s}", .{@errorName(err)});
+                };
+            }
+        }
 
         if (parseTraceparent(trace_context)) |parsed| {
             req.setDependencyValueBorrowed("trace_id", parsed.trace_id) catch |err| {
@@ -1132,6 +1141,7 @@ pub const App = struct {
 
     const TraceIdentity = struct {
         trace_context: []const u8,
+        tracestate: []const u8,
         trace_id: []const u8,
         span_id: []const u8,
     };
@@ -1145,6 +1155,7 @@ pub const App = struct {
     fn buildTraceIdentity(req: *const Request) TraceIdentity {
         return .{
             .trace_context = req.dependency("trace_context") orelse "",
+            .tracestate = req.dependency("tracestate") orelse "",
             .trace_id = req.dependency("trace_id") orelse "",
             .span_id = req.dependency("span_id") orelse "",
         };
@@ -1240,6 +1251,7 @@ pub const App = struct {
         const event: TraceEvent = .{
             .request_id = req.requestId() orelse "",
             .trace_context = trace_identity.trace_context,
+            .tracestate = trace_identity.tracestate,
             .trace_id = trace_identity.trace_id,
             .span_id = trace_identity.span_id,
             .method = req.method,
@@ -1276,6 +1288,7 @@ pub const App = struct {
         const event: AccessLogEvent = .{
             .request_id = req.requestId() orelse "",
             .trace_context = trace_identity.trace_context,
+            .tracestate = trace_identity.tracestate,
             .trace_id = trace_identity.trace_id,
             .span_id = trace_identity.span_id,
             .method = req.method,
@@ -2334,10 +2347,11 @@ fn jsonTelemetrySink(event: App.TelemetryEvent, allocator: std.mem.Allocator) !v
 fn jsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
-        "{{\"event\":\"trace\",\"request_id\":{f},\"trace_context\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
+        "{{\"event\":\"trace\",\"request_id\":{f},\"trace_context\":{f},\"tracestate\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
         .{
             std.json.fmt(event.request_id, .{}),
             std.json.fmt(event.trace_context, .{}),
+            std.json.fmt(event.tracestate, .{}),
             std.json.fmt(event.trace_id, .{}),
             std.json.fmt(event.span_id, .{}),
             std.json.fmt(@tagName(event.method), .{}),
@@ -2353,10 +2367,11 @@ fn jsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator) !void {
 fn jsonAccessLogSink(event: App.AccessLogEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
-        "{{\"event\":\"access_log\",\"request_id\":{f},\"trace_context\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d},\"remote_addr\":{f},\"user_agent\":{f}}}",
+        "{{\"event\":\"access_log\",\"request_id\":{f},\"trace_context\":{f},\"tracestate\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d},\"remote_addr\":{f},\"user_agent\":{f}}}",
         .{
             std.json.fmt(event.request_id, .{}),
             std.json.fmt(event.trace_context, .{}),
+            std.json.fmt(event.tracestate, .{}),
             std.json.fmt(event.trace_id, .{}),
             std.json.fmt(event.span_id, .{}),
             std.json.fmt(@tagName(event.method), .{}),
