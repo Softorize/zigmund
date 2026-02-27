@@ -171,6 +171,7 @@
   - Runtime dispatch now propagates peer socket address into `Request` (`req.peerAddress()`), enabling policy decisions based on real client/proxy source IP.
 - Response API parity progress:
   - added redirect/file/chunked-stream helpers and cookie/etag/last-modified helpers on `Response`.
+  - added first-class server-sent events helper (`Response.eventStream(...)`) with SSE-compliant data/event/id/retry formatting and default cache/connection headers.
 - Background task parity progress:
   - handler injection now supports `*BackgroundTasks` directly.
   - request lifecycle now executes queued background tasks after response handling for both runtime and `TestClient` dispatch paths.

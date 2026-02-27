@@ -5,11 +5,12 @@ const source_page = "tutorial/stream-json-lines/";
 
 fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
-    return zigmund.Response.json(allocator, .{
-        .parity = "implemented",
-        .page = source_page,
-        .status = "ok",
-    });
+    const chunks = [_][]const u8{
+        "{\"page\":\"tutorial/stream-json-lines/\",\"step\":1}\n",
+        "{\"page\":\"tutorial/stream-json-lines/\",\"step\":2}\n",
+        "{\"done\":true}\n",
+    };
+    return zigmund.Response.streamChunks(allocator, &chunks, "application/x-ndjson");
 }
 
 pub fn buildExample(app: *zigmund.App) !void {

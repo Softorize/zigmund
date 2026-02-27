@@ -25,6 +25,13 @@ pub const Response = struct {
         same_site: ?CookieSameSite = null,
     };
 
+    pub const ServerSentEvent = struct {
+        data: []const u8,
+        id: ?[]const u8 = null,
+        event: ?[]const u8 = null,
+        retry_ms: ?u32 = null,
+    };
+
     status: std.http.Status = .ok,
     body: []const u8 = "",
     content_type: []const u8 = "text/plain; charset=utf-8",
@@ -92,6 +99,34 @@ pub const Response = struct {
             .content_type = content_type,
             .owned_body = payload,
         };
+    }
+
+    pub fn eventStream(
+        allocator: std.mem.Allocator,
+        events: []const ServerSentEvent,
+    ) !Response {
+        var out: std.ArrayList(u8) = .empty;
+        errdefer out.deinit(allocator);
+
+        var writer = out.writer(allocator);
+        for (events) |event| {
+            if (event.id) |value| try writer.print("id: {s}\n", .{value});
+            if (event.event) |value| try writer.print("event: {s}\n", .{value});
+            if (event.retry_ms) |value| try writer.print("retry: {d}\n", .{value});
+            try writeSseDataLines(&writer, event.data);
+            try writer.writeByte('\n');
+        }
+
+        const payload = try out.toOwnedSlice(allocator);
+        var response = Response{
+            .status = .ok,
+            .body = payload,
+            .content_type = "text/event-stream; charset=utf-8",
+            .owned_body = payload,
+        };
+        try response.setHeader(allocator, "cache-control", "no-cache");
+        try response.setHeader(allocator, "connection", "keep-alive");
+        return response;
     }
 
     pub fn withStatus(self: Response, status: std.http.Status) Response {
@@ -197,6 +232,20 @@ fn guessContentType(path: []const u8) []const u8 {
     return "application/octet-stream";
 }
 
+fn writeSseDataLines(writer: anytype, data: []const u8) !void {
+    var start: usize = 0;
+    while (start < data.len) {
+        const rel_end = std.mem.indexOfScalar(u8, data[start..], '\n');
+        const end = if (rel_end) |offset| start + offset else data.len;
+        try writer.print("data: {s}\n", .{data[start..end]});
+        if (end == data.len) break;
+        start = end + 1;
+    }
+    if (data.len == 0) {
+        try writer.writeAll("data:\n");
+    }
+}
+
 test "json response" {
     var res = try Response.json(std.testing.allocator, .{ .ok = true });
     defer res.deinit(std.testing.allocator);
@@ -230,4 +279,29 @@ test "chunk streaming concatenates payload" {
     defer res.deinit(std.testing.allocator);
 
     try std.testing.expectEqualStrings("hello world", res.body);
+}
+
+test "event stream response formats events and headers" {
+    const events = [_]Response.ServerSentEvent{
+        .{
+            .id = "evt-1",
+            .event = "message",
+            .retry_ms = 1500,
+            .data = "hello\nworld",
+        },
+        .{
+            .data = "",
+        },
+    };
+
+    var res = try Response.eventStream(std.testing.allocator, &events);
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("text/event-stream; charset=utf-8", res.content_type);
+    try std.testing.expectEqualStrings("no-cache", res.header("cache-control").?);
+    try std.testing.expectEqualStrings("keep-alive", res.header("connection").?);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "id: evt-1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "event: message\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "retry: 1500\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "data: hello\ndata: world\n\n") != null);
 }
