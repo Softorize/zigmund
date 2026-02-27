@@ -1,6 +1,6 @@
 # FastAPI Parity Matrix
 
-Generated: 2026-02-27T08:56:18Z
+Generated: 2026-02-27T09:01:32Z
 
 Total docs targets: 116
 
@@ -59,7 +59,7 @@ Total docs targets: 116
 | `reference/exceptions/` | `examples/parity/reference/exceptions.zig` | stub |
 | `reference/fastapi/` | `examples/parity/reference/fastapi.zig` | stub |
 | `reference/httpconnection/` | `examples/parity/reference/httpconnection.zig` | stub |
-| `reference/middleware/` | `examples/parity/reference/middleware.zig` | stub |
+| `reference/middleware/` | `examples/parity/reference/middleware.zig` | implemented |
 | `reference/openapi/` | `examples/parity/reference/openapi.zig` | stub |
 | `reference/openapi/docs/` | `examples/parity/reference/openapi__docs.zig` | stub |
 | `reference/openapi/models/` | `examples/parity/reference/openapi__models.zig` | stub |
@@ -71,7 +71,7 @@ Total docs targets: 116
 | `reference/staticfiles/` | `examples/parity/reference/staticfiles.zig` | stub |
 | `reference/status/` | `examples/parity/reference/status.zig` | stub |
 | `reference/templating/` | `examples/parity/reference/templating.zig` | stub |
-| `reference/testclient/` | `examples/parity/reference/testclient.zig` | stub |
+| `reference/testclient/` | `examples/parity/reference/testclient.zig` | implemented |
 | `reference/uploadfile/` | `examples/parity/reference/uploadfile.zig` | stub |
 | `reference/websockets/` | `examples/parity/reference/websockets.zig` | stub |
 | `tutorial/` | `examples/parity/tutorial/index.zig` | implemented |
@@ -100,7 +100,7 @@ Total docs targets: 116
 | `tutorial/header-param-models/` | `examples/parity/tutorial/header-param-models.zig` | stub |
 | `tutorial/header-params/` | `examples/parity/tutorial/header-params.zig` | stub |
 | `tutorial/metadata/` | `examples/parity/tutorial/metadata.zig` | implemented |
-| `tutorial/middleware/` | `examples/parity/tutorial/middleware.zig` | stub |
+| `tutorial/middleware/` | `examples/parity/tutorial/middleware.zig` | implemented |
 | `tutorial/path-operation-configuration/` | `examples/parity/tutorial/path-operation-configuration.zig` | implemented |
 | `tutorial/path-params-numeric-validations/` | `examples/parity/tutorial/path-params-numeric-validations.zig` | implemented |
 | `tutorial/path-params/` | `examples/parity/tutorial/path-params.zig` | implemented |
@@ -121,8 +121,8 @@ Total docs targets: 116
 | `tutorial/security/simple-oauth2/` | `examples/parity/tutorial/security__simple-oauth2.zig` | stub |
 | `tutorial/sql-databases/` | `examples/parity/tutorial/sql-databases.zig` | implemented |
 | `tutorial/static-files/` | `examples/parity/tutorial/static-files.zig` | implemented |
-| `tutorial/testing/` | `examples/parity/tutorial/testing.zig` | stub |
+| `tutorial/testing/` | `examples/parity/tutorial/testing.zig` | implemented |
 
-Implemented: 21/116
-Stub: 95/116
+Implemented: 25/116
+Stub: 91/116
 Missing: 0/116

@@ -1,20 +1,28 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/testing/
-
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn ping(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/testing/",
+        .ping = "pong",
+    });
+}
+
+fn echoBody(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .body = req.body,
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/testing", placeholder, .{
-        .summary = "Parity stub for tutorial/testing/",
-        .tags = &.{"parity", "tutorial"},
+    try app.get("/tutorial/testing/ping", ping, .{
+        .summary = "Endpoint used by in-process TestClient assertions",
+        .tags = &.{ "parity", "tutorial" },
+        .operation_id = "tutorial_testing_ping",
+    });
+    try app.post("/tutorial/testing/echo", echoBody, .{
+        .summary = "Echo payload for testing assertions",
+        .tags = &.{ "parity", "tutorial" },
+        .operation_id = "tutorial_testing_echo",
     });
 }

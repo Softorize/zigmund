@@ -26,7 +26,7 @@ if [ -z "$total" ] || [ -z "$implemented" ] || [ -z "$stub" ] || [ -z "$missing"
   exit 1
 fi
 
-required_implemented="${PARITY_REQUIRED_IMPLEMENTED:-21}"
+required_implemented="${PARITY_REQUIRED_IMPLEMENTED:-25}"
 max_stub="${PARITY_MAX_STUB:-$total}"
 max_missing="${PARITY_MAX_MISSING:-0}"
 

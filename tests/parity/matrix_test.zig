@@ -37,9 +37,13 @@ test "parity baseline examples are implemented (no stub markers)" {
         "examples/parity/tutorial/request-files.zig",
         "examples/parity/tutorial/static-files.zig",
         "examples/parity/tutorial/sql-databases.zig",
+        "examples/parity/tutorial/middleware.zig",
+        "examples/parity/tutorial/testing.zig",
         "examples/parity/how-to/graphql.zig",
         "examples/parity/advanced/templates.zig",
         "examples/parity/advanced/settings.zig",
+        "examples/parity/reference/middleware.zig",
+        "examples/parity/reference/testclient.zig",
     };
 
     for (implemented_examples) |example_path| {
