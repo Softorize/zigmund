@@ -226,6 +226,7 @@
   - `response_model_exclude_none` semantics remain explicit; `response_model_exclude_unset` no longer incorrectly strips explicit `null` values.
   - `response_model_by_alias` now supports alias remapping via model-declared `zigmund_response_aliases` path mappings.
   - response models can now define model-level transform hooks (`zigmund_response_transform`) for deterministic pre-shaping JSON mutation at runtime.
+  - marker value types can now define model-level validation hooks (`zigmund_validate`) for domain-specific request validation with standardized 422 issue payloads.
 - Dependency parity progress (M2 slice):
   - Route dependency execution now compiles a deterministic DAG with topological ordering.
   - Dependency-cycle detection now hard-fails route execution before any resolver runs.

@@ -104,6 +104,12 @@
 26. Response-model transform hook extension:
    - response model types can now define `zigmund_response_transform(value: *std.json.Value, allocator: std.mem.Allocator) !void`.
    - when `RouteOptions.response_model` is configured, the transform hook executes before include/exclude/default/null/alias shaping rules.
+27. Model-level request validation hook extension:
+   - marker value types can now define `zigmund_validate(...)` hooks for custom domain validation.
+   - supported signatures:
+     - `fn(ValueType) !void`,
+     - `fn(ValueType, *Request) !void`.
+   - failed hooks now emit 422 validation issues with `type="model_validator"` and structured error-name input.
 
 ## Migration Actions
 
@@ -140,6 +146,7 @@
 18. If you enforce header-size limits per endpoint, migrate to route-level `max_header_bytes` instead of only global `ServerConfig.max_header_bytes`.
 19. If downstream OpenAPI consumers lint/enforce vendor extensions, allowlist `x-zigmund-route-policy` for routes that configure strictness or HTTP guardrails.
 20. If your response-model types require custom serialization logic, migrate from handler-local ad hoc JSON mutation to model-local `zigmund_response_transform(...)` hooks for deterministic post-handler shaping.
+21. If request payload/domain validation previously lived only in handlers, migrate it into model-local `zigmund_validate(...)` hooks to produce standardized 422 validation issue payloads.
 
 ## Compatibility Notes
 

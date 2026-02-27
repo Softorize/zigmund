@@ -57,6 +57,32 @@ fn regexPatternHandler(
     });
 }
 
+const SignupPayload = struct {
+    email: []const u8,
+    role: []const u8,
+
+    pub fn zigmund_validate(value: SignupPayload, req: *zigmund.Request) !void {
+        _ = req;
+        if (std.mem.indexOfScalar(u8, value.email, '@') == null) {
+            return error.InvalidEmail;
+        }
+        if (!std.mem.eql(u8, value.role, "admin") and !std.mem.eql(u8, value.role, "user")) {
+            return error.InvalidRole;
+        }
+    }
+};
+
+fn signupHandler(
+    payload: zigmund.Body(SignupPayload, .{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    const value = payload.value orelse return error.ValidationFailed;
+    return zigmund.Response.json(allocator, .{
+        .email = value.email,
+        .role = value.role,
+    });
+}
+
 test "query constraints enforce ge/le/min_length/max_length/pattern/enum" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "constraints",
@@ -172,4 +198,33 @@ test "pattern constraints support regex expressions" {
     defer bad.deinit(std.testing.allocator);
     try std.testing.expectEqual(.unprocessable_entity, bad.status);
     try std.testing.expect(std.mem.indexOf(u8, bad.body, "\"type\":\"pattern\"") != null);
+}
+
+test "body model validator hook enforces custom validation rules" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "model-validator",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.post("/signup", signupHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
+
+    var ok = try client.post("/signup", "{\"email\":\"dev@zigmund.dev\",\"role\":\"admin\"}");
+    defer ok.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, ok.status);
+
+    var bad_email = try client.post("/signup", "{\"email\":\"dev-at-zigmund.dev\",\"role\":\"admin\"}");
+    defer bad_email.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.unprocessable_entity, bad_email.status);
+    try std.testing.expect(std.mem.indexOf(u8, bad_email.body, "\"type\":\"model_validator\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad_email.body, "\"input\":\"InvalidEmail\"") != null);
+
+    var bad_role = try client.post("/signup", "{\"email\":\"dev@zigmund.dev\",\"role\":\"owner\"}");
+    defer bad_role.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.unprocessable_entity, bad_role.status);
+    try std.testing.expect(std.mem.indexOf(u8, bad_role.body, "\"type\":\"model_validator\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad_role.body, "\"input\":\"InvalidRole\"") != null);
 }

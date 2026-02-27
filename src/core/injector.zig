@@ -302,6 +302,7 @@ fn validateMarkerInput(
     try validateEnumConstraint(Marker, req, location, field, raw_value, parsed_value);
     try validateLengthAndPatternConstraints(Marker, req, location, field, raw_value, parsed_value);
     try validateNumericConstraints(Marker, req, location, field, raw_value, parsed_value);
+    try validateModelHook(Marker.ValueType, req, location, field, parsed_value);
 }
 
 fn validateStrictMode(
@@ -470,6 +471,104 @@ fn validateNumericConstraints(
             return error.ValidationFailed;
         }
     }
+}
+
+const ModelValidatorCallKind = enum {
+    value_only,
+    value_with_request,
+};
+
+fn validateModelHook(
+    comptime ValueType: type,
+    req: *Request,
+    location: Request.ValidationLocation,
+    field: []const u8,
+    parsed_value: ValueType,
+) !void {
+    const BaseType = stripOptionalType(ValueType);
+    const call_kind = switch (@typeInfo(BaseType)) {
+        .@"struct", .@"enum", .@"union", .@"opaque" => blk: {
+            if (!@hasDecl(BaseType, "zigmund_validate")) return;
+            break :blk comptime modelValidatorCallKind(
+                @TypeOf(BaseType.zigmund_validate),
+                BaseType,
+            ) orelse @compileError(
+                "zigmund_validate must be fn(" ++ @typeName(BaseType) ++ ") !void or fn(" ++ @typeName(BaseType) ++ ", *Request) !void",
+            );
+        },
+        else => return,
+    };
+
+    if (@typeInfo(ValueType) == .optional) {
+        if (parsed_value) |value| {
+            try runModelValidator(
+                BaseType,
+                value,
+                req,
+                location,
+                field,
+                call_kind,
+            );
+        }
+        return;
+    }
+
+    try runModelValidator(
+        BaseType,
+        parsed_value,
+        req,
+        location,
+        field,
+        call_kind,
+    );
+}
+
+fn runModelValidator(
+    comptime ValueType: type,
+    value: ValueType,
+    req: *Request,
+    location: Request.ValidationLocation,
+    field: []const u8,
+    comptime call_kind: ModelValidatorCallKind,
+) !void {
+    const result = switch (call_kind) {
+        .value_only => ValueType.zigmund_validate(value),
+        .value_with_request => ValueType.zigmund_validate(value, req),
+    };
+
+    result catch |err| {
+        try req.addValidationIssue(.{
+            .location = location,
+            .field = field,
+            .message = "Model validation failed",
+            .issue_type = "model_validator",
+            .input = @errorName(err),
+        });
+        return error.ValidationFailed;
+    };
+}
+
+fn modelValidatorCallKind(comptime FnType: type, comptime ValueType: type) ?ModelValidatorCallKind {
+    if (@typeInfo(FnType) != .@"fn") return null;
+    const info = @typeInfo(FnType).@"fn";
+    const ReturnType = info.return_type orelse return null;
+    if (!isErrorUnionVoid(ReturnType)) return null;
+
+    if (info.params.len == 1 and info.params[0].type == ValueType) {
+        return .value_only;
+    }
+    if (info.params.len == 2 and
+        info.params[0].type == ValueType and
+        info.params[1].type == *Request)
+    {
+        return .value_with_request;
+    }
+    return null;
+}
+
+fn isErrorUnionVoid(comptime T: type) bool {
+    if (@typeInfo(T) != .error_union) return false;
+    return @typeInfo(T).error_union.payload == void;
 }
 
 fn numericAsF64(comptime T: type, value: T) ?f64 {
