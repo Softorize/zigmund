@@ -136,6 +136,15 @@
 33. OpenAPI security requirement semantics hardening:
    - route/websocket `security` requirements now emit combined AND semantics in a single requirement object when multiple security schemes are present.
    - duplicate scheme entries across explicit/injected dependencies are merged with scope-union semantics.
+34. Cloud CLI deploy workflow extension:
+   - `zigmund cloud` now supports deploy execution controls:
+     - `--execute` to run provider deploy commands,
+     - `--dry-run` to emit resolved deploy command payload without execution,
+     - `--image <tag>` (`--image-tag`) to override docker image tag used in deploy execution.
+   - provider execution support:
+     - `docker`: executes `docker build -t <tag> -f Dockerfile .`,
+     - `flyio`: executes `flyctl deploy`,
+     - `generic`: execution intentionally rejected (`CloudDeployUnsupportedProvider`).
 
 ## Migration Actions
 
@@ -179,8 +188,10 @@
 25. If OpenAPI artifact generation runs via CLI in CI/CD, migrate CLI invocations to use `--json-schema-dialect` / `--no-json-schema-dialect` where dialect policy differs by environment.
 26. If OAuth2 password-flow handlers currently tokenize `scope` manually, migrate to `OAuth2PasswordRequestForm.parsedScopesAlloc(...)` and/or `applyGrantedScopes(...)` for consistent scope parsing and dependency-state integration.
 27. If downstream OpenAPI tooling assumed one-item-per-object security arrays for multi-scheme routes, update parsers to consume standard combined requirement-object semantics (AND within object, OR across array entries).
+28. If CI/CD pipelines currently treat `zigmund cloud` as plan-only, migrate to `--execute` / `--dry-run` where deployment orchestration should be performed directly by Zigmund CLI; use `--image <tag>` for deterministic docker artifact naming.
 
 ## Compatibility Notes
 
 1. No runtime compatibility break in HTTP request/response contract for existing handlers.
 2. CLI output format for `zigmund cloud` now includes provider/deploy descriptors; consumers should treat additional JSON fields as forward-compatible.
+3. Deploy execution remains opt-in; existing `zigmund cloud` usage without `--execute` remains non-mutating.

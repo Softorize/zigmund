@@ -270,6 +270,14 @@
   - `zigmund cloud` now supports provider-aware deployment planning:
     - `--provider <generic|docker|flyio>` for provider-specific deploy command/artifact metadata,
     - `--emit-dir <dir>` scaffold emission for concrete deployment files (`Dockerfile`, `fly.toml`).
+  - `zigmund cloud` now supports provider execution workflows:
+    - `--execute` to run provider deploy command paths,
+    - `--dry-run` to emit resolved `{cwd, argv}` deploy payloads without process execution,
+    - `--image <tag>` (`--image-tag`) to override docker build image tag in execution mode.
+  - provider execution behavior is explicit:
+    - `docker` executes `docker build -t <tag> -f Dockerfile .`,
+    - `flyio` executes `flyctl deploy`,
+    - `generic` remains plan/scaffold-only and is rejected for execute mode.
   - cloud plan output now includes deterministic provider/deploy descriptors suitable for CI handoff.
   - `zigmund sbom` now emits a CycloneDX (`specVersion: 1.5`) software bill of materials with framework metadata, license marker, and runtime components.
 - Performance program progress:

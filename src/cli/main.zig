@@ -68,6 +68,8 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, command, "cloud")) {
         const opts = try parseCloudFlags(&args);
+        try validateCloudCommandOptions(opts);
+
         const plan = try renderCloudPlan(allocator, &app, opts.provider);
         defer allocator.free(plan);
 
@@ -80,6 +82,9 @@ pub fn main() !void {
 
         if (opts.emit_dir) |dir| {
             try emitCloudScaffold(allocator, &app, opts.provider, dir);
+        }
+        if (opts.execute) {
+            try executeCloudDeploy(allocator, opts);
         }
         return;
     }
@@ -379,6 +384,9 @@ const CloudCommandOptions = struct {
     out_path: ?[]const u8 = null,
     provider: CloudProvider = .generic,
     emit_dir: ?[]const u8 = null,
+    execute: bool = false,
+    dry_run: bool = false,
+    image_tag: []const u8 = "zigmund/app:latest",
 };
 
 fn parseOpenApiFlags(args: anytype) !OpenApiCommandOptions {
@@ -443,10 +451,26 @@ fn parseCloudFlags(args: anytype) !CloudCommandOptions {
             opts.emit_dir = args.next() orelse return error.MissingEmitDirValue;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--execute")) {
+            opts.execute = true;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--dry-run")) {
+            opts.dry_run = true;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--image") or std.mem.eql(u8, arg, "--image-tag")) {
+            opts.image_tag = args.next() orelse return error.MissingImageTagValue;
+            continue;
+        }
         return error.UnknownFlag;
     }
 
     return opts;
+}
+
+fn validateCloudCommandOptions(opts: CloudCommandOptions) !void {
+    if (opts.dry_run and !opts.execute) return error.DryRunRequiresExecute;
 }
 
 fn parseCloudProvider(value: []const u8) ?CloudProvider {
@@ -634,9 +658,9 @@ fn renderCloudPlan(allocator: std.mem.Allocator, app: *zigmund.App, provider: Cl
     const openapi = try app.openapi();
 
     const deploy_descriptor = switch (provider) {
-        .generic => "{\"kind\":\"generic\",\"command\":\"zig build run -- serve\",\"artifact_files\":[]}",
-        .docker => "{\"kind\":\"docker\",\"command\":\"docker run -p 8000:8000 zigmund/app:latest\",\"artifact_files\":[\"Dockerfile\"]}",
-        .flyio => "{\"kind\":\"flyio\",\"command\":\"flyctl deploy\",\"artifact_files\":[\"Dockerfile\",\"fly.toml\"]}",
+        .generic => "{\"kind\":\"generic\",\"command\":\"zig build run -- serve\",\"artifact_files\":[],\"execute_supported\":false}",
+        .docker => "{\"kind\":\"docker\",\"command\":\"docker build -t zigmund/app:latest -f Dockerfile .\",\"artifact_files\":[\"Dockerfile\"],\"execute_supported\":true}",
+        .flyio => "{\"kind\":\"flyio\",\"command\":\"flyctl deploy\",\"artifact_files\":[\"Dockerfile\",\"fly.toml\"],\"execute_supported\":true}",
     };
 
     return std.fmt.allocPrint(
@@ -653,6 +677,86 @@ fn renderCloudPlan(allocator: std.mem.Allocator, app: *zigmund.App, provider: Cl
             deploy_descriptor,
         },
     );
+}
+
+fn executeCloudDeploy(allocator: std.mem.Allocator, opts: CloudCommandOptions) !void {
+    const run_dir = opts.emit_dir orelse ".";
+
+    switch (opts.provider) {
+        .generic => return error.CloudDeployUnsupportedProvider,
+        .docker => {
+            const argv = [_][]const u8{
+                "docker",
+                "build",
+                "-t",
+                opts.image_tag,
+                "-f",
+                "Dockerfile",
+                ".",
+            };
+            if (opts.dry_run) {
+                const payload = try renderCloudDeployDryRun(allocator, run_dir, &argv);
+                defer allocator.free(payload);
+                try writeStdout(payload);
+                try writeStdout("\n");
+                return;
+            }
+            try runExternalCommand(allocator, run_dir, &argv);
+        },
+        .flyio => {
+            const argv = [_][]const u8{
+                "flyctl",
+                "deploy",
+            };
+            if (opts.dry_run) {
+                const payload = try renderCloudDeployDryRun(allocator, run_dir, &argv);
+                defer allocator.free(payload);
+                try writeStdout(payload);
+                try writeStdout("\n");
+                return;
+            }
+            try runExternalCommand(allocator, run_dir, &argv);
+        },
+    }
+}
+
+fn renderCloudDeployDryRun(
+    allocator: std.mem.Allocator,
+    cwd: []const u8,
+    argv: []const []const u8,
+) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var writer = out.writer(allocator);
+    try writer.writeAll("{\"cwd\":");
+    try writer.print("{f}", .{std.json.fmt(cwd, .{})});
+    try writer.writeAll(",\"argv\":[");
+    for (argv, 0..) |part, idx| {
+        if (idx != 0) try writer.writeAll(",");
+        try writer.print("{f}", .{std.json.fmt(part, .{})});
+    }
+    try writer.writeAll("]}");
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn runExternalCommand(
+    allocator: std.mem.Allocator,
+    cwd: []const u8,
+    argv: []const []const u8,
+) !void {
+    var child = std.process.Child.init(argv, allocator);
+    child.cwd = cwd;
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+
+    const term = try child.spawnAndWait();
+    switch (term) {
+        .Exited => |code| if (code != 0) return error.CloudDeployFailed,
+        else => return error.CloudDeployFailed,
+    }
 }
 
 fn emitCloudScaffold(
@@ -739,7 +843,7 @@ fn usage() !void {
             "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
             "  openapi [--deterministic] [--json-schema-dialect <uri>|--no-json-schema-dialect] [--out <path>] [--diff <path>]\n" ++
-            "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>]\n" ++
+            "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>] [--image <tag>] [--execute] [--dry-run]\n" ++
             "  sbom [--out <path>]\n",
     );
 }
@@ -1023,6 +1127,7 @@ test "cloud plan renderer outputs route counts and openapi size" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"websocket_routes\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"openapi_bytes\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"deploy\":{\"kind\":\"generic\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"execute_supported\":false") != null);
 }
 
 test "cloud plan renderer supports docker and flyio providers" {
@@ -1032,14 +1137,16 @@ test "cloud plan renderer supports docker and flyio providers" {
     const docker_plan = try renderCloudPlan(std.testing.allocator, &app, .docker);
     defer std.testing.allocator.free(docker_plan);
     try std.testing.expect(std.mem.indexOf(u8, docker_plan, "\"provider\":\"docker\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, docker_plan, "\"command\":\"docker run -p 8000:8000 zigmund/app:latest\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, docker_plan, "\"command\":\"docker build -t zigmund/app:latest -f Dockerfile .\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, docker_plan, "\"artifact_files\":[\"Dockerfile\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, docker_plan, "\"execute_supported\":true") != null);
 
     const flyio_plan = try renderCloudPlan(std.testing.allocator, &app, .flyio);
     defer std.testing.allocator.free(flyio_plan);
     try std.testing.expect(std.mem.indexOf(u8, flyio_plan, "\"provider\":\"flyio\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, flyio_plan, "\"command\":\"flyctl deploy\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, flyio_plan, "\"artifact_files\":[\"Dockerfile\",\"fly.toml\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, flyio_plan, "\"execute_supported\":true") != null);
 }
 
 test "parse cloud flags supports provider output and scaffold args" {
@@ -1053,6 +1160,67 @@ test "parse cloud flags supports provider output and scaffold args" {
     try std.testing.expectEqual(CloudProvider.flyio, opts.provider);
     try std.testing.expectEqualStrings("deploy-plan.json", opts.out_path.?);
     try std.testing.expectEqualStrings("deploy", opts.emit_dir.?);
+    try std.testing.expect(!opts.execute);
+    try std.testing.expect(!opts.dry_run);
+    try std.testing.expectEqualStrings("zigmund/app:latest", opts.image_tag);
+}
+
+test "parse cloud flags supports execute dry-run and image tag options" {
+    var iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--provider docker --emit-dir deploy --execute --dry-run --image registry.example/zigmund:v1",
+    ));
+    defer iter.deinit();
+
+    const opts = try parseCloudFlags(&iter);
+    try std.testing.expectEqual(CloudProvider.docker, opts.provider);
+    try std.testing.expectEqualStrings("deploy", opts.emit_dir.?);
+    try std.testing.expect(opts.execute);
+    try std.testing.expect(opts.dry_run);
+    try std.testing.expectEqualStrings("registry.example/zigmund:v1", opts.image_tag);
+}
+
+test "cloud command validation requires --execute for --dry-run" {
+    try std.testing.expectError(
+        error.DryRunRequiresExecute,
+        validateCloudCommandOptions(.{
+            .provider = .docker,
+            .dry_run = true,
+        }),
+    );
+
+    try validateCloudCommandOptions(.{
+        .provider = .docker,
+        .execute = true,
+        .dry_run = true,
+    });
+}
+
+test "cloud deploy dry-run renderer includes cwd and argv" {
+    const argv = [_][]const u8{
+        "docker",
+        "build",
+        "-t",
+        "zigmund/app:latest",
+        "-f",
+        "Dockerfile",
+        ".",
+    };
+    const payload = try renderCloudDeployDryRun(std.testing.allocator, "deploy", &argv);
+    defer std.testing.allocator.free(payload);
+
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"cwd\":\"deploy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"argv\":[\"docker\",\"build\",\"-t\",\"zigmund/app:latest\",\"-f\",\"Dockerfile\",\".\"]") != null);
+}
+
+test "cloud execute rejects unsupported generic provider" {
+    try std.testing.expectError(
+        error.CloudDeployUnsupportedProvider,
+        executeCloudDeploy(std.testing.allocator, .{
+            .provider = .generic,
+            .execute = true,
+        }),
+    );
 }
 
 test "cloud app slug and scaffold templates are deterministic" {
