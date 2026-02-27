@@ -161,6 +161,16 @@ pub fn generate(
     var operation_ids = OperationIdRegistry.init(allocator);
     defer operation_ids.deinit();
 
+    var sorted_security_schemes: ?[]security.NamedScheme = null;
+    defer if (sorted_security_schemes) |items| allocator.free(items);
+    const component_security_schemes: []const security.NamedScheme = if (cfg.openapi_deterministic and security_schemes.len > 1) blk: {
+        const copy = try allocator.alloc(security.NamedScheme, security_schemes.len);
+        @memcpy(copy, security_schemes);
+        std.mem.sort(security.NamedScheme, copy, {}, lessThanSecuritySchemeName);
+        sorted_security_schemes = copy;
+        break :blk copy;
+    } else security_schemes;
+
     if (cfg.openapi_deterministic) {
         std.mem.sort([]const u8, unique_paths.items, {}, lessThanString);
         std.mem.sort(ComponentSchema, response_components.items, {}, lessThanComponentSchema);
@@ -203,7 +213,7 @@ pub fn generate(
         try writeFieldName(&writer, "components");
         try writeComponents(
             &writer,
-            security_schemes,
+            component_security_schemes,
             response_components.items,
             parameter_components.items,
             request_body_components.items,
@@ -304,6 +314,10 @@ fn lessThanRequestBodyComponent(_: void, lhs: RequestBodyComponent, rhs: Request
 }
 
 fn lessThanResponseEntryComponent(_: void, lhs: ResponseEntryComponent, rhs: ResponseEntryComponent) bool {
+    return std.mem.order(u8, lhs.name, rhs.name) == .lt;
+}
+
+fn lessThanSecuritySchemeName(_: void, lhs: security.NamedScheme, rhs: security.NamedScheme) bool {
     return std.mem.order(u8, lhs.name, rhs.name) == .lt;
 }
 

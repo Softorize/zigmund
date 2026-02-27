@@ -48,3 +48,24 @@ test "openapi exposes openid connect security schemes and route security" {
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"openIdConnectUrl\":\"https://issuer.example/.well-known/openid-configuration\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"oidc_auth\":[]}]") != null);
 }
+
+test "openapi deterministic mode sorts security schemes by name" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "security-order",
+        .version = "0.0.1",
+        .openapi_deterministic = true,
+    });
+    defer app.deinit();
+
+    try app.addSecurityScheme("zeta", .{ .http = .{ .scheme = "bearer" } });
+    try app.addSecurityScheme("alpha", .{ .http = .{ .scheme = "basic" } });
+    try app.addSecurityScheme("mid", .{ .api_key = .{ .name = "x-mid", .in = .header } });
+
+    const doc = try app.openapi();
+    const alpha_idx = std.mem.indexOf(u8, doc, "\"alpha\":") orelse return error.TestUnexpectedResult;
+    const mid_idx = std.mem.indexOf(u8, doc, "\"mid\":") orelse return error.TestUnexpectedResult;
+    const zeta_idx = std.mem.indexOf(u8, doc, "\"zeta\":") orelse return error.TestUnexpectedResult;
+
+    try std.testing.expect(alpha_idx < mid_idx);
+    try std.testing.expect(mid_idx < zeta_idx);
+}
