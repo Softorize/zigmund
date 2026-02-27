@@ -1530,6 +1530,9 @@ pub const App = struct {
         defer parsed.deinit();
 
         var shaped = parsed.value;
+        if (route_options.response_model_transform) |transform| {
+            try transform(&shaped, self.allocator);
+        }
         try applyResponseModelFieldFilter(
             self.allocator,
             &shaped,
@@ -1975,6 +1978,7 @@ pub const App = struct {
 };
 
 fn needsResponseShaping(options: types.StoredRouteOptions) bool {
+    if (options.response_model_transform != null) return true;
     if (options.response_model_field_rules.len != 0) return true;
     if (options.response_model_include.len != 0) return true;
     if (options.response_model_exclude.len != 0) return true;

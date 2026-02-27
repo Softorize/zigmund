@@ -41,6 +41,25 @@ const UnsetModel = struct {
     note: ?[]const u8 = null,
 };
 
+const TransformModel = struct {
+    id: u32,
+    name: []const u8,
+    serialized: bool = false,
+
+    pub fn zigmund_response_transform(value: *std.json.Value, allocator: std.mem.Allocator) !void {
+        _ = allocator;
+        switch (value.*) {
+            .object => |*object| {
+                if (object.get("name") != null) {
+                    try object.put("name", .{ .string = "SERIALIZED" });
+                }
+                try object.put("serialized", .{ .bool = true });
+            },
+            else => {},
+        }
+    }
+};
+
 fn shapedHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
@@ -89,6 +108,16 @@ fn unsetHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Re
     return zigmund.Response.json(allocator, .{
         .id = @as(u32, 1),
         .note = @as(?[]const u8, null),
+    });
+}
+
+fn transformHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    return zigmund.Response.json(allocator, .{
+        .id = @as(u32, 3),
+        .name = "before",
+        .serialized = false,
+        .extra = "drop-me",
     });
 }
 
@@ -256,4 +285,37 @@ test "response_model runtime shaping keeps explicit null when only exclude_unset
 
     try std.testing.expectEqual(.ok, res.status);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "\"note\":null") != null);
+}
+
+test "response_model runtime shaping applies model transform hook" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "response-model-runtime-transform",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/transform", transformHandler, .{
+        .response_model = TransformModel,
+    });
+
+    var res = try app.dispatchSynthetic(.GET, "/transform", "");
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, res.status);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, res.body, .{});
+    defer parsed.deinit();
+
+    const root = parsed.value.object;
+    const name = root.get("name") orelse return error.TestUnexpectedResult;
+    switch (name) {
+        .string => |value| try std.testing.expectEqualStrings("SERIALIZED", value),
+        else => return error.TestUnexpectedResult,
+    }
+
+    const serialized = root.get("serialized") orelse return error.TestUnexpectedResult;
+    switch (serialized) {
+        .bool => |value| try std.testing.expect(value),
+        else => return error.TestUnexpectedResult,
+    }
+    try std.testing.expect(root.get("extra") == null);
 }

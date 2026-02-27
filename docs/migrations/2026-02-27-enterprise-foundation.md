@@ -101,6 +101,9 @@
      - `max_header_bytes`,
      - `max_query_bytes`,
      - `max_body_bytes`.
+26. Response-model transform hook extension:
+   - response model types can now define `zigmund_response_transform(value: *std.json.Value, allocator: std.mem.Allocator) !void`.
+   - when `RouteOptions.response_model` is configured, the transform hook executes before include/exclude/default/null/alias shaping rules.
 
 ## Migration Actions
 
@@ -136,6 +139,7 @@
 17. If downstream consumers depended on bearer challenge headers for API-key protected routes, update expectations: API-key failures now return `403` without `WWW-Authenticate`.
 18. If you enforce header-size limits per endpoint, migrate to route-level `max_header_bytes` instead of only global `ServerConfig.max_header_bytes`.
 19. If downstream OpenAPI consumers lint/enforce vendor extensions, allowlist `x-zigmund-route-policy` for routes that configure strictness or HTTP guardrails.
+20. If your response-model types require custom serialization logic, migrate from handler-local ad hoc JSON mutation to model-local `zigmund_response_transform(...)` hooks for deterministic post-handler shaping.
 
 ## Compatibility Notes
 

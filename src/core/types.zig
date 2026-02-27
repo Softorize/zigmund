@@ -231,6 +231,8 @@ pub const ResponseModelFieldRule = struct {
     default_value: ResponseModelDefaultValue = .none,
 };
 
+pub const ResponseModelTransformFn = *const fn (*std.json.Value, std.mem.Allocator) anyerror!void;
+
 pub const RouteOptions = struct {
     name: ?[]const u8 = null,
     summary: ?[]const u8 = null,
@@ -275,6 +277,7 @@ pub const StoredRouteOptions = struct {
     openapi_callbacks: []const OpenApiCallback = &.{},
     openapi_extensions: []const OpenApiExtension = &.{},
     response_model_field_rules: []const ResponseModelFieldRule = &.{},
+    response_model_transform: ?ResponseModelTransformFn = null,
     response_model_include: []const []const u8 = &.{},
     response_model_exclude: []const []const u8 = &.{},
     response_model_by_alias: bool = true,
@@ -311,6 +314,7 @@ pub fn storeRouteOptions(opts: RouteOptions) StoredRouteOptions {
         .openapi_callbacks = opts.openapi_callbacks,
         .openapi_extensions = opts.openapi_extensions,
         .response_model_field_rules = if (opts.response_model) |T| deriveResponseModelFieldRules(T) else &.{},
+        .response_model_transform = if (opts.response_model) |T| deriveResponseModelTransformFn(T) else null,
         .response_model_include = opts.response_model_include,
         .response_model_exclude = opts.response_model_exclude,
         .response_model_by_alias = opts.response_model_by_alias,
@@ -422,6 +426,18 @@ fn deriveResponseModelFieldRules(comptime T: type) []const ResponseModelFieldRul
         const items = buildResponseModelFieldRules(Root);
     };
     return &Holder.items;
+}
+
+fn deriveResponseModelTransformFn(comptime T: type) ?ResponseModelTransformFn {
+    const Root = responseModelRuleRootType(T);
+    return switch (@typeInfo(Root)) {
+        .@"struct", .@"enum", .@"union", .@"opaque" => blk: {
+            if (!@hasDecl(Root, "zigmund_response_transform")) break :blk null;
+            const transform: ResponseModelTransformFn = &Root.zigmund_response_transform;
+            break :blk transform;
+        },
+        else => null,
+    };
 }
 
 fn responseModelRuleRootType(comptime T: type) type {

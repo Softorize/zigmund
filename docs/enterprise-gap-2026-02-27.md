@@ -225,6 +225,7 @@
   - `response_model_exclude_defaults` now uses reflected model default values (scalar/string/null coverage) instead of blanket null pruning.
   - `response_model_exclude_none` semantics remain explicit; `response_model_exclude_unset` no longer incorrectly strips explicit `null` values.
   - `response_model_by_alias` now supports alias remapping via model-declared `zigmund_response_aliases` path mappings.
+  - response models can now define model-level transform hooks (`zigmund_response_transform`) for deterministic pre-shaping JSON mutation at runtime.
 - Dependency parity progress (M2 slice):
   - Route dependency execution now compiles a deterministic DAG with topological ordering.
   - Dependency-cycle detection now hard-fails route execution before any resolver runs.
