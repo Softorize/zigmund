@@ -21,6 +21,8 @@
 9. WebSocket marker injection behavior:
    - websocket handlers now support FastAPI-style marker injection (`Path/Query/Header/Cookie/Depends/Security`) via injector binding.
    - registered injected websocket dependencies are now executed during handshake dependency checks (pre-upgrade), matching HTTP dependency pre-execution semantics.
+10. OpenAPI websocket metadata:
+   - `x-zigmund-websocket` operations now include merged `dependencies` metadata and derived `security` requirements from both explicit and injected websocket dependencies.
 
 ## Migration Actions
 

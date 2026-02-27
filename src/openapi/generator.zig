@@ -278,7 +278,13 @@ pub fn generate(
             if (!std.mem.eql(u8, route.path, path)) continue;
             if (field_count != 0) try writer.writeAll(",");
             field_count += 1;
-            try writeWebSocketOperation(&writer, allocator, route, &operation_ids);
+            try writeWebSocketOperation(
+                &writer,
+                allocator,
+                route,
+                security_schemes,
+                &operation_ids,
+            );
         }
 
         try writer.writeAll("}");
@@ -451,6 +457,7 @@ fn writeWebSocketOperation(
     writer: anytype,
     allocator: std.mem.Allocator,
     route: router_mod.WebSocketRoute,
+    security_schemes: []const security.NamedScheme,
     operation_ids: *OperationIdRegistry,
 ) !void {
     try writeFieldName(writer, "x-zigmund-websocket");
@@ -468,6 +475,26 @@ fn writeWebSocketOperation(
     const operation_id = try operation_ids.reserve(candidate_operation_id);
     try writeFieldName(writer, "operationId");
     try writeJsonString(writer, operation_id);
+    if (route.options.dependencies.len + route.injected_dependencies.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "dependencies");
+        try writeDependenciesArray(writer, route.options.dependencies, route.injected_dependencies);
+
+        if (countRouteSecurityRequirements(
+            route.options.dependencies,
+            route.injected_dependencies,
+            security_schemes,
+        ) > 0) {
+            try writer.writeAll(",");
+            try writeFieldName(writer, "security");
+            try writeRouteSecurity(
+                writer,
+                route.options.dependencies,
+                route.injected_dependencies,
+                security_schemes,
+            );
+        }
+    }
     if (route.options.allowed_origins.len > 0) {
         try writer.writeAll(",");
         try writeFieldName(writer, "allowedOrigins");

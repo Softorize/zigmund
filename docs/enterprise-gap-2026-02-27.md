@@ -107,6 +107,7 @@
     - app-level: `AppConfig.openapi_extensions`,
     - route-level: `RouteOptions.openapi_extensions`,
     - websocket-route-level: `WebSocketRouteOptions.openapi_extensions`.
+  - websocket OpenAPI extension objects (`x-zigmund-websocket`) now include merged dependency metadata and derived security requirements from explicit + injected websocket dependencies.
   - advanced OpenAPI objects now supported:
     - route-level `callbacks`,
     - top-level `webhooks` via `AppConfig.webhooks`,
