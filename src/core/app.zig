@@ -648,7 +648,7 @@ pub const App = struct {
                 conn.setSendTimeoutMs(ws_route.options.send_timeout_ms);
                 conn.setNegotiatedSubprotocol(selected_subprotocol);
                 defer conn.deinit(self.allocator);
-                ws_route.handler(&conn, self.allocator) catch |err| {
+                ws_route.handler(&conn, &req, self.allocator) catch |err| {
                     std.log.warn("websocket handler failed: {s}", .{@errorName(err)});
                 };
                 return;

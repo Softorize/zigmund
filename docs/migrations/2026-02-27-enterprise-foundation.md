@@ -16,6 +16,8 @@
    - unnamed provider markers now use callable-identity cache keys, so `Depends(provider, .{})` with `use_cache=true` caches once per request without requiring explicit `name`.
 7. Validation behavior:
    - marker `pattern` constraints now evaluate full regex expressions (POSIX ERE), not only literal prefix/suffix/contains matching.
+8. WebSocket handler API extension:
+   - request-aware handlers are now supported via `fn(*websocket.Connection, *Request, std.mem.Allocator) !void` while preserving compatibility with legacy `fn(*websocket.Connection, std.mem.Allocator) !void`.
 
 ## Migration Actions
 
@@ -32,6 +34,8 @@
 5. For provider lifecycle hooks, attach cleanup at marker definition:
    - `Depends(myProvider, .{ .cleanup = myCleanup })`
    - cleanup is request-scoped; app-scoped cache + cleanup is intentionally rejected at compile-time.
+6. Existing websocket handlers can remain unchanged.
+   - Optionally migrate to request-aware signatures when path/header/query state is needed inside websocket handlers.
 
 ## Compatibility Notes
 

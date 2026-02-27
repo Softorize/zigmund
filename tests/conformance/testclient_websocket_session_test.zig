@@ -129,6 +129,17 @@ fn burstSendBackpressureHandler(conn: *zigmund.runtime.websocket.Connection, all
     };
 }
 
+fn requestAwareWsHandler(
+    conn: *zigmund.runtime.websocket.Connection,
+    req: *zigmund.Request,
+    allocator: std.mem.Allocator,
+) !void {
+    _ = allocator;
+    const item_id = req.param("item_id") orelse "";
+    const trace = req.header("x-trace-id") orelse "";
+    try conn.sendText(if (trace.len != 0) trace else item_id);
+}
+
 fn wsAuthDependency(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
     _ = allocator;
 
@@ -170,6 +181,32 @@ test "testclient websocket session can send and receive in-process" {
     const msg = try session.receiveSmall();
     try std.testing.expectEqual(.text, msg.opcode);
     try std.testing.expectEqualStrings("hello", msg.data);
+}
+
+test "websocket handler can read request path params and headers" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "ws-request-aware",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.websocket("/ws/items/{item_id}", requestAwareWsHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var with_header = try client.websocketConnectWithHeaders("/ws/items/42", &.{
+        .{ .name = "x-trace-id", .value = "trace-abc" },
+    });
+    defer with_header.deinit();
+    const traced = try with_header.receiveSmall();
+    try std.testing.expectEqual(.text, traced.opcode);
+    try std.testing.expectEqualStrings("trace-abc", traced.data);
+
+    var from_path = try client.websocketConnect("/ws/items/99");
+    defer from_path.deinit();
+    const fallback = try from_path.receiveSmall();
+    try std.testing.expectEqual(.text, fallback.opcode);
+    try std.testing.expectEqualStrings("99", fallback.data);
 }
 
 test "testclient websocket connect enforces dependency auth scopes" {

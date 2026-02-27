@@ -151,6 +151,7 @@
 - WebSocket security parity progress:
   - websocket handshake path now executes configured route dependencies before protocol upgrade.
   - websocket handshake now enforces unauthorized and insufficient-scope outcomes using the same security challenge derivation logic as HTTP routes.
+  - websocket handlers now support request-aware signatures (`conn + req + allocator`) while maintaining compatibility with legacy (`conn + allocator`) handlers.
   - websocket handshake policy controls added:
     - route-level origin allowlist enforcement (`allowed_origins`),
     - route-level subprotocol negotiation policy (`subprotocols`, `require_subprotocol`),

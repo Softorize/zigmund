@@ -279,7 +279,7 @@ pub const TestClient = struct {
         server_conn.setNegotiatedSubprotocol(state.negotiated_subprotocol);
         defer server_conn.deinit(state.allocator);
 
-        state.handler(&server_conn, state.allocator) catch |err| {
+        state.handler(&server_conn, &state.req, state.allocator) catch |err| {
             if (err != error.ConnectionClosed) {
                 state.thread_err = err;
                 std.log.warn("test websocket handler failed: {s}", .{@errorName(err)});

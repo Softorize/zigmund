@@ -6,7 +6,7 @@ const Response = @import("../http/response.zig").Response;
 const websocket = @import("../runtime/websocket.zig");
 
 pub const HttpHandler = *const fn (*Request, std.mem.Allocator) anyerror!Response;
-pub const WebSocketHandler = *const fn (*websocket.Connection, std.mem.Allocator) anyerror!void;
+pub const WebSocketHandler = *const fn (*websocket.Connection, *Request, std.mem.Allocator) anyerror!void;
 
 pub const HttpRoute = struct {
     method: types.RouteMethod,
@@ -289,10 +289,58 @@ pub const Router = struct {
         const T = @TypeOf(handler);
         if (T == WebSocketHandler) return handler;
         if (@typeInfo(T) == .@"fn") {
-            const ptr: WebSocketHandler = &handler;
-            return ptr;
+            if (comptime isDirectWebSocketHandlerType(T)) {
+                const ptr: WebSocketHandler = &handler;
+                return ptr;
+            }
+            if (comptime isLegacyWebSocketHandlerType(T)) {
+                return adaptLegacyWebSocketHandler(handler);
+            }
         }
-        @compileError("WebSocket handler must be fn(*websocket.Connection, std.mem.Allocator) !void");
+        @compileError(
+            "WebSocket handler must be fn(*websocket.Connection, *Request, std.mem.Allocator) !void or fn(*websocket.Connection, std.mem.Allocator) !void",
+        );
+    }
+
+    fn adaptLegacyWebSocketHandler(comptime handler: anytype) WebSocketHandler {
+        const Legacy = struct {
+            fn run(conn: *websocket.Connection, req: *Request, allocator: std.mem.Allocator) anyerror!void {
+                _ = req;
+                return @call(.auto, handler, .{ conn, allocator });
+            }
+        };
+        return Legacy.run;
+    }
+
+    fn isDirectWebSocketHandlerType(comptime T: type) bool {
+        if (@typeInfo(T) != .@"fn") return false;
+        const info = @typeInfo(T).@"fn";
+        if (info.params.len != 3) return false;
+        if (info.params[0].type != *websocket.Connection) return false;
+        if (info.params[1].type != *Request) return false;
+        if (info.params[2].type != std.mem.Allocator) return false;
+        if (info.return_type == null) return false;
+
+        const ret = info.return_type.?;
+        if (@typeInfo(ret) == .error_union) {
+            return @typeInfo(ret).error_union.payload == void;
+        }
+        return ret == void;
+    }
+
+    fn isLegacyWebSocketHandlerType(comptime T: type) bool {
+        if (@typeInfo(T) != .@"fn") return false;
+        const info = @typeInfo(T).@"fn";
+        if (info.params.len != 2) return false;
+        if (info.params[0].type != *websocket.Connection) return false;
+        if (info.params[1].type != std.mem.Allocator) return false;
+        if (info.return_type == null) return false;
+
+        const ret = info.return_type.?;
+        if (@typeInfo(ret) == .error_union) {
+            return @typeInfo(ret).error_union.payload == void;
+        }
+        return ret == void;
     }
 
     fn isDirectHttpHandlerType(comptime T: type) bool {
