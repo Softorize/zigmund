@@ -39,6 +39,7 @@ pub const AppConfig = struct {
     redoc: RedocUiConfig = .{},
     servers: []const []const u8 = &.{},
     strict_validation: bool = false,
+    json_schema_dialect: ?[]const u8 = "https://json-schema.org/draft/2020-12/schema",
     structured_access_logs: bool = false,
     structured_telemetry_logs: bool = false,
     structured_trace_logs: bool = false,

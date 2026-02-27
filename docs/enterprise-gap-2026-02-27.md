@@ -102,6 +102,7 @@
   - response-model schemas are deduplicated under `components.schemas`,
   - route responses now use `$ref` to component schemas,
   - default operation IDs are now stable (`<method>_<normalized_path>`, websocket equivalent).
+  - generated OpenAPI documents now emit top-level `jsonSchemaDialect` with a 2020-12 default (`https://json-schema.org/draft/2020-12/schema`), configurable/disableable via `AppConfig.json_schema_dialect`.
   - deterministic OpenAPI generation mode is now available via `AppConfig.openapi_deterministic`:
     - sorted `paths`,
     - sorted response-model `components.schemas`,

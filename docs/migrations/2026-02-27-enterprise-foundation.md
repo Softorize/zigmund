@@ -119,6 +119,10 @@
    - response model types can now define `zigmund_response_validate(value: *const std.json.Value, allocator: std.mem.Allocator) !void`.
    - validation hook executes after response-model transform/include/exclude/default/null/alias shaping and before final payload serialization.
    - failed hooks trigger deterministic internal-server-error response fallback.
+30. OpenAPI JSON Schema dialect extension:
+   - `AppConfig` now includes `json_schema_dialect` (default: `https://json-schema.org/draft/2020-12/schema`).
+   - generated OpenAPI documents now emit top-level `jsonSchemaDialect` when configured.
+   - emission can be disabled by setting `json_schema_dialect = null`.
 
 ## Migration Actions
 
@@ -158,6 +162,7 @@
 21. If request payload/domain validation previously lived only in handlers, migrate it into model-local `zigmund_validate(...)` hooks to produce standardized 422 validation issue payloads.
 22. If your platform requires custom auth failure envelopes/headers, migrate from middleware-based response patching to `setUnauthorizedHandler(...)` / `setInsufficientScopeHandler(...)` for deterministic security failure responses.
 23. If response payload invariants were previously validated ad hoc in handlers/middleware, migrate them into model-local `zigmund_response_validate(...)` hooks for deterministic post-shaping validation.
+24. If your OpenAPI consumers require explicit JSON Schema dialect pinning, adopt `AppConfig.json_schema_dialect`; set to `null` only when external tooling enforces/infers dialect out-of-band.
 
 ## Compatibility Notes
 

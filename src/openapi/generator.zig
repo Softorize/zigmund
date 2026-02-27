@@ -188,6 +188,12 @@ pub fn generate(
     try writeFieldName(&writer, "openapi");
     try writer.writeAll("\"3.1.0\",");
 
+    if (cfg.json_schema_dialect) |dialect| {
+        try writeFieldName(&writer, "jsonSchemaDialect");
+        try writeJsonString(&writer, dialect);
+        try writer.writeAll(",");
+    }
+
     try writeFieldName(&writer, "info");
     try writer.writeAll("{");
     try writeFieldName(&writer, "title");
