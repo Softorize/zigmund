@@ -169,6 +169,16 @@ fn wsAuthDependency(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]con
     return creds.credentials;
 }
 
+fn injectedSecurityWsHandler(
+    conn: *zigmund.runtime.websocket.Connection,
+    auth: zigmund.SecurityNamed(wsAuthDependency, "ws_auth", &.{"chat:write"}),
+    allocator: std.mem.Allocator,
+) !void {
+    _ = auth;
+    _ = allocator;
+    try conn.sendText("ok");
+}
+
 fn cleanupDependency(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
     _ = req;
     _ = allocator;
@@ -300,6 +310,51 @@ test "testclient websocket connect enforces dependency auth scopes" {
     try std.testing.expectEqual(.text, msg.opcode);
     try std.testing.expectEqualStrings("ok", msg.data);
     try std.testing.expect(session.handlerError() == null);
+}
+
+test "testclient websocket connect enforces injected security markers during handshake when registered" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "ws-testclient-injected-security",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addDependency("ws_auth", wsAuthDependency);
+    try app.addSecurityScheme("ws_auth", .{
+        .oauth2 = .{
+            .flows = .{
+                .password = .{
+                    .token_url = "/token",
+                    .scopes = &.{
+                        .{ .name = "chat:read" },
+                        .{ .name = "chat:write" },
+                    },
+                },
+            },
+        },
+    });
+    try app.websocket("/ws-injected-protected", injectedSecurityWsHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    try std.testing.expectError(error.Unauthorized, client.websocketConnect("/ws-injected-protected"));
+    try std.testing.expectError(
+        error.InsufficientScope,
+        client.websocketConnectWithHeaders("/ws-injected-protected", &.{
+            .{ .name = "authorization", .value = "Bearer token-a" },
+            .{ .name = "x-scopes", .value = "chat:read" },
+        }),
+    );
+
+    var session = try client.websocketConnectWithHeaders("/ws-injected-protected", &.{
+        .{ .name = "authorization", .value = "Bearer token-b" },
+        .{ .name = "x-scopes", .value = "chat:read chat:write" },
+    });
+    defer session.deinit();
+
+    const msg = try session.receiveSmall();
+    try std.testing.expectEqual(.text, msg.opcode);
+    try std.testing.expectEqualStrings("ok", msg.data);
 }
 
 test "testclient websocket session triggers dependency cleanup on close" {
