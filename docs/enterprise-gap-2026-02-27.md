@@ -75,7 +75,8 @@
     - `enableJsonMetricsSink()`.
   - audit event sink added:
     - `setAuditSink(...)` + `enableJsonAuditSink()`,
-    - audit emissions for lifecycle transitions/failures and auth failure outcomes (`unauthorized`, `insufficient_scope`).
+    - audit emissions for lifecycle transitions/failures and auth failure outcomes (`unauthorized`, `insufficient_scope`),
+    - startup runtime policy snapshot emission (`startup_config`) with structured server config details and `serve_failed` capture.
 - Security failure-mode hardening:
   - unauthorized responses now include `WWW-Authenticate: Bearer`.
 - OpenAPI hardening:

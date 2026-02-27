@@ -353,6 +353,7 @@ pub const App = struct {
         self.active_server_cfg = cfg;
         defer self.active_server_cfg = null;
 
+        self.emitStartupConfigAudit(cfg);
         self.emitAudit(.{
             .category = "lifecycle",
             .action = "startup_begin",
@@ -395,7 +396,14 @@ pub const App = struct {
             }
         }
 
-        try runtime.server.serve(self, cfg, dispatchTrampoline, self, shouldStopTrampoline);
+        runtime.server.serve(self, cfg, dispatchTrampoline, self, shouldStopTrampoline) catch |err| {
+            self.emitAudit(.{
+                .category = "lifecycle",
+                .action = "serve_failed",
+                .detail = @errorName(err),
+            });
+            return err;
+        };
     }
 
     pub fn openapi(self: *App) ![]const u8 {
@@ -1091,6 +1099,39 @@ pub const App = struct {
                 std.log.warn("audit json sink failed: {s}", .{@errorName(err)});
             };
         }
+    }
+
+    fn emitStartupConfigAudit(self: *App, cfg: runtime.ServerConfig) void {
+        const detail = std.fmt.allocPrint(
+            self.allocator,
+            "{{\"host\":{f},\"port\":{d},\"workers\":{d},\"recv_buffer_size\":{d},\"send_buffer_size\":{d},\"max_header_bytes\":{d},\"max_body_bytes\":{d},\"max_connections\":{d},\"accept_poll_interval_ms\":{d},\"idle_timeout_ms\":{d},\"shutdown_grace_period_ms\":{d},\"trusted_proxy_headers\":{},\"trusted_proxy_cidrs\":{d},\"tls_enabled\":{}}}",
+            .{
+                std.json.fmt(cfg.host, .{}),
+                cfg.port,
+                cfg.resolvedWorkerCount(),
+                cfg.recv_buffer_size,
+                cfg.send_buffer_size,
+                cfg.max_header_bytes,
+                cfg.max_body_bytes,
+                cfg.max_connections,
+                cfg.accept_poll_interval_ms,
+                cfg.idle_timeout_ms,
+                cfg.shutdown_grace_period_ms,
+                cfg.trusted_proxy_headers,
+                cfg.trusted_proxy_cidrs.len,
+                cfg.tls != null,
+            },
+        ) catch |err| {
+            std.log.warn("failed to format startup audit detail: {s}", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(detail);
+
+        self.emitAudit(.{
+            .category = "lifecycle",
+            .action = "startup_config",
+            .detail = detail,
+        });
     }
 
     fn emitAuthAudit(self: *App, req: *const Request, action: []const u8, detail: []const u8) void {
