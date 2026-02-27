@@ -59,21 +59,25 @@ pub fn main() !void {
     }
 
     if (std.mem.eql(u8, command, "cloud")) {
-        const out_path = try parseCloudFlags(&args);
-        const plan = try renderCloudPlan(allocator, &app);
+        const opts = try parseCloudFlags(&args);
+        const plan = try renderCloudPlan(allocator, &app, opts.provider);
         defer allocator.free(plan);
 
-        if (out_path) |path| {
+        if (opts.out_path) |path| {
             try writeFile(path, plan);
         } else {
             try writeStdout(plan);
             try writeStdout("\n");
         }
+
+        if (opts.emit_dir) |dir| {
+            try emitCloudScaffold(allocator, &app, opts.provider, dir);
+        }
         return;
     }
 
     if (std.mem.eql(u8, command, "sbom")) {
-        const out_path = try parseCloudFlags(&args);
+        const out_path = try parseOutputFlags(&args);
         const sbom = try renderSbom(allocator, &app);
         defer allocator.free(sbom);
 
@@ -238,6 +242,26 @@ const OpenApiCommandOptions = struct {
     deterministic: bool = false,
 };
 
+const CloudProvider = enum {
+    generic,
+    docker,
+    flyio,
+
+    fn asString(self: CloudProvider) []const u8 {
+        return switch (self) {
+            .generic => "generic",
+            .docker => "docker",
+            .flyio => "flyio",
+        };
+    }
+};
+
+const CloudCommandOptions = struct {
+    out_path: ?[]const u8 = null,
+    provider: CloudProvider = .generic,
+    emit_dir: ?[]const u8 = null,
+};
+
 fn parseOpenApiFlags(args: anytype) !OpenApiCommandOptions {
     var opts: OpenApiCommandOptions = .{};
 
@@ -260,7 +284,7 @@ fn parseOpenApiFlags(args: anytype) !OpenApiCommandOptions {
     return opts;
 }
 
-fn parseCloudFlags(args: *std.process.ArgIterator) !?[]const u8 {
+fn parseOutputFlags(args: anytype) !?[]const u8 {
     var out_path: ?[]const u8 = null;
 
     while (args.next()) |arg| {
@@ -272,6 +296,36 @@ fn parseCloudFlags(args: *std.process.ArgIterator) !?[]const u8 {
     }
 
     return out_path;
+}
+
+fn parseCloudFlags(args: anytype) !CloudCommandOptions {
+    var opts: CloudCommandOptions = .{};
+
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--out") or std.mem.eql(u8, arg, "--output")) {
+            opts.out_path = args.next() orelse return error.MissingOutputPath;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--provider")) {
+            const value = args.next() orelse return error.MissingProviderValue;
+            opts.provider = parseCloudProvider(value) orelse return error.InvalidCloudProvider;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--emit-dir")) {
+            opts.emit_dir = args.next() orelse return error.MissingEmitDirValue;
+            continue;
+        }
+        return error.UnknownFlag;
+    }
+
+    return opts;
+}
+
+fn parseCloudProvider(value: []const u8) ?CloudProvider {
+    if (std.mem.eql(u8, value, "generic")) return .generic;
+    if (std.mem.eql(u8, value, "docker")) return .docker;
+    if (std.mem.eql(u8, value, "flyio")) return .flyio;
+    return null;
 }
 
 fn printRoutes(app: *zigmund.App) !void {
@@ -344,19 +398,117 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
     return out.toOwnedSlice(allocator);
 }
 
-fn renderCloudPlan(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
+fn renderCloudPlan(allocator: std.mem.Allocator, app: *zigmund.App, provider: CloudProvider) ![]u8 {
     const openapi = try app.openapi();
+
+    const deploy_descriptor = switch (provider) {
+        .generic => "{\"kind\":\"generic\",\"command\":\"zig build run -- serve\",\"artifact_files\":[]}",
+        .docker => "{\"kind\":\"docker\",\"command\":\"docker run -p 8000:8000 zigmund/app:latest\",\"artifact_files\":[\"Dockerfile\"]}",
+        .flyio => "{\"kind\":\"flyio\",\"command\":\"flyctl deploy\",\"artifact_files\":[\"Dockerfile\",\"fly.toml\"]}",
+    };
+
     return std.fmt.allocPrint(
         allocator,
-        "{{\"framework\":{f},\"app_title\":{f},\"app_version\":{f},\"http_routes\":{d},\"websocket_routes\":{d},\"openapi_bytes\":{d},\"serve_hint\":{{\"command\":\"zig build run -- serve\",\"host\":\"127.0.0.1\",\"port\":8000}}}}",
+        "{{\"framework\":{f},\"provider\":{f},\"app_title\":{f},\"app_version\":{f},\"http_routes\":{d},\"websocket_routes\":{d},\"openapi_bytes\":{d},\"serve_hint\":{{\"command\":\"zig build run -- serve\",\"host\":\"127.0.0.1\",\"port\":8000}},\"deploy\":{s}}}",
         .{
             std.json.fmt("zigmund", .{}),
+            std.json.fmt(provider.asString(), .{}),
             std.json.fmt(app.cfg.title, .{}),
             std.json.fmt(app.cfg.version, .{}),
             app.router.httpRoutes().len,
             app.router.websocketRoutes().len,
             openapi.len,
+            deploy_descriptor,
         },
+    );
+}
+
+fn emitCloudScaffold(
+    allocator: std.mem.Allocator,
+    app: *zigmund.App,
+    provider: CloudProvider,
+    dir_path: []const u8,
+) !void {
+    if (provider == .generic) return;
+
+    const cwd = std.fs.cwd();
+    try cwd.makePath(dir_path);
+
+    const dockerfile_path = try std.fmt.allocPrint(allocator, "{s}/Dockerfile", .{dir_path});
+    defer allocator.free(dockerfile_path);
+    try writeFile(dockerfile_path, dockerfileTemplate());
+
+    if (provider == .flyio) {
+        const app_slug = try cloudAppSlug(allocator, app.cfg.title);
+        defer allocator.free(app_slug);
+
+        const fly_toml = try renderFlyToml(allocator, app_slug);
+        defer allocator.free(fly_toml);
+
+        const fly_toml_path = try std.fmt.allocPrint(allocator, "{s}/fly.toml", .{dir_path});
+        defer allocator.free(fly_toml_path);
+        try writeFile(fly_toml_path, fly_toml);
+    }
+}
+
+fn dockerfileTemplate() []const u8 {
+    return 
+    \\FROM alpine:3.20
+    \\RUN apk add --no-cache libgcc libstdc++ openssl
+    \\WORKDIR /app
+    \\COPY zig-out/bin/zigmund /app/zigmund
+    \\EXPOSE 8000
+    \\ENTRYPOINT ["/app/zigmund", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    \\
+    ;
+}
+
+fn renderFlyToml(allocator: std.mem.Allocator, app_slug: []const u8) ![]u8 {
+    return std.fmt.allocPrint(
+        allocator,
+        "app = \"{s}\"\nprimary_region = \"iad\"\n\n[build]\n  dockerfile = \"Dockerfile\"\n\n[http_service]\n  internal_port = 8000\n  force_https = true\n  auto_start_machines = true\n  auto_stop_machines = \"stop\"\n  min_machines_running = 0\n  processes = [\"app\"]\n",
+        .{app_slug},
+    );
+}
+
+fn cloudAppSlug(allocator: std.mem.Allocator, title: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var last_dash = false;
+    for (title) |c| {
+        if (std.ascii.isAlphanumeric(c)) {
+            try out.append(allocator, std.ascii.toLower(c));
+            last_dash = false;
+            continue;
+        }
+        if (!last_dash and out.items.len != 0) {
+            try out.append(allocator, '-');
+            last_dash = true;
+        }
+    }
+
+    while (out.items.len > 0 and out.items[out.items.len - 1] == '-') {
+        _ = out.pop();
+    }
+
+    if (out.items.len == 0) {
+        try out.appendSlice(allocator, "zigmund-app");
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn usage() !void {
+    try writeStdout(
+        "Usage: zigmund <command> [options]\n" ++
+            "Commands:\n" ++
+            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  routes [--json]\n" ++
+            "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
+            "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>]\n" ++
+            "  sbom [--out <path>]\n",
     );
 }
 
@@ -369,19 +521,6 @@ fn renderSbom(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
             std.json.fmt(app.cfg.version, .{}),
             std.json.fmt(builtin.zig_version_string, .{}),
         },
-    );
-}
-
-fn usage() !void {
-    try writeStdout(
-        "Usage: zigmund <command> [options]\n" ++
-            "Commands:\n" ++
-            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
-            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
-            "  routes [--json]\n" ++
-            "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
-            "  cloud [--out <path>]\n" ++
-            "  sbom [--out <path>]\n",
     );
 }
 
@@ -633,13 +772,64 @@ test "cloud plan renderer outputs route counts and openapi size" {
     var app = try buildDefaultApp(std.testing.allocator);
     defer app.deinit();
 
-    const plan = try renderCloudPlan(std.testing.allocator, &app);
+    const plan = try renderCloudPlan(std.testing.allocator, &app, .generic);
     defer std.testing.allocator.free(plan);
 
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"framework\":\"zigmund\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"provider\":\"generic\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"http_routes\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"websocket_routes\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"openapi_bytes\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan, "\"deploy\":{\"kind\":\"generic\"") != null);
+}
+
+test "cloud plan renderer supports docker and flyio providers" {
+    var app = try buildDefaultApp(std.testing.allocator);
+    defer app.deinit();
+
+    const docker_plan = try renderCloudPlan(std.testing.allocator, &app, .docker);
+    defer std.testing.allocator.free(docker_plan);
+    try std.testing.expect(std.mem.indexOf(u8, docker_plan, "\"provider\":\"docker\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, docker_plan, "\"command\":\"docker run -p 8000:8000 zigmund/app:latest\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, docker_plan, "\"artifact_files\":[\"Dockerfile\"]") != null);
+
+    const flyio_plan = try renderCloudPlan(std.testing.allocator, &app, .flyio);
+    defer std.testing.allocator.free(flyio_plan);
+    try std.testing.expect(std.mem.indexOf(u8, flyio_plan, "\"provider\":\"flyio\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, flyio_plan, "\"command\":\"flyctl deploy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, flyio_plan, "\"artifact_files\":[\"Dockerfile\",\"fly.toml\"]") != null);
+}
+
+test "parse cloud flags supports provider output and scaffold args" {
+    var iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--provider flyio --out deploy-plan.json --emit-dir deploy",
+    ));
+    defer iter.deinit();
+
+    const opts = try parseCloudFlags(&iter);
+    try std.testing.expectEqual(CloudProvider.flyio, opts.provider);
+    try std.testing.expectEqualStrings("deploy-plan.json", opts.out_path.?);
+    try std.testing.expectEqualStrings("deploy", opts.emit_dir.?);
+}
+
+test "cloud app slug and scaffold templates are deterministic" {
+    const slug = try cloudAppSlug(std.testing.allocator, "Zigmund API (Prod)");
+    defer std.testing.allocator.free(slug);
+    try std.testing.expectEqualStrings("zigmund-api-prod", slug);
+
+    const fallback = try cloudAppSlug(std.testing.allocator, "____");
+    defer std.testing.allocator.free(fallback);
+    try std.testing.expectEqualStrings("zigmund-app", fallback);
+
+    const dockerfile = dockerfileTemplate();
+    try std.testing.expect(std.mem.indexOf(u8, dockerfile, "ENTRYPOINT") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dockerfile, "zig-out/bin/zigmund") != null);
+
+    const fly_toml = try renderFlyToml(std.testing.allocator, "zigmund-api-prod");
+    defer std.testing.allocator.free(fly_toml);
+    try std.testing.expect(std.mem.indexOf(u8, fly_toml, "app = \"zigmund-api-prod\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fly_toml, "internal_port = 8000") != null);
 }
 
 test "sbom renderer outputs cyclonedx metadata and component licenses" {

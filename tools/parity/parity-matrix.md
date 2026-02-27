@@ -1,6 +1,6 @@
 # FastAPI Parity Matrix
 
-Generated: 2026-02-27T18:56:19Z
+Generated: 2026-02-27T18:59:56Z
 
 Total docs targets: 116
 

@@ -212,7 +212,10 @@
   - `zigmund openapi` now supports file export via `--out <path>` / `--output <path>`.
   - `zigmund openapi` now supports deterministic generation mode via `--deterministic` (stable path/method/component ordering for CI snapshots).
   - `zigmund openapi` now supports snapshot diff gating via `--diff <path>` with deterministic mismatch failure (`OpenApiSnapshotMismatch`) for CI regression checks.
-  - `zigmund cloud` now emits a functional deployment-plan JSON (framework/app metadata, route counts, OpenAPI size) and supports writing it via `--out <path>`.
+  - `zigmund cloud` now supports provider-aware deployment planning:
+    - `--provider <generic|docker|flyio>` for provider-specific deploy command/artifact metadata,
+    - `--emit-dir <dir>` scaffold emission for concrete deployment files (`Dockerfile`, `fly.toml`).
+  - cloud plan output now includes deterministic provider/deploy descriptors suitable for CI handoff.
   - `zigmund sbom` now emits a CycloneDX (`specVersion: 1.5`) software bill of materials with framework metadata, license marker, and runtime components.
 - Performance program progress:
   - benchmark-family scaffolding now exists under `tests/perf/`:
