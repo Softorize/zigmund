@@ -1,6 +1,6 @@
 # FastAPI Parity Matrix
 
-Generated: 2026-02-27T08:53:56Z
+Generated: 2026-02-27T08:56:18Z
 
 Total docs targets: 116
 
@@ -29,10 +29,10 @@ Total docs targets: 116
 | `advanced/security/` | `examples/parity/advanced/security.zig` | stub |
 | `advanced/security/http-basic-auth/` | `examples/parity/advanced/security__http-basic-auth.zig` | stub |
 | `advanced/security/oauth2-scopes/` | `examples/parity/advanced/security__oauth2-scopes.zig` | stub |
-| `advanced/settings/` | `examples/parity/advanced/settings.zig` | stub |
+| `advanced/settings/` | `examples/parity/advanced/settings.zig` | implemented |
 | `advanced/strict-content-type/` | `examples/parity/advanced/strict-content-type.zig` | stub |
 | `advanced/sub-applications/` | `examples/parity/advanced/sub-applications.zig` | stub |
-| `advanced/templates/` | `examples/parity/advanced/templates.zig` | stub |
+| `advanced/templates/` | `examples/parity/advanced/templates.zig` | implemented |
 | `advanced/testing-dependencies/` | `examples/parity/advanced/testing-dependencies.zig` | stub |
 | `advanced/testing-events/` | `examples/parity/advanced/testing-events.zig` | stub |
 | `advanced/testing-websockets/` | `examples/parity/advanced/testing-websockets.zig` | stub |
@@ -47,7 +47,7 @@ Total docs targets: 116
 | `how-to/custom-request-and-route/` | `examples/parity/how-to/custom-request-and-route.zig` | stub |
 | `how-to/extending-openapi/` | `examples/parity/how-to/extending-openapi.zig` | stub |
 | `how-to/general/` | `examples/parity/how-to/general.zig` | stub |
-| `how-to/graphql/` | `examples/parity/how-to/graphql.zig` | stub |
+| `how-to/graphql/` | `examples/parity/how-to/graphql.zig` | implemented |
 | `how-to/migrate-from-pydantic-v1-to-pydantic-v2/` | `examples/parity/how-to/migrate-from-pydantic-v1-to-pydantic-v2.zig` | stub |
 | `how-to/separate-openapi-schemas/` | `examples/parity/how-to/separate-openapi-schemas.zig` | stub |
 | `how-to/testing-database/` | `examples/parity/how-to/testing-database.zig` | stub |
@@ -119,10 +119,10 @@ Total docs targets: 116
 | `tutorial/security/get-current-user/` | `examples/parity/tutorial/security__get-current-user.zig` | stub |
 | `tutorial/security/oauth2-jwt/` | `examples/parity/tutorial/security__oauth2-jwt.zig` | stub |
 | `tutorial/security/simple-oauth2/` | `examples/parity/tutorial/security__simple-oauth2.zig` | stub |
-| `tutorial/sql-databases/` | `examples/parity/tutorial/sql-databases.zig` | stub |
-| `tutorial/static-files/` | `examples/parity/tutorial/static-files.zig` | stub |
+| `tutorial/sql-databases/` | `examples/parity/tutorial/sql-databases.zig` | implemented |
+| `tutorial/static-files/` | `examples/parity/tutorial/static-files.zig` | implemented |
 | `tutorial/testing/` | `examples/parity/tutorial/testing.zig` | stub |
 
-Implemented: 16/116
-Stub: 100/116
+Implemented: 21/116
+Stub: 95/116
 Missing: 0/116

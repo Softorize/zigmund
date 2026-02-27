@@ -1,20 +1,28 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/static-files/
-
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn readStaticInfo(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/static-files/",
+        .static_prefix = "/tutorial/static-files/assets",
+        .example_file = "/tutorial/static-files/assets/index.html",
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/static-files", placeholder, .{
-        .summary = "Parity stub for tutorial/static-files/",
-        .tags = &.{"parity", "tutorial"},
+    try zigmund.mountStaticFiles(
+        app,
+        "/tutorial/static-files/assets",
+        "examples/parity/assets/static",
+        .{
+            .include_in_schema = true,
+            .cache_control = "public, max-age=300",
+        },
+    );
+
+    try app.get("/tutorial/static-files", readStaticInfo, .{
+        .summary = "Static files mount example",
+        .tags = &.{ "parity", "tutorial" },
+        .operation_id = "tutorial_static_files_info",
     });
 }

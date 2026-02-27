@@ -17,7 +17,7 @@ test "parity tooling and example scaffolds exist" {
     try std.testing.expect(fileExists("examples/parity/tutorial/first-steps.zig"));
 }
 
-test "parity baseline tutorial examples are implemented (no stub markers)" {
+test "parity baseline examples are implemented (no stub markers)" {
     const implemented_examples = [_][]const u8{
         "examples/parity/tutorial/first-steps.zig",
         "examples/parity/tutorial/background-tasks.zig",
@@ -35,6 +35,11 @@ test "parity baseline tutorial examples are implemented (no stub markers)" {
         "examples/parity/tutorial/response-model.zig",
         "examples/parity/tutorial/request-forms.zig",
         "examples/parity/tutorial/request-files.zig",
+        "examples/parity/tutorial/static-files.zig",
+        "examples/parity/tutorial/sql-databases.zig",
+        "examples/parity/how-to/graphql.zig",
+        "examples/parity/advanced/templates.zig",
+        "examples/parity/advanced/settings.zig",
     };
 
     for (implemented_examples) |example_path| {

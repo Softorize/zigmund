@@ -1,20 +1,38 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: how-to/graphql/
-
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn graphqlExecutor(
+    query: []const u8,
+    operation_name: ?[]const u8,
+    variables_json: ?[]const u8,
+    req: *zigmund.Request,
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "how-to/graphql/",
+        .query = query,
+        .operation = operation_name orelse "",
+        .variables = variables_json orelse "",
+    });
+}
+
+fn graphqlInfo(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    return zigmund.Response.json(allocator, .{
+        .graphql_endpoint = "/how-to/graphql",
+        .playground = true,
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/how-to/graphql", placeholder, .{
-        .summary = "Parity stub for how-to/graphql/",
-        .tags = &.{"parity", "how-to"},
+    try zigmund.mountGraphQl(app, "/how-to/graphql", graphqlExecutor, .{
+        .allow_get = true,
+        .playground = true,
+    });
+
+    try app.get("/how-to/graphql/info", graphqlInfo, .{
+        .summary = "GraphQL integration setup details",
+        .tags = &.{ "parity", "how-to" },
+        .operation_id = "how_to_graphql_info",
     });
 }
