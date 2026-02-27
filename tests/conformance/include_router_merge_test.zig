@@ -61,3 +61,32 @@ test "includeRouter merges tags and dependencies with include-level values first
     const inner_pos = std.mem.indexOf(u8, doc, "\"name\":\"inner_dep\"") orelse unreachable;
     try std.testing.expect(outer_pos < inner_pos);
 }
+
+test "includeRouter applies default_response_class when route does not define one" {
+    var sub = zigmund.Router.init(std.testing.allocator);
+    defer sub.deinit();
+
+    const H = struct {
+        fn run(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+            _ = req;
+            _ = allocator;
+            return zigmund.Response.text("ok");
+        }
+    };
+
+    try sub.addHttpRoute(.GET, "/text", H.run, .{});
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "include-router-default-response-class",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.includeRouter("/v1", &sub, .{
+        .default_response_class = "PlainTextResponse",
+    });
+
+    const doc = try app.openapi();
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"/v1/text\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"text/plain; charset=utf-8\"") != null);
+}

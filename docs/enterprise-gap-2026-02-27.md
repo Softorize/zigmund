@@ -112,6 +112,9 @@
     - top-level `webhooks` via `AppConfig.webhooks`,
     - request/response examples (`openapi_request_examples`, `openapi_response_examples`),
     - schema composition (`oneOf`/`anyOf`/`allOf`) and discriminator mapping in `OpenApiSchema`.
+  - `default_response_class` is now wired into OpenAPI response generation:
+    - route-level `RouteOptions.default_response_class` maps to default response content type,
+    - include-router default (`IncludeRouterOptions.default_response_class`) now propagates to included routes that do not define one.
 - Runtime floor hardening (M1 progress):
   - `ServerConfig` now includes body/connection limits and shutdown/timeout tuning knobs.
   - Server loop now supports shutdown signaling + connection drain behavior.

@@ -1270,6 +1270,7 @@ fn writeResponsesObject(
 ) !void {
     const default_status = options.status_code orelse .ok;
     const response_model_schema = options.response_model_schema;
+    const default_content_type = defaultResponseContentType(options);
     var has_default = false;
 
     try writer.writeAll("{");
@@ -1291,7 +1292,7 @@ fn writeResponsesObject(
         const response_examples = responseExamplesForStatusAndContentType(
             options.openapi_response_examples,
             spec.status_code,
-            spec.content_type orelse "application/json",
+            spec.content_type orelse default_content_type,
         );
 
         const applies_model_schema = response_model_schema != null and spec.status_code == default_status;
@@ -1321,18 +1322,27 @@ fn writeResponsesObject(
                 try writeResponseContentRef(
                     writer,
                     allocator,
-                    "application/json",
+                    default_content_type,
                     component_name,
                     response_examples,
                 );
             } else {
                 try writeResponseContent(
                     writer,
-                    "application/json",
+                    default_content_type,
                     response_model_schema,
                     response_examples,
                 );
             }
+        } else if (options.default_response_class != null) {
+            try writer.writeAll(",");
+            try writeFieldName(writer, "content");
+            try writeResponseContent(
+                writer,
+                default_content_type,
+                null,
+                response_examples,
+            );
         }
 
         try writer.writeAll("}");
@@ -1349,7 +1359,7 @@ fn writeResponsesObject(
         const default_examples = responseExamplesForStatusAndContentType(
             options.openapi_response_examples,
             default_status,
-            "application/json",
+            default_content_type,
         );
         if (response_model_schema != null) {
             try writer.writeAll(",");
@@ -1358,14 +1368,14 @@ fn writeResponsesObject(
                 try writeResponseContentRef(
                     writer,
                     allocator,
-                    "application/json",
+                    default_content_type,
                     component_name,
                     default_examples,
                 );
             } else {
                 try writeResponseContent(
                     writer,
-                    "application/json",
+                    default_content_type,
                     response_model_schema,
                     default_examples,
                 );
@@ -1373,12 +1383,28 @@ fn writeResponsesObject(
         } else if (default_examples.len > 0) {
             try writer.writeAll(",");
             try writeFieldName(writer, "content");
-            try writeResponseContent(writer, "application/json", null, default_examples);
+            try writeResponseContent(writer, default_content_type, null, default_examples);
+        } else if (options.default_response_class != null) {
+            try writer.writeAll(",");
+            try writeFieldName(writer, "content");
+            try writeResponseContent(writer, default_content_type, null, &.{});
         }
         try writer.writeAll("}");
     }
 
     try writer.writeAll("}");
+}
+
+fn defaultResponseContentType(options: types.StoredRouteOptions) []const u8 {
+    const class_name = options.default_response_class orelse return "application/json";
+
+    if (std.ascii.eqlIgnoreCase(class_name, "PlainTextResponse")) return "text/plain; charset=utf-8";
+    if (std.ascii.eqlIgnoreCase(class_name, "HTMLResponse")) return "text/html; charset=utf-8";
+    if (std.ascii.eqlIgnoreCase(class_name, "FileResponse")) return "application/octet-stream";
+    if (std.ascii.eqlIgnoreCase(class_name, "StreamingResponse")) return "application/octet-stream";
+    if (std.ascii.eqlIgnoreCase(class_name, "EventSourceResponse")) return "text/event-stream; charset=utf-8";
+
+    return "application/json";
 }
 
 fn responseExamplesForStatusAndContentType(

@@ -302,6 +302,9 @@ pub const App = struct {
                 opts.dependencies,
             );
             merged_opts.include_in_schema = route.options.include_in_schema and opts.include_in_schema;
+            if (merged_opts.default_response_class == null) {
+                merged_opts.default_response_class = opts.default_response_class;
+            }
             try self.router.addHttpRouteStored(route.method, combined, route.handler, merged_opts);
         }
 

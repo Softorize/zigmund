@@ -256,6 +256,7 @@ pub const RouteOptions = struct {
     responses: []const ResponseSpec = &.{},
     deprecated: bool = false,
     operation_id: ?[]const u8 = null,
+    default_response_class: ?[]const u8 = null,
 };
 
 pub const StoredRouteOptions = struct {
@@ -288,6 +289,7 @@ pub const StoredRouteOptions = struct {
     responses: []const ResponseSpec = &.{},
     deprecated: bool = false,
     operation_id: ?[]const u8 = null,
+    default_response_class: ?[]const u8 = null,
 };
 
 pub fn storeRouteOptions(opts: RouteOptions) StoredRouteOptions {
@@ -322,6 +324,7 @@ pub fn storeRouteOptions(opts: RouteOptions) StoredRouteOptions {
         .responses = opts.responses,
         .deprecated = opts.deprecated,
         .operation_id = opts.operation_id,
+        .default_response_class = opts.default_response_class,
     };
 }
 
