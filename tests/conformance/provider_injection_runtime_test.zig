@@ -1,0 +1,192 @@
+const std = @import("std");
+const zigmund = @import("zigmund");
+
+var cache_calls: usize = 0;
+var no_cache_calls: usize = 0;
+var tenant_calls: usize = 0;
+
+fn tokenProvider(req: *zigmund.Request) ?[]const u8 {
+    return req.queryParam("token");
+}
+
+fn userProvider(
+    req: *zigmund.Request,
+    token_dep: zigmund.Depends(tokenProvider, .{ .name = "token_dep" }),
+) !?[]const u8 {
+    const token = token_dep.value orelse return null;
+    if (std.mem.eql(u8, token, "secret")) {
+        try zigmund.security.setGrantedScopes(req, &.{"items:read"});
+        return "alice";
+    }
+    return null;
+}
+
+fn limitedUserProvider(
+    req: *zigmund.Request,
+    token_dep: zigmund.Depends(tokenProvider, .{ .name = "token_dep" }),
+) !?[]const u8 {
+    const token = token_dep.value orelse return null;
+    if (std.mem.eql(u8, token, "secret")) {
+        try zigmund.security.setGrantedScopes(req, &.{"profile:read"});
+        return "alice";
+    }
+    return null;
+}
+
+fn nestedSecurityHandler(
+    user: zigmund.SecurityNamed(userProvider, "auth", &.{"items:read"}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{ .user = user.value.? });
+}
+
+fn nestedMissingScopeHandler(
+    user: zigmund.SecurityNamed(limitedUserProvider, "auth", &.{"items:write"}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{ .user = user.value.? });
+}
+
+fn cachedProvider(req: *zigmund.Request) ?[]const u8 {
+    _ = req;
+    cache_calls += 1;
+    return "cached";
+}
+
+fn cacheHandler(
+    one: zigmund.Depends(cachedProvider, .{ .name = "cache_dep" }),
+    two: zigmund.Depends(cachedProvider, .{ .name = "cache_dep" }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .one = one.value orelse "",
+        .two = two.value orelse "",
+    });
+}
+
+fn nonCachedProvider(req: *zigmund.Request) ?[]const u8 {
+    _ = req;
+    no_cache_calls += 1;
+    return "fresh";
+}
+
+fn noCacheHandler(
+    one: zigmund.Depends(nonCachedProvider, .{ .name = "fresh_dep", .use_cache = false }),
+    two: zigmund.Depends(nonCachedProvider, .{ .name = "fresh_dep", .use_cache = false }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .one = one.value orelse "",
+        .two = two.value orelse "",
+    });
+}
+
+fn tenantProvider(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = allocator;
+    tenant_calls += 1;
+    return req.queryParam("tenant") orelse "default";
+}
+
+fn tenantHandler(
+    tenant: zigmund.Depends(tenantProvider, .{ .name = "tenant", .cache_scope = .app }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .tenant = tenant.value orelse "",
+    });
+}
+
+test "nested provider dependencies resolve for security marker" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "nested-provider",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addSecurityScheme("auth", .{ .http = .{ .scheme = "bearer", .bearer_format = "JWT" } });
+    try app.get("/nested", nestedSecurityHandler, .{});
+    try app.get("/nested-missing-scope", nestedMissingScopeHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var unauthorized = try client.get("/nested?token=bad");
+    defer unauthorized.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.unauthorized, unauthorized.status);
+
+    var ok = try client.get("/nested?token=secret");
+    defer ok.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, ok.status);
+    try std.testing.expect(std.mem.indexOf(u8, ok.body, "\"user\":\"alice\"") != null);
+
+    var missing_scope = try client.get("/nested-missing-scope?token=secret");
+    defer missing_scope.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.forbidden, missing_scope.status);
+    try std.testing.expect(missing_scope.header("www-authenticate") != null);
+    try std.testing.expect(std.mem.indexOf(u8, missing_scope.header("www-authenticate").?, "insufficient_scope") != null);
+    try std.testing.expect(std.mem.indexOf(u8, missing_scope.header("www-authenticate").?, "items:write") != null);
+}
+
+test "depends use_cache true executes provider once per request" {
+    cache_calls = 0;
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "cache-provider",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/cache", cacheHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    var res = try client.get("/cache");
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, res.status);
+    try std.testing.expectEqual(@as(usize, 1), cache_calls);
+}
+
+test "depends use_cache false executes provider for each marker" {
+    no_cache_calls = 0;
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "no-cache-provider",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/nocache", noCacheHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    var res = try client.get("/nocache");
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, res.status);
+    try std.testing.expectEqual(@as(usize, 2), no_cache_calls);
+}
+
+test "app scoped cache works for named injected dependency when registered" {
+    tenant_calls = 0;
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "tenant-cache",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addDependency("tenant", tenantProvider);
+    try app.get("/tenant", tenantHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var first = try client.get("/tenant?tenant=acme");
+    defer first.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, first.status);
+    try std.testing.expect(std.mem.indexOf(u8, first.body, "\"tenant\":\"acme\"") != null);
+
+    var second = try client.get("/tenant?tenant=other");
+    defer second.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, second.status);
+    try std.testing.expect(std.mem.indexOf(u8, second.body, "\"tenant\":\"acme\"") != null);
+
+    try std.testing.expectEqual(@as(usize, 1), tenant_calls);
+}

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__DOC_TITLE__</title>
+  <style>
+    html { box-sizing: border-box; overflow-y: scroll; }
+    *, *::before, *::after { box-sizing: inherit; }
+    body { margin: 0; background: #fafafa; }
+    __SWAGGER_CSS__
+    __SWAGGER_THEME_OVERRIDES__
+  </style>
+</head>
+<body class="zigmund-docs">
+  <div id="swagger-ui"></div>
+  <script>
+    __SWAGGER_BUNDLE_JS__
+  </script>
+  <script>
+    __SWAGGER_STANDALONE_JS__
+  </script>
+  <script>
+    window.onload = function () {
+      window.ui = SwaggerUIBundle({
+        url: __OPENAPI_URL_JSON__,
+        dom_id: "#swagger-ui",
+        deepLinking: __DEEP_LINKING__,
+        persistAuthorization: __PERSIST_AUTHORIZATION__,
+        displayOperationId: __DISPLAY_OPERATION_ID__,
+        docExpansion: __DOC_EXPANSION_JSON__,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        layout: "StandaloneLayout"
+      });
+    };
+  </script>
+</body>
+</html>

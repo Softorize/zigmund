@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__DOC_TITLE__</title>
+  <style>
+    body { margin: 0; padding: 0; }
+    __REDOC_THEME_OVERRIDES__
+  </style>
+</head>
+<body class="zigmund-redoc">
+  <div id="redoc-container"></div>
+  <script>
+    __REDOC_STANDALONE_JS__
+  </script>
+  <script>
+    Redoc.init(__OPENAPI_URL_JSON__, {
+      hideDownloadButton: __HIDE_DOWNLOAD_BUTTON__,
+      disableSearch: __DISABLE_SEARCH__
+    }, document.getElementById("redoc-container"));
+  </script>
+</body>
+</html>

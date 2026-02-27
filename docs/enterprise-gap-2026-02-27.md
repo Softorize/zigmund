@@ -1,0 +1,217 @@
+# Zigmund Enterprise Gap Review (2026-02-27)
+
+## Baseline
+- FastAPI upstream version: `0.133.1` (`fastapi/__init__.py` on `master`).
+- FastAPI docs targets in scope (`tutorial|advanced|reference|how-to`): `116` pages.
+- Current Zigmund parity matrix: `1 implemented / 115 stub / 0 missing files`.
+
+## What Is Already In Place
+- Core HTTP routing for standard methods and path params.
+- Basic dependency execution pipeline.
+- Marker-based request injection (`Query/Path/Header/Cookie/Body/Form/File`, `Depends`, `Security`).
+- OpenAPI `3.1.0` generation with:
+  - route metadata,
+  - injected parameters,
+  - injected request bodies,
+  - response-model schema emission,
+  - security scheme export.
+- Include-router merging for tags/dependencies/include_in_schema.
+- Runtime validation mapping to 422 for request parsing/coercion failures.
+
+## High-Severity Gaps vs FastAPI-Level Capability
+- Docs parity: only `1/116` behaviorally implemented examples.
+- Validation engine depth:
+  - missing rich constraints (length/range/regex/strictness),
+  - no model-level validators/serializers equivalent to Pydantic v2 behavior.
+- Response-model behavior parity:
+  - missing include/exclude/by_alias/unset/default/none shaping semantics.
+- Dependency system parity:
+  - missing yield-based dependency lifecycle/cleanup scopes,
+  - provider-level nested sub-dependency injection is still incomplete (route dependency DAG solving now present).
+- OpenAPI/JSON Schema parity:
+  - limited component reuse (`$ref`) and schema deduplication,
+  - advanced objects are now partially implemented (route callbacks, top-level webhooks, request/response examples, schema composition/discriminator), but still need broader docs-parity coverage.
+- Security parity:
+  - OAuth2/OIDC flow behavior not fully enterprise-complete (token helpers, richer enforcement, flows integration tests).
+- WebSocket parity:
+  - missing comprehensive dependency/security/test utilities and protocol edge-case handling.
+- Runtime production hardening:
+  - limited timeout/limits controls,
+  - no built-in structured access logs/metrics/tracing integration surface.
+
+## Enterprise Hardening Gaps
+- Observability: request IDs, structured logs, latency/error metrics, trace context propagation.
+- Policy controls: configurable body/header/query size limits and per-route guardrails.
+- Operational safety: graceful shutdown tuning, connection draining, overload controls.
+- Governance: versioned API compatibility tests and regression policy per release channel.
+
+## Enhancements Implemented In This Iteration
+- Exception handlers are now runtime-active (previously registration-only metadata).
+- Handler matching supports typed error-set registration and wildcard `anyerror` fallback.
+- Unhandled route/dispatch errors now return deterministic HTTP 500 responses instead of bubbling transport errors.
+- Conformance coverage added for:
+  - typed exception handler matching,
+  - wildcard handler behavior,
+  - unhandled-error 500 fallback behavior.
+- Response-model runtime shaping now supports include/exclude filtering plus null-pruning (`exclude_none`, and null-pruning applied for unset/default exclusion flags).
+- Dependency lifecycle now supports deterministic cleanup hooks via `addDependencyWithCleanup(...)`, executed in LIFO order for both success and error responses.
+- Observability foundation added:
+  - request ID generation/forwarding (`x-request-id`),
+  - request-id availability in request dependency state,
+  - telemetry sink API (`setTelemetrySink`) with method/path/status/latency events.
+  - structured access-log sink API (`setAccessLogSink`) with trace context, remote address, user-agent, and latency fields.
+  - metrics sink API (`setMetricsSink`) emitting request-count and latency events.
+  - trace-context propagation hook (`setTraceContextHeader(...)`) with dependency exposure (`trace_context`).
+- Observability hardening progress (M4 slice):
+  - thread-safe in-process metrics registry added and wired into runtime request finalization.
+  - optional Prometheus-compatible metrics endpoint added via `AppConfig.metrics_url` (e.g. `/metrics`) with request-count and latency aggregates.
+  - structured JSON fallback logging controls added in `AppConfig`:
+    - `structured_access_logs`,
+    - `structured_telemetry_logs`,
+    - `structured_metrics_logs`.
+  - built-in JSON sink adapters added on `App`:
+    - `enableJsonAccessLogSink()`,
+    - `enableJsonTelemetrySink()`,
+    - `enableJsonMetricsSink()`.
+- Security failure-mode hardening:
+  - unauthorized responses now include `WWW-Authenticate: Bearer`.
+- OpenAPI hardening:
+  - response-model schemas are deduplicated under `components.schemas`,
+  - route responses now use `$ref` to component schemas,
+  - default operation IDs are now stable (`<method>_<normalized_path>`, websocket equivalent).
+  - advanced OpenAPI objects now supported:
+    - route-level `callbacks`,
+    - top-level `webhooks` via `AppConfig.webhooks`,
+    - request/response examples (`openapi_request_examples`, `openapi_response_examples`),
+    - schema composition (`oneOf`/`anyOf`/`allOf`) and discriminator mapping in `OpenApiSchema`.
+- Runtime floor hardening (M1 progress):
+  - `ServerConfig` now includes body/connection limits and shutdown/timeout tuning knobs.
+  - Server loop now supports shutdown signaling + connection drain behavior.
+  - Per-request body-size limits are enforced and oversized payloads return `413 Payload Too Large`.
+  - Per-request header-size limits are now enforced via `ServerConfig.max_header_bytes`, with oversized request headers returning `431 Request Header Fields Too Large`.
+  - Idle polling/timeout primitives are wired in the server loop for deterministic connection teardown.
+  - TLS runtime path is now implemented via OpenSSL-backed in-process connections (PEM cert/key loading + handshake + HTTP dispatch over TLS), removing the previous hard `TlsNotYetImplemented` runtime block.
+- Auth failure hardening:
+  - unauthorized challenge now derives from configured HTTP security scheme (e.g. `Basic`, `Bearer`, `Digest`) when available.
+- Security parity hardening (M1/M2 bridge):
+  - scope enforcement is now active for route dependency specs and `Security(...)` markers when required scopes are declared.
+  - scope context plumbing is now available via request dependency keys:
+    - `zigmund.security.required_scopes`,
+    - `zigmund.security.scopes`,
+    with helper APIs in `security` module.
+  - insufficient-scope failures now return deterministic `403` with `WWW-Authenticate` challenge details (`Bearer error=\"insufficient_scope\"`) and required scope list when available.
+  - OAuth2 password form helper added (`parseOAuth2PasswordRequestForm` / `OAuth2PasswordRequestForm.fromRequest`) with media-type and `grant_type=password` validation.
+  - OAuth2 password form parity expanded with `client_id` and `client_secret` support in parser/form model.
+  - OAuth2 helper coverage expanded with `OAuth2ClientCredentialsBearer` and `OAuth2ImplicitBearer` bearer-token resolvers.
+  - auth parsing helpers added for enterprise integrations:
+    - `parseAuthorizationHeader(...)`,
+    - `bearerTokenFromHeader(...)`,
+    - `decodeBasicCredentials(...)`,
+    - `HTTPBasic.resolveDecoded(...)`.
+- WebSocket security parity progress:
+  - websocket handshake path now executes configured route dependencies before protocol upgrade.
+  - websocket handshake now enforces unauthorized and insufficient-scope outcomes using the same security challenge derivation logic as HTTP routes.
+  - websocket handshake policy controls added:
+    - route-level origin allowlist enforcement (`allowed_origins`),
+    - route-level subprotocol negotiation policy (`subprotocols`, `require_subprotocol`),
+    - negotiated subprotocol emission via handshake response header and runtime/session visibility.
+  - websocket dependency cleanup hooks now run after websocket handler completion.
+  - websocket test/runtime API now supports timeout-aware receive operations and explicit close-code close frames (`closeWithCode`) for deterministic lifecycle testing.
+  - websocket runtime/session now surfaces the last received close code (`lastCloseCode`) for handler/test assertions.
+  - websocket route-level runtime controls now include `idle_timeout_ms` and `auto_pong` options, applied in both runtime server and in-process `TestClient` websocket sessions.
+  - websocket heartbeat policy controls added:
+    - route-level periodic heartbeat pings (`ping_interval_ms`),
+    - pong timeout enforcement (`pong_timeout_ms`) with deterministic close-on-timeout behavior.
+  - websocket message-size policy control added:
+    - route-level max message bytes (`max_message_bytes`) with deterministic `1009` close behavior on violations.
+  - websocket queue/backpressure controls added:
+    - route-level pending-queue cap (`max_pending_messages`) in in-process websocket transport,
+    - route-level send timeout (`send_timeout_ms`) producing deterministic `Backpressure` errors when queues/sockets remain blocked.
+- Docs UI parity progress:
+  - placeholder `/docs` and `/redoc` pages have been replaced with embedded, pinned Swagger UI and ReDoc bundles served locally.
+  - `AppConfig` now exposes docs UI option knobs:
+    - Swagger UI (`title`, `persist_authorization`, `deep_linking`, `display_operation_id`, `doc_expansion`, `theme`),
+    - ReDoc (`title`, `hide_download_button`, `disable_search`, `theme`).
+  - docs pages now render from deterministic local assets and are no longer dependent on external CDNs.
+- Proxy trust controls:
+  - `extractProxyInfoWithConfig(...)` now honors `trusted_proxy_headers` policy.
+  - CIDR allowlist enforcement is now active via `trusted_proxy_cidrs` (forwarded headers are ignored unless peer IP matches configured ranges).
+  - Runtime dispatch now propagates peer socket address into `Request` (`req.peerAddress()`), enabling policy decisions based on real client/proxy source IP.
+- Response API parity progress:
+  - added redirect/file/chunked-stream helpers and cookie/etag/last-modified helpers on `Response`.
+- Testing API parity progress:
+  - `TestClient` now persists cookies across requests from `Set-Cookie` headers and applies deletion semantics (`Max-Age<=0`, epoch `Expires`), bringing integration test behavior closer to FastAPI-style clients.
+  - `TestClient` now supports in-process websocket sessions (`websocketConnect` / `websocketConnectWithHeaders`) with send/receive/ping/close primitives and deterministic handler lifecycle joins.
+  - websocket sessions execute route dependencies before handler startup and enforce auth/scope failures (`Unauthorized`, `InsufficientScope`) at connect time.
+  - websocket session shutdown now triggers dependency cleanup hooks reliably.
+- Validation/serialization parity progress (M2 slice):
+  - Param/body marker options now include constraint controls (`gt/ge/lt/le/min_length/max_length/pattern/enum_values`) and marker strictness (`strict`).
+  - Route/global strict validation mode added (`RouteOptions.strict_validation`, `AppConfig.strict_validation`) with deterministic precedence.
+  - Runtime constraint enforcement now maps violations into 422 validation payloads.
+  - Response-model include/exclude shaping now supports deep dotted-path filtering (for nested objects/arrays), not only top-level keys.
+  - Response-model runtime now applies model-field filtering by default when `response_model` is set, removing undeclared fields from payloads.
+  - `response_model_exclude_defaults` now uses reflected model default values (scalar/string/null coverage) instead of blanket null pruning.
+  - `response_model_exclude_none` semantics remain explicit; `response_model_exclude_unset` no longer incorrectly strips explicit `null` values.
+  - `response_model_by_alias` now supports alias remapping via model-declared `zigmund_response_aliases` path mappings.
+- Dependency parity progress (M2 slice):
+  - Route dependency execution now compiles a deterministic DAG with topological ordering.
+  - Dependency-cycle detection now hard-fails route execution before any resolver runs.
+  - `DependencySpec` now supports explicit edges (`depends_on`) and cache scope (`request`/`app`).
+  - App-scoped dependency caching is implemented with thread-safe shared cache reuse across requests.
+  - Nested provider execution is now supported for `Depends(...)`/`Security(...)` providers (provider parameters can use marker injection recursively).
+  - Runtime now pre-executes registered injected dependencies (derived from handler markers) through the same registry/DAG/scoped-cache path as explicit route dependencies.
+  - Provider marker request-cache semantics now honor `use_cache` for named dependencies during a request.
+- Integrations and operational parity progress (M4 slice):
+  - placeholder-only `src/integrations` has been replaced with concrete first-class modules:
+    - settings integration with env-map loading, required/default handling, and typed getters (`bool`/int),
+    - templates integration with safe template-path loading, key replacement bindings, and HTML response rendering,
+    - static files integration with mount helpers, path-traversal guardrails, cache-control, and ETag/`If-None-Match` conditional behavior,
+    - GraphQL integration with endpoint mounting, JSON + `application/graphql` payload parsing, and optional playground GET behavior,
+    - SQL integration primitives with deterministic session lifecycle helpers and dependency-provider pattern (`SqlSessionProvider(...)`),
+    - compatibility adapter helpers that apply proxy trust policy into runtime server config.
+  - top-level Zigmund exports now expose these integration types/helpers directly for app wiring.
+- CLI and operational DX progress:
+  - `zigmund dev` now runs a live reload loop (workspace fingerprint watch + `serve` child process restart on file change) with configurable watch interval via `--watch-ms`.
+  - `zigmund routes` now supports machine-readable output via `--json`.
+  - `zigmund openapi` now supports file export via `--out <path>` / `--output <path>`.
+  - `zigmund cloud` now emits a functional deployment-plan JSON (framework/app metadata, route counts, OpenAPI size) and supports writing it via `--out <path>`.
+- Routing/OpenAPI parity progress:
+  - router matching now supports FastAPI-style catch-all path converters (`{file_path:path}`) for HTTP path params.
+  - OpenAPI fallback path-parameter generation now strips converter suffixes (e.g. `{file_path:path}` -> parameter name `file_path`).
+- New conformance coverage added for:
+  - response-model runtime shaping behavior,
+  - observability request-id/telemetry behavior,
+  - dependency cleanup lifecycle,
+  - unauthorized header behavior,
+  - OpenAPI components + operation-id stability,
+  - runtime body-limit + shutdown behavior,
+  - runtime header-limit enforcement behavior,
+  - TLS startup validation path behavior,
+  - strict/coercion + constraints validation behavior,
+  - dependency DAG ordering + cycle detection + app-scope cache behavior,
+  - nested provider injection + marker cache behavior + registered injected app-scope reuse,
+  - response-model alias/default/unset runtime semantics,
+  - advanced OpenAPI objects (callbacks/webhooks/examples/discriminator composition),
+  - observability sinks + trace-context propagation behavior,
+  - proxy extraction policy behavior (including CIDR allowlist),
+  - deep response-model include/exclude path shaping,
+  - `TestClient` cookie persistence/deletion behavior,
+  - security scope enforcement for both route dependencies and `Security(...)` marker providers,
+  - OAuth2 password request form parsing and grant-type validation behavior,
+  - OAuth2 password form client credentials fields and additional OAuth2 bearer helper resolver behavior,
+  - websocket handshake security behavior (`401`/`403`/`101`) with dependency + scope enforcement,
+  - docs endpoint behavior for embedded Swagger UI/ReDoc assets and UI option wiring,
+  - `TestClient` websocket session behavior (message exchange, auth/scope gate, cleanup lifecycle),
+  - websocket timeout + close-code behavior in `TestClient` sessions,
+  - websocket route-level idle timeout and auto-pong toggle behavior in `TestClient` sessions,
+  - integration conformance for settings/templates/static-files/graphql/sql provider lifecycle,
+  - path-converter OpenAPI fallback naming behavior,
+  - metrics endpoint conformance (Prometheus output shape, enable/disable behavior, App JSON sink adapter wiring),
+  - CLI renderer coverage for routes JSON and cloud-plan output shape.
+
+## Recommended Next Enterprise Sprints
+1. Observability expansion: structured access logging, metrics adapters, trace context propagation.
+2. Dependency parity depth: nested dependency DAG solving and richer scoped lifetimes.
+3. Response-model parity depth: alias-aware serialization and strict unset/default semantics.
+4. OpenAPI advanced objects: callbacks/webhooks/examples/discriminators and schema reuse beyond response models.
+5. Security parity depth: OAuth2/OIDC end-to-end conformance flows and token helper utilities.
