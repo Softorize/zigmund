@@ -13,6 +13,11 @@ const ParameterComponent = struct {
     parameter: types.InjectedParameter,
 };
 
+const RequestBodyComponent = struct {
+    name: []const u8,
+    body_json: []const u8,
+};
+
 const OperationIdRegistry = struct {
     allocator: std.mem.Allocator,
     used: std.StringHashMapUnmanaged(void) = .empty,
@@ -104,6 +109,23 @@ pub fn generate(
         http_routes,
     );
 
+    var request_body_components: std.ArrayList(RequestBodyComponent) = .empty;
+    defer request_body_components.deinit(allocator);
+    var owned_request_body_component_names: std.ArrayList([]u8) = .empty;
+    defer {
+        for (owned_request_body_component_names.items) |name| allocator.free(name);
+        owned_request_body_component_names.deinit(allocator);
+    }
+    defer {
+        for (request_body_components.items) |entry| allocator.free(entry.body_json);
+    }
+    try collectRequestBodyComponents(
+        allocator,
+        &request_body_components,
+        &owned_request_body_component_names,
+        http_routes,
+    );
+
     var operation_ids = OperationIdRegistry.init(allocator);
     defer operation_ids.deinit();
 
@@ -111,6 +133,7 @@ pub fn generate(
         std.mem.sort([]const u8, unique_paths.items, {}, lessThanString);
         std.mem.sort(ComponentSchema, response_components.items, {}, lessThanComponentSchema);
         std.mem.sort(ParameterComponent, parameter_components.items, {}, lessThanParameterComponent);
+        std.mem.sort(RequestBodyComponent, request_body_components.items, {}, lessThanRequestBodyComponent);
     }
 
     var out: std.ArrayList(u8) = .empty;
@@ -142,7 +165,7 @@ pub fn generate(
     }
     try writer.writeAll("]");
 
-    if (security_schemes.len > 0 or response_components.items.len > 0 or parameter_components.items.len > 0) {
+    if (security_schemes.len > 0 or response_components.items.len > 0 or parameter_components.items.len > 0 or request_body_components.items.len > 0) {
         try writer.writeAll(",");
         try writeFieldName(&writer, "components");
         try writeComponents(
@@ -150,6 +173,7 @@ pub fn generate(
             security_schemes,
             response_components.items,
             parameter_components.items,
+            request_body_components.items,
         );
     }
 
@@ -180,6 +204,7 @@ pub fn generate(
                         security_schemes,
                         response_components.items,
                         parameter_components.items,
+                        request_body_components.items,
                         &operation_ids,
                     );
                 }
@@ -197,6 +222,7 @@ pub fn generate(
                     security_schemes,
                     response_components.items,
                     parameter_components.items,
+                    request_body_components.items,
                     &operation_ids,
                 );
             }
@@ -237,6 +263,10 @@ fn lessThanParameterComponent(_: void, lhs: ParameterComponent, rhs: ParameterCo
     return std.mem.order(u8, lhs.name, rhs.name) == .lt;
 }
 
+fn lessThanRequestBodyComponent(_: void, lhs: RequestBodyComponent, rhs: RequestBodyComponent) bool {
+    return std.mem.order(u8, lhs.name, rhs.name) == .lt;
+}
+
 fn writeHttpOperation(
     writer: anytype,
     allocator: std.mem.Allocator,
@@ -244,6 +274,7 @@ fn writeHttpOperation(
     security_schemes: []const security.NamedScheme,
     response_components: []const ComponentSchema,
     parameter_components: []const ParameterComponent,
+    request_body_components: []const RequestBodyComponent,
     operation_ids: *OperationIdRegistry,
 ) !void {
     try writeJsonString(writer, route.method.asString());
@@ -318,11 +349,20 @@ fn writeHttpOperation(
     if (injected_request_bodies.len > 0) {
         try writer.writeAll(",");
         try writeFieldName(writer, "requestBody");
-        try writeInjectedRequestBody(
-            writer,
+        if (try requestBodyComponentName(
+            allocator,
             injected_request_bodies,
             route.options.openapi_request_examples,
-        );
+            request_body_components,
+        )) |component_name| {
+            try writeComponentRequestBodyRef(writer, component_name);
+        } else {
+            try writeInjectedRequestBody(
+                writer,
+                injected_request_bodies,
+                route.options.openapi_request_examples,
+            );
+        }
     }
 
     if (route.options.response_model_name) |model_name| {
@@ -603,6 +643,134 @@ fn stringSliceArrayEql(lhs: []const []const u8, rhs: []const []const u8) bool {
     return true;
 }
 
+fn collectRequestBodyComponents(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(RequestBodyComponent),
+    owned_names: *std.ArrayList([]u8),
+    routes: []const router_mod.HttpRoute,
+) !void {
+    for (routes) |route| {
+        if (!route.options.include_in_schema) continue;
+        const specs = route.options.injected_request_bodies;
+        if (specs.len == 0) continue;
+
+        const body_json = try renderInjectedRequestBodyJson(
+            allocator,
+            specs,
+            route.options.openapi_request_examples,
+        );
+        errdefer allocator.free(body_json);
+
+        if (requestBodyComponentNameByJson(body_json, list.items) != null) {
+            allocator.free(body_json);
+            continue;
+        }
+
+        const name = try uniqueRequestBodyComponentName(allocator, list.items, route);
+        errdefer allocator.free(name);
+
+        try owned_names.append(allocator, name);
+        try list.append(allocator, .{
+            .name = name,
+            .body_json = body_json,
+        });
+    }
+}
+
+fn uniqueRequestBodyComponentName(
+    allocator: std.mem.Allocator,
+    components: []const RequestBodyComponent,
+    route: router_mod.HttpRoute,
+) ![]u8 {
+    const base_name = try buildRequestBodyComponentBaseName(allocator, route.method, route.path);
+    errdefer allocator.free(base_name);
+
+    if (!hasRequestBodyComponentName(components, base_name)) {
+        return base_name;
+    }
+
+    var suffix: usize = 2;
+    while (true) : (suffix += 1) {
+        const candidate = try std.fmt.allocPrint(allocator, "{s}_{d}", .{ base_name, suffix });
+        errdefer allocator.free(candidate);
+        if (hasRequestBodyComponentName(components, candidate)) {
+            allocator.free(candidate);
+            continue;
+        }
+        allocator.free(base_name);
+        return candidate;
+    }
+}
+
+fn buildRequestBodyComponentBaseName(
+    allocator: std.mem.Allocator,
+    method: types.RouteMethod,
+    path: []const u8,
+) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    try appendNormalizedIdentifierPart(&out, allocator, "request_body");
+    if (out.items.len > 0 and out.items[out.items.len - 1] != '_') {
+        try out.append(allocator, '_');
+    }
+    try appendNormalizedIdentifierPart(&out, allocator, method.asString());
+    if (out.items.len > 0 and out.items[out.items.len - 1] != '_') {
+        try out.append(allocator, '_');
+    }
+    try appendNormalizedIdentifierPart(&out, allocator, path);
+
+    if (out.items.len == 0) {
+        try out.appendSlice(allocator, "request_body");
+    }
+
+    while (out.items.len > 0 and out.items[out.items.len - 1] == '_') {
+        _ = out.pop();
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn hasRequestBodyComponentName(components: []const RequestBodyComponent, name: []const u8) bool {
+    for (components) |component| {
+        if (std.mem.eql(u8, component.name, name)) return true;
+    }
+    return false;
+}
+
+fn renderInjectedRequestBodyJson(
+    allocator: std.mem.Allocator,
+    specs: []const types.InjectedRequestBody,
+    examples: []const types.OpenApiExample,
+) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    var writer = out.writer(allocator);
+    try writeInjectedRequestBody(&writer, specs, examples);
+    return out.toOwnedSlice(allocator);
+}
+
+fn requestBodyComponentName(
+    allocator: std.mem.Allocator,
+    specs: []const types.InjectedRequestBody,
+    examples: []const types.OpenApiExample,
+    components: []const RequestBodyComponent,
+) !?[]const u8 {
+    const body_json = try renderInjectedRequestBodyJson(allocator, specs, examples);
+    defer allocator.free(body_json);
+    return requestBodyComponentNameByJson(body_json, components);
+}
+
+fn requestBodyComponentNameByJson(
+    body_json: []const u8,
+    components: []const RequestBodyComponent,
+) ?[]const u8 {
+    for (components) |component| {
+        if (std.mem.eql(u8, component.body_json, body_json)) return component.name;
+    }
+    return null;
+}
+
 fn buildDefaultHttpOperationId(
     allocator: std.mem.Allocator,
     method: types.RouteMethod,
@@ -809,6 +977,14 @@ fn writeComponentParameterRef(writer: anytype, component_name: []const u8) !void
     try writer.writeAll("{");
     try writeFieldName(writer, "$ref");
     try writer.writeAll("\"#/components/parameters/");
+    try writer.writeAll(component_name);
+    try writer.writeAll("\"}");
+}
+
+fn writeComponentRequestBodyRef(writer: anytype, component_name: []const u8) !void {
+    try writer.writeAll("{");
+    try writeFieldName(writer, "$ref");
+    try writer.writeAll("\"#/components/requestBodies/");
     try writer.writeAll(component_name);
     try writer.writeAll("\"}");
 }
@@ -1795,6 +1971,7 @@ fn writeComponents(
     security_schemes: []const security.NamedScheme,
     response_components: []const ComponentSchema,
     parameter_components: []const ParameterComponent,
+    request_body_components: []const RequestBodyComponent,
 ) !void {
     try writer.writeAll("{");
 
@@ -1829,6 +2006,7 @@ fn writeComponents(
 
     if (parameter_components.len > 0) {
         if (wrote != 0) try writer.writeAll(",");
+        wrote += 1;
         try writeFieldName(writer, "parameters");
         try writer.writeAll("{");
         for (parameter_components, 0..) |entry, idx| {
@@ -1836,6 +2014,19 @@ fn writeComponents(
             try writeJsonString(writer, entry.name);
             try writer.writeAll(":");
             try writeInjectedParameter(writer, entry.parameter);
+        }
+        try writer.writeAll("}");
+    }
+
+    if (request_body_components.len > 0) {
+        if (wrote != 0) try writer.writeAll(",");
+        try writeFieldName(writer, "requestBodies");
+        try writer.writeAll("{");
+        for (request_body_components, 0..) |entry, idx| {
+            if (idx != 0) try writer.writeAll(",");
+            try writeJsonString(writer, entry.name);
+            try writer.writeAll(":");
+            try writer.writeAll(entry.body_json);
         }
         try writer.writeAll("}");
     }
