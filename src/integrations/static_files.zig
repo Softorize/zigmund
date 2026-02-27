@@ -189,12 +189,28 @@ fn serveFromRelativePath(
 
     const etag = try buildEtag(allocator, stat);
     defer allocator.free(etag);
+    const last_modified = try buildLastModified(allocator, stat);
+    defer allocator.free(last_modified);
 
     if (req.header("if-none-match")) |if_none_match| {
         if (std.mem.eql(u8, std.mem.trim(u8, if_none_match, " \t"), etag)) {
             response.deinit(allocator);
             var not_modified = Response.text("").withStatus(.not_modified);
             try not_modified.setEtag(allocator, etag);
+            try not_modified.setLastModified(allocator, last_modified);
+            if (options.cache_control) |cache_control| {
+                try not_modified.setHeader(allocator, "cache-control", cache_control);
+            }
+            return not_modified;
+        }
+    }
+
+    if (req.header("if-modified-since")) |if_modified_since| {
+        if (std.mem.eql(u8, std.mem.trim(u8, if_modified_since, " \t"), last_modified)) {
+            response.deinit(allocator);
+            var not_modified = Response.text("").withStatus(.not_modified);
+            try not_modified.setEtag(allocator, etag);
+            try not_modified.setLastModified(allocator, last_modified);
             if (options.cache_control) |cache_control| {
                 try not_modified.setHeader(allocator, "cache-control", cache_control);
             }
@@ -203,6 +219,7 @@ fn serveFromRelativePath(
     }
 
     try response.setEtag(allocator, etag);
+    try response.setLastModified(allocator, last_modified);
     if (options.cache_control) |cache_control| {
         try response.setHeader(allocator, "cache-control", cache_control);
     }
@@ -324,6 +341,38 @@ fn isSafeRelativePath(rel_path: []const u8, allow_hidden: bool) bool {
 fn buildEtag(allocator: std.mem.Allocator, stat: std.fs.File.Stat) ![]u8 {
     const mtime_u64: u64 = if (stat.mtime <= 0) 0 else @as(u64, @intCast(stat.mtime));
     return std.fmt.allocPrint(allocator, "\"{x}-{x}\"", .{ stat.size, mtime_u64 });
+}
+
+fn buildLastModified(allocator: std.mem.Allocator, stat: std.fs.File.Stat) ![]u8 {
+    const seconds_i128 = @divFloor(stat.mtime, std.time.ns_per_s);
+    const unix_seconds: u64 = if (seconds_i128 <= 0) 0 else @as(u64, @intCast(seconds_i128));
+
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = unix_seconds };
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_seconds = epoch_seconds.getDaySeconds();
+
+    const weekday_names = [_][]const u8{ "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    const month_names = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+    const weekday_index: usize = @intCast((epoch_day.day + 4) % 7);
+    const month_index: usize = @intFromEnum(month_day.month) - 1;
+    const day_of_month: u8 = month_day.day_index + 1;
+
+    return std.fmt.allocPrint(
+        allocator,
+        "{s}, {d:0>2} {s} {d:0>4} {d:0>2}:{d:0>2}:{d:0>2} GMT",
+        .{
+            weekday_names[weekday_index],
+            day_of_month,
+            month_names[month_index],
+            year_day.year,
+            day_seconds.getHoursIntoDay(),
+            day_seconds.getMinutesIntoHour(),
+            day_seconds.getSecondsIntoMinute(),
+        },
+    );
 }
 
 test "static files mount serves files and index" {

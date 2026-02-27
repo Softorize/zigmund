@@ -53,7 +53,7 @@ test "templates integration renders html payload from bindings" {
     try std.testing.expect(std.mem.indexOf(u8, res.body, "<p>ID=7</p>") != null);
 }
 
-test "static files integration serves files and supports etag conditional requests" {
+test "static files integration serves files and supports conditional requests" {
     zigmund.integrations.static_files.clearMountsForTesting();
     defer zigmund.integrations.static_files.clearMountsForTesting();
 
@@ -80,13 +80,21 @@ test "static files integration serves files and supports etag conditional reques
     try std.testing.expectEqual(.ok, file_res.status);
     try std.testing.expectEqualStrings("body{margin:0}", file_res.body);
     const etag = file_res.header("etag") orelse return error.TestUnexpectedResult;
+    const last_modified = file_res.header("last-modified") orelse return error.TestUnexpectedResult;
 
-    const headers = [_]std.http.Header{
+    const etag_headers = [_]std.http.Header{
         .{ .name = "if-none-match", .value = etag },
     };
-    var not_modified = try app.dispatchSyntheticWithHeaders(.GET, "/assets/css/site.css", "", &headers);
-    defer not_modified.deinit(std.testing.allocator);
-    try std.testing.expectEqual(.not_modified, not_modified.status);
+    var etag_not_modified = try app.dispatchSyntheticWithHeaders(.GET, "/assets/css/site.css", "", &etag_headers);
+    defer etag_not_modified.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.not_modified, etag_not_modified.status);
+
+    const lm_headers = [_]std.http.Header{
+        .{ .name = "if-modified-since", .value = last_modified },
+    };
+    var lm_not_modified = try app.dispatchSyntheticWithHeaders(.GET, "/assets/css/site.css", "", &lm_headers);
+    defer lm_not_modified.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.not_modified, lm_not_modified.status);
 
     var blocked = try app.dispatchSynthetic(.GET, "/assets/../secrets.txt", "");
     defer blocked.deinit(std.testing.allocator);

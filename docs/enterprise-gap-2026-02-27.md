@@ -171,7 +171,7 @@
   - placeholder-only `src/integrations` has been replaced with concrete first-class modules:
     - settings integration with env-map loading, required/default handling, and typed getters (`bool`/int),
     - templates integration with safe template-path loading, key replacement bindings, and HTML response rendering,
-    - static files integration with mount helpers, path-traversal guardrails, cache-control, and ETag/`If-None-Match` conditional behavior,
+    - static files integration with mount helpers, path-traversal guardrails, cache-control, and conditional behavior via ETag/`If-None-Match` plus `Last-Modified`/`If-Modified-Since`,
     - GraphQL integration with endpoint mounting, JSON + `application/graphql` payload parsing, and optional playground GET behavior,
     - SQL integration primitives with deterministic session lifecycle helpers and dependency-provider pattern (`SqlSessionProvider(...)`),
     - compatibility adapter helpers that apply proxy trust policy into runtime server config.
