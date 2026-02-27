@@ -180,6 +180,13 @@ fn serveRequests(
             return;
         }
 
+        if (cfg.body_timeout_ms >= 0) {
+            try setSocketRecvTimeout(socket_fd, cfg.body_timeout_ms);
+        }
+        defer if (cfg.body_timeout_ms >= 0) {
+            setSocketRecvTimeout(socket_fd, 0) catch {};
+        };
+
         dispatch(ctx, &raw_request, peer_address, socket_fd) catch |err| {
             std.log.err("request dispatch failed for {s}: {s}", .{ raw_request.head.target, @errorName(err) });
             raw_request.respond("internal server error", .{
@@ -237,6 +244,24 @@ fn sendOverloadedResponse(fd: std.posix.fd_t) void {
         "\r\n" ++
         "server overloaded";
     _ = std.posix.write(fd, response) catch {};
+}
+
+fn setSocketRecvTimeout(fd: std.posix.fd_t, timeout_ms: i32) !void {
+    if (timeout_ms < 0) return;
+
+    const timeout_ms_nonnegative: u64 = @intCast(timeout_ms);
+    const secs: i64 = @intCast(timeout_ms_nonnegative / 1000);
+    const usec: i32 = @intCast((timeout_ms_nonnegative % 1000) * 1000);
+    const timeout = std.posix.timeval{
+        .sec = secs,
+        .usec = usec,
+    };
+    try std.posix.setsockopt(
+        fd,
+        std.posix.SOL.SOCKET,
+        std.posix.SO.RCVTIMEO,
+        std.mem.asBytes(&timeout),
+    );
 }
 
 fn shutdownRequested(state: *const ServeState) bool {

@@ -77,7 +77,7 @@ pub const Request = struct {
     background_tasks: BackgroundTasks,
     background_tasks_ran: bool = false,
 
-    pub const BodyError = error{BodyTooLarge} || std.http.Server.Request.ExpectContinueError || std.Io.Reader.LimitedAllocError;
+    pub const BodyError = error{ BodyTooLarge, BodyReadTimeout } || std.http.Server.Request.ExpectContinueError || std.Io.Reader.LimitedAllocError;
 
     pub fn initFromRaw(allocator: std.mem.Allocator, raw: *std.http.Server.Request) !Request {
         return initFromRawWithBodyLimit(allocator, raw, 8 * 1024 * 1024);
@@ -721,6 +721,7 @@ pub const Request = struct {
         const reader = try raw.readerExpectContinue(&read_buffer);
         const body = reader.allocRemaining(self.allocator, .limited(max_len)) catch |err| switch (err) {
             error.StreamTooLong => return error.BodyTooLarge,
+            error.ReadFailed => return error.BodyReadTimeout,
             else => return err,
         };
         self.owned_body = body;

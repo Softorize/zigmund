@@ -199,6 +199,12 @@ fn parseServeFlags(args: anytype, cfg: *zigmund.ServerConfig) !void {
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--body-timeout-ms")) {
+            const value = args.next() orelse return error.MissingBodyTimeoutValue;
+            cfg.body_timeout_ms = try std.fmt.parseInt(i32, value, 10);
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--shutdown-grace-ms")) {
             const value = args.next() orelse return error.MissingShutdownGraceValue;
             cfg.shutdown_grace_period_ms = try std.fmt.parseInt(u64, value, 10);
@@ -509,8 +515,8 @@ fn usage() !void {
     try writeStdout(
         "Usage: zigmund <command> [options]\n" ++
             "Commands:\n" ++
-            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
-            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
             "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
             "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>]\n" ++
@@ -916,12 +922,13 @@ test "parse serve flags supports header timeout option" {
 
     var iter = (try std.process.ArgIteratorGeneral(.{}).init(
         std.testing.allocator,
-        "--header-timeout-ms 321 --idle-timeout-ms 654",
+        "--header-timeout-ms 321 --body-timeout-ms 777 --idle-timeout-ms 654",
     ));
     defer iter.deinit();
 
     try parseServeFlags(&iter, &cfg);
     try std.testing.expectEqual(@as(i32, 321), cfg.header_timeout_ms);
+    try std.testing.expectEqual(@as(i32, 777), cfg.body_timeout_ms);
     try std.testing.expectEqual(@as(i32, 654), cfg.idle_timeout_ms);
 }
 

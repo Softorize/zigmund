@@ -156,6 +156,60 @@ test "server enforces max_body_bytes with 413 response" {
     try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "413") != null);
 }
 
+test "server enforces body_timeout_ms with 408 response" {
+    const port = try reservePort();
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "runtime-body-timeout",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+    try app.post("/upload", guardrailOkHandler, .{});
+
+    const cfg: zigmund.ServerConfig = .{
+        .host = "127.0.0.1",
+        .port = port,
+        .worker_count = 1,
+        .accept_poll_interval_ms = 10,
+        .header_timeout_ms = 1_000,
+        .body_timeout_ms = 50,
+        .idle_timeout_ms = 2_000,
+        .shutdown_grace_period_ms = 200,
+        .max_body_bytes = 1024,
+    };
+
+    var serve_ctx: ServeThreadCtx = .{
+        .app = &app,
+        .cfg = cfg,
+    };
+
+    const thread = try std.Thread.spawn(.{}, serveThread, .{&serve_ctx});
+    defer {
+        app.requestShutdown();
+        thread.join();
+    }
+
+    const address = try std.net.Address.resolveIp("127.0.0.1", port);
+    var stream = try connectWithRetry(address);
+    defer stream.close();
+
+    const request =
+        "POST /upload HTTP/1.1\r\n" ++
+        "Host: 127.0.0.1\r\n" ++
+        "Content-Length: 6\r\n" ++
+        "\r\n" ++
+        "ab";
+    try stream.writeAll(request);
+
+    const readable = try waitReadable(stream.handle, 2_000);
+    try std.testing.expect(readable);
+
+    var read_buf: [4096]u8 = undefined;
+    const n = try stream.read(&read_buf);
+    try std.testing.expect(n > 0);
+    try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "408") != null);
+}
+
 test "server enforces max_header_bytes with 431 response" {
     const port = try reservePort();
 
@@ -529,6 +583,7 @@ test "audit sink emits startup config and lifecycle events during serve" {
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"trusted_proxy_headers\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"trusted_proxy_cidrs\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"header_timeout_ms\":1500") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "\"body_timeout_ms\":10000") != null);
 
     var port_buf: [32]u8 = undefined;
     const port_fragment = try std.fmt.bufPrint(&port_buf, "\"port\":{d}", .{port});
