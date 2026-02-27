@@ -145,6 +145,10 @@
      - `docker`: executes `docker build -t <tag> -f Dockerfile .`,
      - `flyio`: executes `flyctl deploy`,
      - `generic`: execution intentionally rejected (`CloudDeployUnsupportedProvider`).
+35. OpenAPI explicit security alternatives extension:
+   - `RouteOptions` and `WebSocketRouteOptions` now include `openapi_security` for explicit OpenAPI `security` requirement arrays (OR across objects, AND within object).
+   - explicit `openapi_security` values override dependency-derived security emission when present.
+   - duplicate scheme entries within the same alternative are scope-union merged.
 
 ## Migration Actions
 
@@ -189,6 +193,7 @@
 26. If OAuth2 password-flow handlers currently tokenize `scope` manually, migrate to `OAuth2PasswordRequestForm.parsedScopesAlloc(...)` and/or `applyGrantedScopes(...)` for consistent scope parsing and dependency-state integration.
 27. If downstream OpenAPI tooling assumed one-item-per-object security arrays for multi-scheme routes, update parsers to consume standard combined requirement-object semantics (AND within object, OR across array entries).
 28. If CI/CD pipelines currently treat `zigmund cloud` as plan-only, migrate to `--execute` / `--dry-run` where deployment orchestration should be performed directly by Zigmund CLI; use `--image <tag>` for deterministic docker artifact naming.
+29. If OpenAPI route security policy requires explicit OR alternatives or non-default ordering, migrate route/websocket declarations to `openapi_security` for deterministic security-array authoring independent of dependency wiring.
 
 ## Compatibility Notes
 

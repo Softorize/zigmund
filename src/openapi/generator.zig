@@ -396,22 +396,22 @@ fn writeHttpOperation(
         try writer.writeAll(",");
         try writeFieldName(writer, "x-zigmund-dependencies");
         try writeDependenciesArray(writer, explicit_dependencies, injected_dependencies);
-
-        if (countRouteSecurityRequirements(
+    }
+    if (route.options.openapi_security.len > 0 or countRouteSecurityRequirements(
+        explicit_dependencies,
+        injected_dependencies,
+        security_schemes,
+    ) > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "security");
+        try writeRouteSecurity(
+            allocator,
+            writer,
+            route.options.openapi_security,
             explicit_dependencies,
             injected_dependencies,
             security_schemes,
-        ) > 0) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "security");
-            try writeRouteSecurity(
-                allocator,
-                writer,
-                explicit_dependencies,
-                injected_dependencies,
-                security_schemes,
-            );
-        }
+        );
     }
 
     if (injected_request_bodies.len > 0) {
@@ -523,22 +523,22 @@ fn writeWebSocketOperation(
         try writer.writeAll(",");
         try writeFieldName(writer, "dependencies");
         try writeDependenciesArray(writer, route.options.dependencies, route.injected_dependencies);
-
-        if (countRouteSecurityRequirements(
+    }
+    if (route.options.openapi_security.len > 0 or countRouteSecurityRequirements(
+        route.options.dependencies,
+        route.injected_dependencies,
+        security_schemes,
+    ) > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "security");
+        try writeRouteSecurity(
+            allocator,
+            writer,
+            route.options.openapi_security,
             route.options.dependencies,
             route.injected_dependencies,
             security_schemes,
-        ) > 0) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "security");
-            try writeRouteSecurity(
-                allocator,
-                writer,
-                route.options.dependencies,
-                route.injected_dependencies,
-                security_schemes,
-            );
-        }
+        );
     }
     if (route.options.allowed_origins.len > 0) {
         try writer.writeAll(",");
@@ -2210,38 +2210,114 @@ fn appendUniqueScope(
     try scopes.append(allocator, scope);
 }
 
+fn appendRouteSecurityRequirement(
+    allocator: std.mem.Allocator,
+    requirements: *std.ArrayList(RouteSecurityRequirement),
+    scheme_name: []const u8,
+    scopes: []const []const u8,
+    security_schemes: []const security.NamedScheme,
+) !void {
+    if (lookupSecurityScheme(security_schemes, scheme_name) == null) return;
+
+    var target: ?*RouteSecurityRequirement = null;
+    for (requirements.items) |*existing| {
+        if (!std.mem.eql(u8, existing.name, scheme_name)) continue;
+        target = existing;
+        break;
+    }
+
+    if (target == null) {
+        try requirements.append(allocator, .{ .name = scheme_name });
+        target = &requirements.items[requirements.items.len - 1];
+    }
+
+    for (scopes) |scope| {
+        try appendUniqueScope(allocator, &target.?.scopes, scope);
+    }
+}
+
 fn appendRouteSecurityDependency(
     allocator: std.mem.Allocator,
     requirements: *std.ArrayList(RouteSecurityRequirement),
     dep: types.DependencySpec,
     security_schemes: []const security.NamedScheme,
 ) !void {
-    if (lookupSecurityScheme(security_schemes, dep.name) == null) return;
+    try appendRouteSecurityRequirement(
+        allocator,
+        requirements,
+        dep.name,
+        dep.scopes,
+        security_schemes,
+    );
+}
 
-    var target: ?*RouteSecurityRequirement = null;
-    for (requirements.items) |*existing| {
-        if (!std.mem.eql(u8, existing.name, dep.name)) continue;
-        target = existing;
-        break;
-    }
+fn appendRouteSecurityOverride(
+    allocator: std.mem.Allocator,
+    requirements: *std.ArrayList(RouteSecurityRequirement),
+    requirement: types.OpenApiSecurityRequirement,
+    security_schemes: []const security.NamedScheme,
+) !void {
+    try appendRouteSecurityRequirement(
+        allocator,
+        requirements,
+        requirement.scheme,
+        requirement.scopes,
+        security_schemes,
+    );
+}
 
-    if (target == null) {
-        try requirements.append(allocator, .{ .name = dep.name });
-        target = &requirements.items[requirements.items.len - 1];
+fn writeSingleRouteSecurityRequirement(
+    writer: anytype,
+    requirements: []const RouteSecurityRequirement,
+) !void {
+    try writer.writeAll("{");
+    for (requirements, 0..) |requirement, idx| {
+        if (idx != 0) try writer.writeAll(",");
+        try writeJsonString(writer, requirement.name);
+        try writer.writeAll(":");
+        try writeStringArray(writer, requirement.scopes.items);
     }
-
-    for (dep.scopes) |scope| {
-        try appendUniqueScope(allocator, &target.?.scopes, scope);
-    }
+    try writer.writeAll("}");
 }
 
 fn writeRouteSecurity(
     allocator: std.mem.Allocator,
     writer: anytype,
+    openapi_security: []const types.OpenApiSecurityAlternative,
     dependencies: []const types.DependencySpec,
     injected_dependencies: []const types.DependencySpec,
     security_schemes: []const security.NamedScheme,
 ) !void {
+    if (openapi_security.len > 0) {
+        try writer.writeAll("[");
+        var wrote_alternative: usize = 0;
+
+        for (openapi_security) |alternative| {
+            var requirements: std.ArrayList(RouteSecurityRequirement) = .empty;
+            defer {
+                for (requirements.items) |*item| item.scopes.deinit(allocator);
+                requirements.deinit(allocator);
+            }
+
+            for (alternative.requirements) |requirement| {
+                try appendRouteSecurityOverride(
+                    allocator,
+                    &requirements,
+                    requirement,
+                    security_schemes,
+                );
+            }
+
+            if (requirements.items.len == 0) continue;
+            if (wrote_alternative != 0) try writer.writeAll(",");
+            wrote_alternative += 1;
+            try writeSingleRouteSecurityRequirement(writer, requirements.items);
+        }
+
+        try writer.writeAll("]");
+        return;
+    }
+
     var requirements: std.ArrayList(RouteSecurityRequirement) = .empty;
     defer {
         for (requirements.items) |*item| item.scopes.deinit(allocator);
@@ -2260,14 +2336,9 @@ fn writeRouteSecurity(
         return;
     }
 
-    try writer.writeAll("[{");
-    for (requirements.items, 0..) |requirement, idx| {
-        if (idx != 0) try writer.writeAll(",");
-        try writeJsonString(writer, requirement.name);
-        try writer.writeAll(":");
-        try writeStringArray(writer, requirement.scopes.items);
-    }
-    try writer.writeAll("}]");
+    try writer.writeAll("[");
+    try writeSingleRouteSecurityRequirement(writer, requirements.items);
+    try writer.writeAll("]");
 }
 
 fn lookupSecurityScheme(

@@ -190,6 +190,54 @@ test "openapi route security combines multiple schemes as AND and merges duplica
     );
 }
 
+test "openapi route security supports explicit OR alternatives override" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "security-or-override",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addSecurityScheme("auth_a", .{ .http = .{ .scheme = "bearer" } });
+    try app.addSecurityScheme("auth_b", .{
+        .api_key = .{
+            .name = "x-api-key",
+            .in = .header,
+        },
+    });
+
+    try app.get("/secure-or", protected, .{
+        .dependencies = &.{.{ .name = "auth_a", .scopes = &.{"legacy:scope"} }},
+        .openapi_security = &.{
+            .{
+                .requirements = &.{
+                    .{ .scheme = "auth_b" },
+                },
+            },
+            .{
+                .requirements = &.{
+                    .{ .scheme = "auth_a", .scopes = &.{"items:read"} },
+                },
+            },
+        },
+    });
+
+    const doc = try app.openapi();
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            doc,
+            "\"security\":[{\"auth_b\":[]},{\"auth_a\":[\"items:read\"]}]",
+        ) != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            doc,
+            "\"security\":[{\"auth_a\":[\"legacy:scope\"]}]",
+        ) == null,
+    );
+}
+
 test "openapi deterministic mode sorts security schemes by name" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "security-order",
@@ -225,4 +273,38 @@ test "openapi exposes websocket injected security dependencies" {
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"x-zigmund-websocket\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"dependencies\":[{\"name\":\"auth\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"auth\":[\"items:read\"]}]") != null);
+}
+
+test "openapi websocket security supports explicit OR alternatives override" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "security-websocket-override",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addSecurityScheme("auth", .{ .http = .{ .scheme = "bearer", .bearer_format = "JWT" } });
+    try app.addSecurityScheme("ws_key", .{
+        .api_key = .{
+            .name = "x-ws-key",
+            .in = .header,
+        },
+    });
+    try app.websocket("/ws-secure-override", wsProtected, .{
+        .openapi_security = &.{
+            .{
+                .requirements = &.{
+                    .{ .scheme = "ws_key" },
+                },
+            },
+            .{
+                .requirements = &.{
+                    .{ .scheme = "auth", .scopes = &.{"items:admin"} },
+                },
+            },
+        },
+    });
+
+    const doc = try app.openapi();
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"ws_key\":[]},{\"auth\":[\"items:admin\"]}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"auth\":[\"items:read\"]}]") == null);
 }

@@ -48,6 +48,8 @@ OpenApiExtension
 OpenApiResponseExamples
 OpenApiSchema
 OpenApiSchemaField
+OpenApiSecurityAlternative
+OpenApiSecurityRequirement
 OpenApiSecurityScheme
 OpenApiWebhook
 OpenIdConnect

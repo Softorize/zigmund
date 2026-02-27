@@ -104,6 +104,7 @@
   - default operation IDs are now stable (`<method>_<normalized_path>`, websocket equivalent).
   - generated OpenAPI documents now emit top-level `jsonSchemaDialect` with a 2020-12 default (`https://json-schema.org/draft/2020-12/schema`), configurable/disableable via `AppConfig.json_schema_dialect`.
   - route/websocket security requirement emission now uses combined requirement objects for multi-scheme AND semantics, with duplicate-scheme scope-union merging across explicit and injected dependencies.
+  - route/websocket OpenAPI security declarations now support explicit OR-alternative requirement arrays (`RouteOptions.openapi_security`, `WebSocketRouteOptions.openapi_security`) with override precedence over dependency-derived defaults.
   - deterministic OpenAPI generation mode is now available via `AppConfig.openapi_deterministic`:
     - sorted `paths`,
     - sorted response-model `components.schemas`,

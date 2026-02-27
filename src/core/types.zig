@@ -167,6 +167,15 @@ pub const OpenApiExtension = struct {
     value_json: []const u8,
 };
 
+pub const OpenApiSecurityRequirement = struct {
+    scheme: []const u8,
+    scopes: []const []const u8 = &.{},
+};
+
+pub const OpenApiSecurityAlternative = struct {
+    requirements: []const OpenApiSecurityRequirement = &.{},
+};
+
 pub const OpenApiResponseExamples = struct {
     status_code: std.http.Status,
     content_type: []const u8 = "application/json",
@@ -254,6 +263,7 @@ pub const RouteOptions = struct {
     openapi_response_examples: []const OpenApiResponseExamples = &.{},
     openapi_callbacks: []const OpenApiCallback = &.{},
     openapi_extensions: []const OpenApiExtension = &.{},
+    openapi_security: []const OpenApiSecurityAlternative = &.{},
     strict_validation: ?bool = null,
     max_header_bytes: ?usize = null,
     max_query_bytes: ?usize = null,
@@ -278,6 +288,7 @@ pub const StoredRouteOptions = struct {
     openapi_response_examples: []const OpenApiResponseExamples = &.{},
     openapi_callbacks: []const OpenApiCallback = &.{},
     openapi_extensions: []const OpenApiExtension = &.{},
+    openapi_security: []const OpenApiSecurityAlternative = &.{},
     response_model_field_rules: []const ResponseModelFieldRule = &.{},
     response_model_transform: ?ResponseModelTransformFn = null,
     response_model_validate: ?ResponseModelValidateFn = null,
@@ -316,6 +327,7 @@ pub fn storeRouteOptions(opts: RouteOptions) StoredRouteOptions {
         .openapi_response_examples = opts.openapi_response_examples,
         .openapi_callbacks = opts.openapi_callbacks,
         .openapi_extensions = opts.openapi_extensions,
+        .openapi_security = opts.openapi_security,
         .response_model_field_rules = if (opts.response_model) |T| deriveResponseModelFieldRules(T) else &.{},
         .response_model_transform = if (opts.response_model) |T| deriveResponseModelTransformFn(T) else null,
         .response_model_validate = if (opts.response_model) |T| deriveResponseModelValidateFn(T) else null,
@@ -355,6 +367,7 @@ pub const WebSocketRouteOptions = struct {
     subprotocols: []const []const u8 = &.{},
     require_subprotocol: bool = false,
     dependencies: []const DependencySpec = &.{},
+    openapi_security: []const OpenApiSecurityAlternative = &.{},
     deprecated: bool = false,
     operation_id: ?[]const u8 = null,
     openapi_extensions: []const OpenApiExtension = &.{},
