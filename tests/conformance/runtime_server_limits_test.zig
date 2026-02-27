@@ -312,7 +312,7 @@ test "server enforces max_query_bytes with 414 response" {
     try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "414") != null);
 }
 
-test "route guardrails can override global body and query limits" {
+test "route guardrails can override global header body and query limits" {
     const port = try reservePort();
 
     var app = try zigmund.App.init(std.testing.allocator, .{
@@ -326,6 +326,12 @@ test "route guardrails can override global body and query limits" {
         .max_query_bytes = 64,
         .max_body_bytes = 64,
     });
+    try app.post("/strict-header", guardrailOkHandler, .{
+        .max_header_bytes = 64,
+    });
+    try app.post("/relaxed-header", guardrailOkHandler, .{
+        .max_header_bytes = 512,
+    });
 
     const cfg: zigmund.ServerConfig = .{
         .host = "127.0.0.1",
@@ -334,6 +340,7 @@ test "route guardrails can override global body and query limits" {
         .accept_poll_interval_ms = 10,
         .idle_timeout_ms = 500,
         .shutdown_grace_period_ms = 200,
+        .max_header_bytes = 512,
         .max_query_bytes = 8,
         .max_body_bytes = 8,
     };
@@ -352,6 +359,7 @@ test "route guardrails can override global body and query limits" {
     const address = try std.net.Address.resolveIp("127.0.0.1", port);
     const long_query = "term=abcdefghijklmnopqrstuvwxyz";
     const medium_body = "abcdefghijklmnopqrstuvwxyz";
+    const long_header_value = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     // Strict route should use global query limit (8 bytes) and fail.
     {
@@ -382,6 +390,46 @@ test "route guardrails can override global body and query limits" {
             std.testing.allocator,
             "POST /relaxed?{s} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n\r\n",
             .{long_query},
+        );
+        defer std.testing.allocator.free(request);
+        try stream.writeAll(request);
+
+        try std.testing.expect(try waitReadable(stream.handle, 2_000));
+        var read_buf: [4096]u8 = undefined;
+        const n = try stream.read(&read_buf);
+        try std.testing.expect(n > 0);
+        try std.testing.expectEqual(@as(?u16, 200), statusCodeFromResponse(read_buf[0..n]));
+    }
+
+    // Strict route should enforce route-level header limit (64 bytes) and fail.
+    {
+        var stream = try connectWithRetry(address);
+        defer stream.close();
+
+        const request = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "POST /strict-header HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Route-Test: {s}\r\nContent-Length: 0\r\n\r\n",
+            .{long_header_value},
+        );
+        defer std.testing.allocator.free(request);
+        try stream.writeAll(request);
+
+        try std.testing.expect(try waitReadable(stream.handle, 2_000));
+        var read_buf: [4096]u8 = undefined;
+        const n = try stream.read(&read_buf);
+        try std.testing.expect(n > 0);
+        try std.testing.expectEqual(@as(?u16, 431), statusCodeFromResponse(read_buf[0..n]));
+    }
+
+    // Relaxed route should override header limit and pass.
+    {
+        var stream = try connectWithRetry(address);
+        defer stream.close();
+
+        const request = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "POST /relaxed-header HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Route-Test: {s}\r\nContent-Length: 0\r\n\r\n",
+            .{long_header_value},
         );
         defer std.testing.allocator.free(request);
         try stream.writeAll(request);

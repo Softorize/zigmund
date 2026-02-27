@@ -518,6 +518,18 @@ pub const App = struct {
     ) !void {
         const route_guardrails = self.resolveHttpRouteGuardrails(raw_request.head.method, raw_request.head.target);
 
+        const header_limit = route_guardrails.max_header_bytes orelse
+            (if (self.active_server_cfg) |cfg| cfg.max_header_bytes else 64 * 1024);
+        if (header_limit != 0 and requestHeaderBytes(raw_request) > header_limit) {
+            try raw_request.respond("request header too large", .{
+                .status = .request_header_fields_too_large,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "text/plain; charset=utf-8" },
+                },
+            });
+            return;
+        }
+
         const query_limit = route_guardrails.max_query_bytes orelse
             (if (self.active_server_cfg) |cfg| cfg.max_query_bytes else 16 * 1024);
         if (query_limit != 0 and queryLengthFromTarget(raw_request.head.target) > query_limit) {
@@ -699,6 +711,7 @@ pub const App = struct {
     }
 
     const RouteGuardrails = struct {
+        max_header_bytes: ?usize = null,
         max_query_bytes: ?usize = null,
         max_body_bytes: ?usize = null,
     };
@@ -715,11 +728,27 @@ pub const App = struct {
         const route = self.router.findHttp(&probe) catch return .{};
         if (route) |matched| {
             return .{
+                .max_header_bytes = matched.options.max_header_bytes,
                 .max_query_bytes = matched.options.max_query_bytes,
                 .max_body_bytes = matched.options.max_body_bytes,
             };
         }
         return .{};
+    }
+
+    fn requestHeaderBytes(raw_request: *std.http.Server.Request) usize {
+        var total: usize = @tagName(raw_request.head.method).len +
+            1 +
+            raw_request.head.target.len +
+            " HTTP/1.1\r\n".len;
+
+        var headers = raw_request.iterateHeaders();
+        while (headers.next()) |header| {
+            total += header.name.len + 2 + header.value.len + 2;
+        }
+
+        total += 2;
+        return total;
     }
 
     fn dispatchWithPipeline(self: *App, req: *Request) !Response {

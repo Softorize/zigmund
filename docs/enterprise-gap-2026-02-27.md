@@ -125,7 +125,7 @@
   - Per-request body-size limits are enforced and oversized payloads return `413 Payload Too Large`.
   - Per-request header-size limits are now enforced via `ServerConfig.max_header_bytes`, with oversized request headers returning `431 Request Header Fields Too Large`.
   - Per-request query-size limits are now enforced via `ServerConfig.max_query_bytes`, with oversized query strings returning `414 URI Too Long`.
-  - Route-level HTTP guardrails now support per-route overrides for query/body limits (`RouteOptions.max_query_bytes`, `RouteOptions.max_body_bytes`) over global server defaults.
+  - Route-level HTTP guardrails now support per-route overrides for header/query/body limits (`RouteOptions.max_header_bytes`, `RouteOptions.max_query_bytes`, `RouteOptions.max_body_bytes`) over global server defaults.
   - Connection-overload behavior for `ServerConfig.max_connections` now emits explicit `503 Service Unavailable` responses (instead of silent drop).
   - Idle polling/timeout primitives are wired in the server loop for deterministic connection teardown.
   - TLS runtime path is now implemented via OpenSSL-backed in-process connections (PEM cert/key loading + handshake + HTTP dispatch over TLS), removing the previous hard `TlsNotYetImplemented` runtime block.
@@ -245,7 +245,7 @@
     - `--recv-buffer-bytes <n>`,
     - `--send-buffer-bytes <n>`,
     - `--reuse-address|--no-reuse-address`.
-  - `zigmund routes` now supports machine-readable output via `--json`, including route policy metadata (HTTP strict/limit knobs and websocket runtime controls) plus detailed dependency metadata arrays for HTTP/websocket routes.
+  - `zigmund routes` now supports machine-readable output via `--json`, including route policy metadata (HTTP strict/header/query/body limit knobs and websocket runtime controls) plus detailed dependency metadata arrays for HTTP/websocket routes.
   - `zigmund openapi` now supports file export via `--out <path>` / `--output <path>`.
   - `zigmund openapi` now supports deterministic generation mode via `--deterministic` (stable path/method/component ordering for CI snapshots).
   - `zigmund openapi` now supports snapshot diff gating via `--diff <path>` with deterministic mismatch failure (`OpenApiSnapshotMismatch`) for CI regression checks.
@@ -318,7 +318,7 @@
   - runtime body-limit + shutdown behavior,
   - runtime header-limit enforcement behavior,
   - runtime query-limit enforcement behavior,
-  - route-level runtime guardrail override behavior for query/body limits,
+  - route-level runtime guardrail override behavior for header/query/body limits,
   - TLS startup validation path behavior,
   - audit emission on runtime startup failure paths (`serve_failed` on TLS load errors),
   - strict/coercion + constraints validation behavior,

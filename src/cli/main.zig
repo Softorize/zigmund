@@ -473,7 +473,9 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
 
         var max_query_buf: [32]u8 = undefined;
         var max_body_buf: [32]u8 = undefined;
+        var max_header_buf: [32]u8 = undefined;
         const strict_validation = jsonOptionalBool(route.options.strict_validation);
+        const max_header = jsonOptionalUsize(max_header_buf[0..], route.options.max_header_bytes);
         const max_query = jsonOptionalUsize(max_query_buf[0..], route.options.max_query_bytes);
         const max_body = jsonOptionalUsize(max_body_buf[0..], route.options.max_body_bytes);
 
@@ -493,9 +495,10 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
         try writer.writeAll(",\"injected_dependencies_detail\":");
         try writeDependencySpecsJson(&writer, route.options.injected_dependencies);
         try writer.print(
-            ",\"strict_validation\":{s},\"max_query_bytes\":{s},\"max_body_bytes\":{s}}}",
+            ",\"strict_validation\":{s},\"max_header_bytes\":{s},\"max_query_bytes\":{s},\"max_body_bytes\":{s}}}",
             .{
                 strict_validation,
+                max_header,
                 max_query,
                 max_body,
             },
@@ -974,6 +977,7 @@ test "routes json renderer includes http and websocket routes" {
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"dependencies_detail\":[]") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"injected_dependencies_detail\":[]") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"strict_validation\":null") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_header_bytes\":null") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_query_bytes\":null") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_body_bytes\":null") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"websocket\"") != null);
@@ -1287,6 +1291,7 @@ test "routes json renderer includes operation and dependency metadata" {
         .name = "meta_route",
         .operation_id = "get_meta",
         .strict_validation = true,
+        .max_header_bytes = 512,
         .max_query_bytes = 1024,
         .max_body_bytes = 2048,
         .dependencies = &.{.{ .name = "auth" }},
@@ -1317,6 +1322,7 @@ test "routes json renderer includes operation and dependency metadata" {
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"depends_on\":[]") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"scopes\":[]") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"strict_validation\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_header_bytes\":512") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_query_bytes\":1024") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_body_bytes\":2048") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"operation_id\":\"websocket_meta\"") != null);

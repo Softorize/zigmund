@@ -90,6 +90,10 @@
 23. API-key auth failure semantics hardening:
    - when a route/websocket dependency maps to an API-key security scheme, unauthorized outcomes now return `403 Forbidden` (instead of fallback bearer `401` semantics).
    - API-key auth failures no longer emit `WWW-Authenticate: Bearer` fallback headers.
+24. Route guardrail API/runtime extension:
+   - `RouteOptions` now includes `max_header_bytes` for route-level header-size policy control.
+   - runtime route guardrail enforcement now applies route-level header/query/body overrides (`max_header_bytes`, `max_query_bytes`, `max_body_bytes`).
+   - `zigmund routes --json` now emits HTTP `max_header_bytes` policy metadata alongside query/body limits.
 
 ## Migration Actions
 
@@ -123,6 +127,7 @@
 15. If you operate runtime policy through CLI wrappers, include new socket/tcp knobs (`recv/send buffer`, `reuse_address`) where explicit transport tuning is required.
 16. For OAuth2 helper usage, you can now configure `scopes` on `OAuth2AuthorizationCodeBearer` in the same pattern as other OAuth2 bearer helper types.
 17. If downstream consumers depended on bearer challenge headers for API-key protected routes, update expectations: API-key failures now return `403` without `WWW-Authenticate`.
+18. If you enforce header-size limits per endpoint, migrate to route-level `max_header_bytes` instead of only global `ServerConfig.max_header_bytes`.
 
 ## Compatibility Notes
 
