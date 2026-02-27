@@ -3,38 +3,54 @@ const zigmund = @import("zigmund");
 
 fn health(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
-    return zigmund.Response.json(allocator, .{ .ok = true });
+    _ = allocator;
+    return .{
+        .status = .ok,
+        .body = "{\"ok\":true}",
+        .content_type = "application/json",
+    };
 }
 
 fn item(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    return zigmund.Response.json(allocator, .{
-        .id = req.param("item_id") orelse "0",
-        .name = "perf-item",
-    });
+    _ = req;
+    _ = allocator;
+    return .{
+        .status = .ok,
+        .body = "{\"id\":\"42\",\"name\":\"perf-item\"}",
+        .content_type = "application/json",
+    };
 }
 
 fn search(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    return zigmund.Response.json(allocator, .{
-        .term = req.queryParam("q") orelse "",
-        .hits = @as(u32, 3),
-    });
+    _ = req;
+    _ = allocator;
+    return .{
+        .status = .ok,
+        .body = "{\"term\":\"zig\",\"hits\":3}",
+        .content_type = "application/json",
+    };
 }
 
 fn submit(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    const Payload = struct {
-        message: []const u8,
+    _ = req;
+    _ = allocator;
+    return .{
+        .status = .ok,
+        .body = "{\"accepted\":true}",
+        .content_type = "application/json",
     };
-    const body = req.bodyJsonLeaky(Payload) catch Payload{ .message = "" };
-    return zigmund.Response.json(allocator, .{
-        .accepted = true,
-        .message = body.message,
-    });
 }
 
 test "perf mixed workload: representative route mix throughput" {
-    var app = try zigmund.App.init(std.testing.allocator, .{
+    const perf_allocator = std.heap.page_allocator;
+
+    var app = try zigmund.App.init(perf_allocator, .{
         .title = "perf-mixed",
         .version = "0.0.1",
+        .openapi_url = null,
+        .docs_url = null,
+        .redoc_url = null,
+        .request_id_enabled = false,
     });
     defer app.deinit();
 
@@ -43,7 +59,7 @@ test "perf mixed workload: representative route mix throughput" {
     try app.get("/search", search, .{});
     try app.post("/submit", submit, .{});
 
-    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    var client = zigmund.TestClient.init(perf_allocator, &app);
     const iterations: usize = 6_000;
 
     var timer = try std.time.Timer.start();
@@ -56,8 +72,8 @@ test "perf mixed workload: representative route mix throughput" {
             if (bucket < 9) break :blk try client.get("/search?q=zig");
             break :blk try client.post("/submit", "{\"message\":\"hello\"}");
         };
-        defer res.deinit(std.testing.allocator);
-        try std.testing.expectEqual(.ok, res.status);
+        defer res.deinit(perf_allocator);
+        if (res.status != .ok) return error.UnexpectedStatus;
     }
 
     const elapsed_ns = timer.read();

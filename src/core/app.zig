@@ -449,7 +449,12 @@ pub const App = struct {
     }
 
     pub fn dispatchSynthetic(self: *App, method: std.http.Method, target: []const u8, body: []const u8) !Response {
-        return self.dispatchSyntheticWithHeaders(method, target, body, &.{});
+        var req = try Request.initSynthetic(self.allocator, method, target, body);
+        defer req.deinit();
+        defer req.runBackgroundTasks() catch |err| {
+            std.log.warn("background task failed: {s}", .{@errorName(err)});
+        };
+        return self.dispatchWithPipeline(&req);
     }
 
     pub fn dispatchSyntheticWithHeaders(
@@ -537,7 +542,9 @@ pub const App = struct {
 
         if (raw_request.upgradeRequested() == .websocket) {
             if (try self.router.findWebSocket(req.path, &req)) |ws_route| {
-                try self.ensureRequestId(&req);
+                if (self.cfg.request_id_enabled) {
+                    try self.ensureRequestId(&req);
+                }
                 self.ensureTraceContext(&req);
                 defer req.runDependencyCleanups(self.allocator) catch |err| {
                     std.log.err("dependency cleanup failed: {s}", .{@errorName(err)});
@@ -666,6 +673,11 @@ pub const App = struct {
         max_body_bytes: ?usize = null,
     };
 
+    const RuntimeDependencies = struct {
+        items: []const types.DependencySpec,
+        owned: bool = false,
+    };
+
     fn resolveHttpRouteGuardrails(self: *App, method: std.http.Method, target: []const u8) RouteGuardrails {
         var probe = Request.initSynthetic(self.allocator, method, target, "") catch return .{};
         defer probe.deinit();
@@ -681,7 +693,9 @@ pub const App = struct {
     }
 
     fn dispatchWithPipeline(self: *App, req: *Request) !Response {
-        try self.ensureRequestId(req);
+        if (self.cfg.request_id_enabled) {
+            try self.ensureRequestId(req);
+        }
         self.ensureTraceContext(req);
         const start_ns = std.time.nanoTimestamp();
 
@@ -766,9 +780,9 @@ pub const App = struct {
                 route.options.dependencies,
                 route.options.injected_dependencies,
             );
-            defer self.allocator.free(runtime_deps);
+            defer if (runtime_deps.owned) self.allocator.free(runtime_deps.items);
 
-            self.dependency_registry.runRouteDependencies(req, runtime_deps, self.allocator) catch |err| {
+            self.dependency_registry.runRouteDependencies(req, runtime_deps.items, self.allocator) catch |err| {
                 if (err == error.Unauthorized) {
                     self.emitAuthAudit(req, "http_unauthorized", "dependency");
                     return self.unauthorizedResponseForRoute(route.options);
@@ -825,7 +839,7 @@ pub const App = struct {
 
     fn seedRouteValidationMode(self: *const App, req: *Request, route_options: types.StoredRouteOptions) void {
         const strict_enabled = route_options.strict_validation orelse self.cfg.strict_validation;
-        req.setDependencyValue("zigmund.validation.strict", if (strict_enabled) "true" else "false") catch |err| {
+        req.setDependencyValueBorrowed("zigmund.validation.strict", if (strict_enabled) "true" else "false") catch |err| {
             std.log.warn("failed to set validation strict mode dependency: {s}", .{@errorName(err)});
         };
     }
@@ -857,13 +871,33 @@ pub const App = struct {
         self: *App,
         route_dependencies: []const types.DependencySpec,
         injected_dependencies: []const types.DependencySpec,
-    ) ![]types.DependencySpec {
-        var count: usize = route_dependencies.len;
+    ) !RuntimeDependencies {
+        var injected_registered_count: usize = 0;
         for (injected_dependencies) |dep| {
-            if (self.dependency_registry.lookup(dep.name) != null) count += 1;
+            if (self.dependency_registry.lookup(dep.name) != null) injected_registered_count += 1;
         }
 
-        if (count == 0) return try self.allocator.alloc(types.DependencySpec, 0);
+        if (injected_registered_count == 0) {
+            return .{
+                .items = route_dependencies,
+                .owned = false,
+            };
+        }
+
+        if (route_dependencies.len == 0 and injected_registered_count == injected_dependencies.len) {
+            return .{
+                .items = injected_dependencies,
+                .owned = false,
+            };
+        }
+
+        const count = route_dependencies.len + injected_registered_count;
+        if (count == 0) {
+            return .{
+                .items = &.{},
+                .owned = false,
+            };
+        }
 
         const merged = try self.allocator.alloc(types.DependencySpec, count);
         var idx: usize = 0;
@@ -879,7 +913,10 @@ pub const App = struct {
             idx += 1;
         }
 
-        return merged;
+        return .{
+            .items = merged,
+            .owned = true,
+        };
     }
 
     fn mergeIncludedDependencies(
@@ -1022,24 +1059,24 @@ pub const App = struct {
         if (req.requestId() == null) {
             if (req.header("x-request-id")) |incoming| {
                 if (incoming.len != 0) {
-                    try req.setRequestId(incoming);
+                    req.setRequestIdBorrowed(incoming);
                 }
             }
         }
 
         if (req.requestId() == null) {
             const next_id = self.request_id_counter.fetchAdd(1, .monotonic) + 1;
-            var generated_buf: [64]u8 = undefined;
+            var generated_buf: [32]u8 = undefined;
             const generated = try std.fmt.bufPrint(
                 &generated_buf,
-                "req-{d}-{d}",
-                .{ next_id, std.time.milliTimestamp() },
+                "req-{x}",
+                .{next_id},
             );
-            try req.setRequestId(generated);
+            try req.setRequestIdInline(generated);
         }
 
         if (req.requestId()) |request_id| {
-            req.setDependencyValue("request_id", request_id) catch |err| {
+            req.setDependencyValueBorrowed("request_id", request_id) catch |err| {
                 std.log.warn("failed to set request_id dependency: {s}", .{@errorName(err)});
             };
         }
@@ -1050,18 +1087,18 @@ pub const App = struct {
         const trace_context = req.header(header_name) orelse req.header("x-correlation-id") orelse return;
         if (trace_context.len == 0) return;
 
-        req.setDependencyValue("trace_context", trace_context) catch |err| {
+        req.setDependencyValueBorrowed("trace_context", trace_context) catch |err| {
             std.log.warn("failed to set trace_context dependency: {s}", .{@errorName(err)});
         };
 
         if (parseTraceparent(trace_context)) |parsed| {
-            req.setDependencyValue("trace_id", parsed.trace_id) catch |err| {
+            req.setDependencyValueBorrowed("trace_id", parsed.trace_id) catch |err| {
                 std.log.warn("failed to set trace_id dependency: {s}", .{@errorName(err)});
             };
-            req.setDependencyValue("span_id", parsed.span_id) catch |err| {
+            req.setDependencyValueBorrowed("span_id", parsed.span_id) catch |err| {
                 std.log.warn("failed to set span_id dependency: {s}", .{@errorName(err)});
             };
-            req.setDependencyValue("trace_flags", parsed.trace_flags) catch |err| {
+            req.setDependencyValueBorrowed("trace_flags", parsed.trace_flags) catch |err| {
                 std.log.warn("failed to set trace_flags dependency: {s}", .{@errorName(err)});
             };
         }
@@ -1122,7 +1159,9 @@ pub const App = struct {
     }
 
     fn finalizeResponse(self: *App, req: *Request, response: *Response, start_ns: i128) void {
-        self.attachRequestIdHeader(req, response);
+        if (self.cfg.request_id_enabled) {
+            self.attachRequestIdHeader(req, response);
+        }
         const latency_us = elapsedMicros(start_ns);
         self.emitTelemetry(req, response.status, latency_us);
         self.emitTrace(req, response.status, latency_us);
@@ -1139,6 +1178,8 @@ pub const App = struct {
     }
 
     fn emitTelemetry(self: *App, req: *const Request, status: std.http.Status, latency_us: u64) void {
+        if (self.telemetry_sink == null and !self.cfg.structured_telemetry_logs) return;
+
         const trace_identity = buildTraceIdentity(req);
         const event: TelemetryEvent = .{
             .request_id = req.requestId() orelse "",
@@ -1165,6 +1206,8 @@ pub const App = struct {
     }
 
     fn emitTrace(self: *App, req: *const Request, status: std.http.Status, latency_us: u64) void {
+        if (self.trace_sink == null and !self.cfg.structured_trace_logs) return;
+
         const trace_identity = buildTraceIdentity(req);
         const event: TraceEvent = .{
             .request_id = req.requestId() orelse "",
@@ -1192,6 +1235,8 @@ pub const App = struct {
     }
 
     fn emitAccessLog(self: *App, req: *const Request, status: std.http.Status, latency_us: u64) void {
+        if (self.access_log_sink == null and !self.cfg.structured_access_logs) return;
+
         var addr_buf: [128]u8 = undefined;
         const remote_addr = if (req.peerAddress()) |peer|
             std.fmt.bufPrint(&addr_buf, "{f}", .{peer}) catch ""
@@ -1227,9 +1272,15 @@ pub const App = struct {
     }
 
     fn emitMetrics(self: *App, req: *const Request, status: std.http.Status, latency_us: u64) void {
-        self.metrics.observe(req.method, req.path, status, latency_us) catch |err| {
-            std.log.warn("metrics registry observe failed: {s}", .{@errorName(err)});
-        };
+        const collect_registry = self.cfg.metrics_url != null;
+        const emit_sink_or_logs = self.metrics_sink != null or self.cfg.structured_metrics_logs;
+        if (!collect_registry and !emit_sink_or_logs) return;
+
+        if (collect_registry) {
+            self.metrics.observe(req.method, req.path, status, latency_us) catch |err| {
+                std.log.warn("metrics registry observe failed: {s}", .{@errorName(err)});
+            };
+        }
 
         const count_event: MetricsEvent = .{
             .name = "zigmund_http_requests_total",
@@ -1248,6 +1299,8 @@ pub const App = struct {
             .status = status,
             .latency_us = latency_us,
         };
+
+        if (!emit_sink_or_logs) return;
 
         if (self.metrics_sink) |sink| {
             sink(count_event, self.allocator) catch |err| {

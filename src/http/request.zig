@@ -66,6 +66,8 @@ pub const Request = struct {
     owned_body: ?[]u8 = null,
     request_id: ?[]const u8 = null,
     owned_request_id: ?[]u8 = null,
+    request_id_inline: [64]u8 = undefined,
+    request_id_inline_len: usize = 0,
     path_params: std.StringHashMapUnmanaged([]const u8) = .empty,
     query_params: std.StringHashMapUnmanaged([]const u8) = .empty,
     synthetic_headers: std.ArrayListUnmanaged(SyntheticHeader) = .empty,
@@ -586,6 +588,10 @@ pub const Request = struct {
         try self.dependency_values.put(self.allocator, key, owned_value);
     }
 
+    pub fn setDependencyValueBorrowed(self: *Request, key: []const u8, value: []const u8) !void {
+        try self.dependency_values.put(self.allocator, key, value);
+    }
+
     pub fn registerDependencyCleanup(
         self: *Request,
         key: []const u8,
@@ -626,6 +632,27 @@ pub const Request = struct {
 
         self.owned_request_id = owned;
         self.request_id = owned;
+        self.request_id_inline_len = 0;
+    }
+
+    pub fn setRequestIdBorrowed(self: *Request, request_id: []const u8) void {
+        if (self.owned_request_id) |current| {
+            self.allocator.free(current);
+            self.owned_request_id = null;
+        }
+        self.request_id = request_id;
+        self.request_id_inline_len = 0;
+    }
+
+    pub fn setRequestIdInline(self: *Request, request_id: []const u8) !void {
+        if (request_id.len > self.request_id_inline.len) return error.RequestIdTooLong;
+        if (self.owned_request_id) |current| {
+            self.allocator.free(current);
+            self.owned_request_id = null;
+        }
+        @memcpy(self.request_id_inline[0..request_id.len], request_id);
+        self.request_id_inline_len = request_id.len;
+        self.request_id = self.request_id_inline[0..request_id.len];
     }
 
     pub fn requestId(self: *const Request) ?[]const u8 {

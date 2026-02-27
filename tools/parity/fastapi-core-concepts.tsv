@@ -1,0 +1,64 @@
+FastAPI application|App
+Application config|AppConfig
+Router type|Router
+APIRouter alias|APIRouter
+Route options|RouteOptions
+WebSocket route options|WebSocketRouteOptions
+Include router options|IncludeRouterOptions
+Dependency specification|DependencySpec
+Response specification|ResponseSpec
+Request object|Request
+Response object|Response
+Upload file type|UploadFile
+Background tasks|BackgroundTasks
+HTTP exceptions|HTTPException
+WebSocket exceptions|WebSocketException
+Query marker|Query
+Path marker|Path
+Header marker|Header
+Cookie marker|Cookie
+Body marker|Body
+Form marker|Form
+File marker|File
+Depends marker|Depends
+Security marker|Security
+Named security marker|SecurityNamed
+Query options|QueryOptions
+Path options|PathOptions
+Header options|HeaderOptions
+Cookie options|CookieOptions
+Body options|BodyOptions
+Form options|FormOptions
+File options|FileOptions
+Depends options|DependsOptions
+Test client|TestClient
+WebSocket test session|WebSocketSession
+Server config|ServerConfig
+TLS config|TlsConfig
+OpenAPI schema|OpenApiSchema
+OpenAPI schema field|OpenApiSchemaField
+OpenAPI callback|OpenApiCallback
+OpenAPI webhook|OpenApiWebhook
+OpenAPI extension|OpenApiExtension
+OpenAPI response examples|OpenApiResponseExamples
+API key query security|APIKeyQuery
+API key header security|APIKeyHeader
+API key cookie security|APIKeyCookie
+HTTP Basic security|HTTPBasic
+HTTP Bearer security|HTTPBearer
+HTTP Digest security|HTTPDigest
+OAuth2 password bearer|OAuth2PasswordBearer
+OAuth2 client credentials|OAuth2ClientCredentialsBearer
+OAuth2 implicit|OAuth2ImplicitBearer
+OAuth2 authorization code|OAuth2AuthorizationCodeBearer
+OpenID Connect|OpenIdConnect
+OAuth2 password form|OAuth2PasswordRequestForm
+Authorization parser helper|parseAuthorizationHeader
+Bearer token helper|bearerTokenFromHeader
+Basic credentials decoder|decodeBasicCredentials
+Settings integration|SettingsIntegration
+Templates integration|TemplatesIntegration
+Static files integration|StaticFilesIntegration
+GraphQL integration|GraphQlIntegration
+SQL integration|SqlIntegration
+Compatibility adapters|CompatibilityAdapters

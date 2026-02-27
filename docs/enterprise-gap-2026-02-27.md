@@ -246,11 +246,14 @@
     - runs dependency policy allowlist gate (`tools/release/check_dependency_policy.sh`, `tools/release/allowed-dependencies.txt`),
     - runs SAST baseline scan (`tools/release/check_sast_baseline.sh`) for high-risk secret/key markers,
     - enforces migration-notes presence for pre-1.0 breaking/behavior changes (`tools/release/check_migration_notes.sh`, `docs/migrations/`),
+    - runs FastAPI concept parity checklist gate (`tools/parity/check_api_parity.sh`, `tools/parity/fastapi-core-concepts.tsv`),
     - validates public API surface against snapshot (breaking-export drift guard),
     - validates MIT license marker,
     - enforces pinned Zig version in `build.zig.zon`,
     - validates generated SBOM shape/license markers.
   - CI now generates and uploads `zigmund.sbom.json` artifact and runs governance checks.
+  - API concept parity summary artifact added at `tools/parity/api-parity-summary.json`:
+    - current gate status is explicit (`implemented=64`, `missing=0`) against FastAPI-core concept mapping.
   - parity governance gate added via `tools/parity/check_parity_gate.sh` with progressive threshold env knobs:
     - `PARITY_REQUIRED_IMPLEMENTED`,
     - `PARITY_MAX_STUB`,

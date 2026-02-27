@@ -134,6 +134,15 @@ pub const TestClient = struct {
         body: []const u8,
         headers: []const std.http.Header,
     ) !Response {
+        if (headers.len == 0 and self.cookies.items.len == 0) {
+            var direct = try self.app.dispatchSynthetic(method, target, body);
+            self.applySetCookieHeaders(&direct) catch |err| {
+                direct.deinit(self.allocator);
+                return err;
+            };
+            return direct;
+        }
+
         var effective = try self.effectiveHeaders(headers);
         defer effective.deinit(self.allocator);
 

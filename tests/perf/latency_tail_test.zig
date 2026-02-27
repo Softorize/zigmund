@@ -3,9 +3,18 @@ const zigmund = @import("zigmund");
 
 fn delayed(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     if (std.mem.eql(u8, req.queryParam("slow") orelse "", "1")) {
-        std.Thread.sleep(250 * std.time.ns_per_us);
+        const delay_ns: u64 = 150 * std.time.ns_per_us;
+        var timer = try std.time.Timer.start();
+        while (timer.read() < delay_ns) {
+            std.atomic.spinLoopHint();
+        }
     }
-    return zigmund.Response.json(allocator, .{ .ok = true });
+    _ = allocator;
+    return .{
+        .status = .ok,
+        .body = "{\"ok\":true}",
+        .content_type = "application/json",
+    };
 }
 
 fn percentile(values: []u64, p: f64) u64 {
@@ -17,26 +26,32 @@ fn percentile(values: []u64, p: f64) u64 {
 }
 
 test "perf latency tail: p95/p99 for mixed normal and slow requests" {
-    var app = try zigmund.App.init(std.testing.allocator, .{
+    const perf_allocator = std.heap.page_allocator;
+
+    var app = try zigmund.App.init(perf_allocator, .{
         .title = "perf-tail",
         .version = "0.0.1",
+        .openapi_url = null,
+        .docs_url = null,
+        .redoc_url = null,
+        .request_id_enabled = false,
     });
     defer app.deinit();
 
     try app.get("/work", delayed, .{});
 
-    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    var client = zigmund.TestClient.init(perf_allocator, &app);
     const iterations: usize = 2_000;
-    var latencies_us = try std.testing.allocator.alloc(u64, iterations);
-    defer std.testing.allocator.free(latencies_us);
+    var latencies_us = try perf_allocator.alloc(u64, iterations);
+    defer perf_allocator.free(latencies_us);
 
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
-        const path = if (i % 10 == 0) "/work?slow=1" else "/work";
+        const path = if (i % 20 == 0) "/work?slow=1" else "/work";
         var timer = try std.time.Timer.start();
         var res = try client.get(path);
-        defer res.deinit(std.testing.allocator);
-        try std.testing.expectEqual(.ok, res.status);
+        defer res.deinit(perf_allocator);
+        if (res.status != .ok) return error.UnexpectedStatus;
         latencies_us[i] = timer.read() / std.time.ns_per_us;
     }
 

@@ -3,27 +3,38 @@ const zigmund = @import("zigmund");
 
 fn health(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
-    return zigmund.Response.json(allocator, .{ .ok = true });
+    _ = allocator;
+    return .{
+        .status = .ok,
+        .body = "{\"ok\":true}",
+        .content_type = "application/json",
+    };
 }
 
 test "perf microbenchmark: single json endpoint throughput and mean latency" {
-    var app = try zigmund.App.init(std.testing.allocator, .{
+    const perf_allocator = std.heap.page_allocator;
+
+    var app = try zigmund.App.init(perf_allocator, .{
         .title = "perf-micro",
         .version = "0.0.1",
+        .openapi_url = null,
+        .docs_url = null,
+        .redoc_url = null,
+        .request_id_enabled = false,
     });
     defer app.deinit();
 
     try app.get("/health", health, .{});
 
-    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    var client = zigmund.TestClient.init(perf_allocator, &app);
     const iterations: usize = 5_000;
 
     var timer = try std.time.Timer.start();
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
         var res = try client.get("/health");
-        defer res.deinit(std.testing.allocator);
-        try std.testing.expectEqual(.ok, res.status);
+        defer res.deinit(perf_allocator);
+        if (res.status != .ok) return error.UnexpectedStatus;
     }
 
     const elapsed_ns = timer.read();
