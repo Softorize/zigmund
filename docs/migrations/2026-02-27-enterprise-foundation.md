@@ -49,6 +49,19 @@
    - `App.AccessLogEvent` now includes `scheme` and `host`.
    - JSON structured access logs now emit `scheme` and `host` fields.
    - access-log emission now resolves `scheme`/`host` from trusted proxy dependency context first (`zigmund.proxy.proto` / `zigmund.proxy.host`), with host fallback to request `Host` header.
+18. Routes CLI JSON schema extension:
+   - `zigmund routes --json` now includes HTTP policy metadata:
+     - `strict_validation`,
+     - `max_query_bytes`,
+     - `max_body_bytes`.
+   - websocket route JSON entries now include runtime policy fields:
+     - `idle_timeout_ms`,
+     - `auto_pong`,
+     - `ping_interval_ms`,
+     - `pong_timeout_ms`,
+     - `max_message_bytes`,
+     - `max_pending_messages`,
+     - `send_timeout_ms`.
 
 ## Migration Actions
 
@@ -76,6 +89,7 @@
    - or namespaced equivalents under `zigmund.proxy.*`.
 10. If you manage runtime limits from CLI wrappers/scripts, add `--max-query-bytes` alongside existing `--max-header-bytes`/`--max-body-bytes` controls for explicit query guardrails.
 11. If you consume `AccessLogEvent` programmatically, update sink handlers/schemas to accept the additive `scheme` and `host` fields.
+12. If you parse `zigmund routes --json` output, update consumers to tolerate/additionally consume the new policy metadata fields on HTTP and websocket route objects.
 
 ## Compatibility Notes
 

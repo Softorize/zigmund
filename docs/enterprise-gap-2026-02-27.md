@@ -238,7 +238,7 @@
 - CLI and operational DX progress:
   - `zigmund dev` now runs a live reload loop (workspace fingerprint watch + `serve` child process restart on file change) with configurable watch interval via `--watch-ms`.
   - `zigmund serve` / `zigmund dev` now support query-size guardrail flag `--max-query-bytes <n>`.
-  - `zigmund routes` now supports machine-readable output via `--json`.
+  - `zigmund routes` now supports machine-readable output via `--json`, including route policy metadata (HTTP strict/limit knobs and websocket runtime controls).
   - `zigmund openapi` now supports file export via `--out <path>` / `--output <path>`.
   - `zigmund openapi` now supports deterministic generation mode via `--deterministic` (stable path/method/component ordering for CI snapshots).
   - `zigmund openapi` now supports snapshot diff gating via `--diff <path>` with deterministic mismatch failure (`OpenApiSnapshotMismatch`) for CI regression checks.
@@ -338,7 +338,7 @@
   - integration conformance for settings/templates/static-files/graphql/sql provider lifecycle,
   - path-converter OpenAPI fallback naming behavior,
   - metrics endpoint conformance (Prometheus output shape, enable/disable behavior, App JSON sink adapter wiring),
-  - CLI renderer coverage for routes JSON and cloud-plan output shape,
+  - CLI renderer coverage for routes JSON and cloud-plan output shape (including HTTP/websocket policy metadata fields),
   - CLI OpenAPI snapshot assertion behavior (match + mismatch paths),
   - CLI OpenAPI deterministic flag parsing behavior,
   - CLI SBOM renderer output shape behavior,

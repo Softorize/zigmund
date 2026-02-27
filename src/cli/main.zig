@@ -448,8 +448,15 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
     for (app.router.httpRoutes()) |route| {
         if (wrote != 0) try writer.writeAll(",");
         wrote += 1;
+
+        var max_query_buf: [32]u8 = undefined;
+        var max_body_buf: [32]u8 = undefined;
+        const strict_validation = jsonOptionalBool(route.options.strict_validation);
+        const max_query = jsonOptionalUsize(max_query_buf[0..], route.options.max_query_bytes);
+        const max_body = jsonOptionalUsize(max_body_buf[0..], route.options.max_body_bytes);
+
         try writer.print(
-            "{{\"kind\":\"http\",\"method\":{f},\"path\":{f},\"include_in_schema\":{},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"injected_dependencies\":{d}}}",
+            "{{\"kind\":\"http\",\"method\":{f},\"path\":{f},\"include_in_schema\":{},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"injected_dependencies\":{d},\"strict_validation\":{s},\"max_query_bytes\":{s},\"max_body_bytes\":{s}}}",
             .{
                 std.json.fmt(route.method.asString(), .{}),
                 std.json.fmt(route.path, .{}),
@@ -458,6 +465,9 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
                 std.json.fmt(route.options.name orelse "", .{}),
                 route.options.dependencies.len,
                 route.options.injected_dependencies.len,
+                strict_validation,
+                max_query,
+                max_body,
             },
         );
     }
@@ -465,8 +475,23 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
     for (app.router.websocketRoutes()) |route| {
         if (wrote != 0) try writer.writeAll(",");
         wrote += 1;
+
+        var idle_timeout_buf: [32]u8 = undefined;
+        var ping_interval_buf: [32]u8 = undefined;
+        var pong_timeout_buf: [32]u8 = undefined;
+        var max_message_buf: [32]u8 = undefined;
+        var max_pending_buf: [32]u8 = undefined;
+        var send_timeout_buf: [32]u8 = undefined;
+
+        const idle_timeout = jsonOptionalU64(idle_timeout_buf[0..], route.options.idle_timeout_ms);
+        const ping_interval = jsonOptionalU64(ping_interval_buf[0..], route.options.ping_interval_ms);
+        const pong_timeout = jsonOptionalU64(pong_timeout_buf[0..], route.options.pong_timeout_ms);
+        const max_message = jsonOptionalUsize(max_message_buf[0..], route.options.max_message_bytes);
+        const max_pending = jsonOptionalUsize(max_pending_buf[0..], route.options.max_pending_messages);
+        const send_timeout = jsonOptionalU64(send_timeout_buf[0..], route.options.send_timeout_ms);
+
         try writer.print(
-            "{{\"kind\":\"websocket\",\"path\":{f},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"injected_dependencies\":{d},\"allowed_origins\":{d},\"require_subprotocol\":{},\"subprotocols\":{d}}}",
+            "{{\"kind\":\"websocket\",\"path\":{f},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"injected_dependencies\":{d},\"allowed_origins\":{d},\"require_subprotocol\":{},\"subprotocols\":{d},\"idle_timeout_ms\":{s},\"auto_pong\":{},\"ping_interval_ms\":{s},\"pong_timeout_ms\":{s},\"max_message_bytes\":{s},\"max_pending_messages\":{s},\"send_timeout_ms\":{s}}}",
             .{
                 std.json.fmt(route.path, .{}),
                 std.json.fmt(route.options.operation_id orelse "", .{}),
@@ -476,12 +501,38 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
                 route.options.allowed_origins.len,
                 route.options.require_subprotocol,
                 route.options.subprotocols.len,
+                idle_timeout,
+                route.options.auto_pong,
+                ping_interval,
+                pong_timeout,
+                max_message,
+                max_pending,
+                send_timeout,
             },
         );
     }
 
     try writer.writeAll("]");
     return out.toOwnedSlice(allocator);
+}
+
+fn jsonOptionalBool(value: ?bool) []const u8 {
+    if (value) |v| return if (v) "true" else "false";
+    return "null";
+}
+
+fn jsonOptionalUsize(buf: []u8, value: ?usize) []const u8 {
+    if (value) |v| {
+        return std.fmt.bufPrint(buf, "{d}", .{v}) catch "null";
+    }
+    return "null";
+}
+
+fn jsonOptionalU64(buf: []u8, value: ?u64) []const u8 {
+    if (value) |v| {
+        return std.fmt.bufPrint(buf, "{d}", .{v}) catch "null";
+    }
+    return "null";
 }
 
 fn renderCloudPlan(allocator: std.mem.Allocator, app: *zigmund.App, provider: CloudProvider) ![]u8 {
@@ -849,9 +900,16 @@ test "routes json renderer includes http and websocket routes" {
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"http\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"method\":\"get\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"include_in_schema\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"strict_validation\":null") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_query_bytes\":null") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_body_bytes\":null") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"websocket\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"path\":\"/ws\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"require_subprotocol\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"idle_timeout_ms\":null") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"auto_pong\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"ping_interval_ms\":null") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_message_bytes\":null") != null);
 }
 
 test "cloud plan renderer outputs route counts and openapi size" {
@@ -1126,6 +1184,9 @@ test "routes json renderer includes operation and dependency metadata" {
     try app.get("/meta", healthHandler, .{
         .name = "meta_route",
         .operation_id = "get_meta",
+        .strict_validation = true,
+        .max_query_bytes = 1024,
+        .max_body_bytes = 2048,
         .dependencies = &.{.{ .name = "auth" }},
     });
     try app.websocket("/ws-meta", ws_handler.run, .{
@@ -1134,6 +1195,13 @@ test "routes json renderer includes operation and dependency metadata" {
         .allowed_origins = &.{"https://example.com"},
         .subprotocols = &.{"chat.v1"},
         .require_subprotocol = true,
+        .idle_timeout_ms = 45_000,
+        .auto_pong = false,
+        .ping_interval_ms = 5_000,
+        .pong_timeout_ms = 1_500,
+        .max_message_bytes = 8192,
+        .max_pending_messages = 64,
+        .send_timeout_ms = 2_000,
     });
 
     const payload = try renderRoutesJson(std.testing.allocator, &app);
@@ -1142,9 +1210,19 @@ test "routes json renderer includes operation and dependency metadata" {
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"operation_id\":\"get_meta\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"name\":\"meta_route\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"dependencies\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"strict_validation\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_query_bytes\":1024") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_body_bytes\":2048") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"operation_id\":\"websocket_meta\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"injected_dependencies\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"require_subprotocol\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"allowed_origins\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"subprotocols\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"idle_timeout_ms\":45000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"auto_pong\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"ping_interval_ms\":5000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"pong_timeout_ms\":1500") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_message_bytes\":8192") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_pending_messages\":64") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"send_timeout_ms\":2000") != null);
 }
