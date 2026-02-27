@@ -62,6 +62,10 @@
      - `max_message_bytes`,
      - `max_pending_messages`,
      - `send_timeout_ms`.
+19. Trace/access observability payload extension:
+   - W3C `baggage` header values are now captured into request dependency state as `baggage`.
+   - `App.TraceEvent` and `App.AccessLogEvent` now include additive `baggage` fields.
+   - JSON structured trace/access logs now emit `baggage`.
 
 ## Migration Actions
 
@@ -90,6 +94,7 @@
 10. If you manage runtime limits from CLI wrappers/scripts, add `--max-query-bytes` alongside existing `--max-header-bytes`/`--max-body-bytes` controls for explicit query guardrails.
 11. If you consume `AccessLogEvent` programmatically, update sink handlers/schemas to accept the additive `scheme` and `host` fields.
 12. If you parse `zigmund routes --json` output, update consumers to tolerate/additionally consume the new policy metadata fields on HTTP and websocket route objects.
+13. If you consume trace/access sink payloads programmatically, update schemas/handlers to include the additive `baggage` field.
 
 ## Compatibility Notes
 

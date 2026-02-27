@@ -11,12 +11,14 @@ var telemetry_last_span_id: ?[]u8 = null;
 var trace_event_count: usize = 0;
 var trace_last_trace_context: ?[]u8 = null;
 var trace_last_tracestate: ?[]u8 = null;
+var trace_last_baggage: ?[]u8 = null;
 var trace_last_request_id: ?[]u8 = null;
 var trace_last_trace_id: ?[]u8 = null;
 var trace_last_span_id: ?[]u8 = null;
 var access_log_event_count: usize = 0;
 var access_log_last_trace_context: ?[]u8 = null;
 var access_log_last_tracestate: ?[]u8 = null;
+var access_log_last_baggage: ?[]u8 = null;
 var access_log_last_trace_id: ?[]u8 = null;
 var access_log_last_span_id: ?[]u8 = null;
 var access_log_last_user_agent: ?[]u8 = null;
@@ -53,6 +55,8 @@ fn resetTelemetryState(allocator: std.mem.Allocator) void {
     trace_last_trace_context = null;
     if (trace_last_tracestate) |tracestate| allocator.free(tracestate);
     trace_last_tracestate = null;
+    if (trace_last_baggage) |baggage| allocator.free(baggage);
+    trace_last_baggage = null;
     if (trace_last_request_id) |request_id| allocator.free(request_id);
     trace_last_request_id = null;
     if (trace_last_trace_id) |trace_id| allocator.free(trace_id);
@@ -65,6 +69,8 @@ fn resetTelemetryState(allocator: std.mem.Allocator) void {
     access_log_last_trace_context = null;
     if (access_log_last_tracestate) |tracestate| allocator.free(tracestate);
     access_log_last_tracestate = null;
+    if (access_log_last_baggage) |baggage| allocator.free(baggage);
+    access_log_last_baggage = null;
     if (access_log_last_trace_id) |trace_id| allocator.free(trace_id);
     access_log_last_trace_id = null;
     if (access_log_last_span_id) |span_id| allocator.free(span_id);
@@ -114,12 +120,14 @@ fn telemetrySink(event: zigmund.App.TelemetryEvent, allocator: std.mem.Allocator
 fn traceSink(event: zigmund.App.TraceEvent, allocator: std.mem.Allocator) !void {
     if (trace_last_trace_context) |trace_context| allocator.free(trace_context);
     if (trace_last_tracestate) |tracestate| allocator.free(tracestate);
+    if (trace_last_baggage) |baggage| allocator.free(baggage);
     if (trace_last_request_id) |request_id| allocator.free(request_id);
     if (trace_last_trace_id) |trace_id| allocator.free(trace_id);
     if (trace_last_span_id) |span_id| allocator.free(span_id);
 
     trace_last_trace_context = try allocator.dupe(u8, event.trace_context);
     trace_last_tracestate = try allocator.dupe(u8, event.tracestate);
+    trace_last_baggage = try allocator.dupe(u8, event.baggage);
     trace_last_request_id = try allocator.dupe(u8, event.request_id);
     trace_last_trace_id = try allocator.dupe(u8, event.trace_id);
     trace_last_span_id = try allocator.dupe(u8, event.span_id);
@@ -129,6 +137,7 @@ fn traceSink(event: zigmund.App.TraceEvent, allocator: std.mem.Allocator) !void 
 fn accessLogSink(event: zigmund.App.AccessLogEvent, allocator: std.mem.Allocator) !void {
     if (access_log_last_trace_context) |trace_context| allocator.free(trace_context);
     if (access_log_last_tracestate) |tracestate| allocator.free(tracestate);
+    if (access_log_last_baggage) |baggage| allocator.free(baggage);
     if (access_log_last_trace_id) |trace_id| allocator.free(trace_id);
     if (access_log_last_span_id) |span_id| allocator.free(span_id);
     if (access_log_last_user_agent) |user_agent| allocator.free(user_agent);
@@ -137,6 +146,7 @@ fn accessLogSink(event: zigmund.App.AccessLogEvent, allocator: std.mem.Allocator
 
     access_log_last_trace_context = try allocator.dupe(u8, event.trace_context);
     access_log_last_tracestate = try allocator.dupe(u8, event.tracestate);
+    access_log_last_baggage = try allocator.dupe(u8, event.baggage);
     access_log_last_trace_id = try allocator.dupe(u8, event.trace_id);
     access_log_last_span_id = try allocator.dupe(u8, event.span_id);
     access_log_last_user_agent = try allocator.dupe(u8, event.user_agent);
@@ -174,6 +184,7 @@ fn observabilityHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zi
         .request_id = req.dependency("request_id") orelse "",
         .trace_context = req.dependency("trace_context") orelse "",
         .tracestate = req.dependency("tracestate") orelse "",
+        .baggage = req.dependency("baggage") orelse "",
         .trace_id = req.dependency("trace_id") orelse "",
         .span_id = req.dependency("span_id") orelse "",
     });
@@ -228,12 +239,14 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqual(@as(usize, 1), trace_event_count);
     try std.testing.expectEqualStrings("", trace_last_trace_context.?);
     try std.testing.expectEqualStrings("", trace_last_tracestate.?);
+    try std.testing.expectEqualStrings("", trace_last_baggage.?);
     try std.testing.expectEqualStrings(generated_request_id, trace_last_request_id.?);
     try std.testing.expectEqualStrings("", trace_last_trace_id.?);
     try std.testing.expectEqualStrings("", trace_last_span_id.?);
     try std.testing.expectEqual(@as(usize, 1), access_log_event_count);
     try std.testing.expectEqualStrings("", access_log_last_trace_context.?);
     try std.testing.expectEqualStrings("", access_log_last_tracestate.?);
+    try std.testing.expectEqualStrings("", access_log_last_baggage.?);
     try std.testing.expectEqualStrings("", access_log_last_trace_id.?);
     try std.testing.expectEqualStrings("", access_log_last_span_id.?);
     try std.testing.expectEqualStrings("", access_log_last_scheme.?);
@@ -258,6 +271,7 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqualStrings("external-request-id-1", forwarded.header("x-request-id").?);
     try std.testing.expect(std.mem.indexOf(u8, forwarded.body, "\"request_id\":\"external-request-id-1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, forwarded.body, "\"trace_context\":\"trace-123\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, forwarded.body, "\"baggage\":\"\"") != null);
     try std.testing.expectEqual(@as(usize, 2), telemetry_event_count);
     try std.testing.expectEqualStrings("external-request-id-1", telemetry_last_request_id.?);
     try std.testing.expectEqualStrings("", telemetry_last_trace_id.?);
@@ -265,12 +279,14 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqual(@as(usize, 2), trace_event_count);
     try std.testing.expectEqualStrings("trace-123", trace_last_trace_context.?);
     try std.testing.expectEqualStrings("", trace_last_tracestate.?);
+    try std.testing.expectEqualStrings("", trace_last_baggage.?);
     try std.testing.expectEqualStrings("external-request-id-1", trace_last_request_id.?);
     try std.testing.expectEqualStrings("", trace_last_trace_id.?);
     try std.testing.expectEqualStrings("", trace_last_span_id.?);
     try std.testing.expectEqual(@as(usize, 2), access_log_event_count);
     try std.testing.expectEqualStrings("trace-123", access_log_last_trace_context.?);
     try std.testing.expectEqualStrings("", access_log_last_tracestate.?);
+    try std.testing.expectEqualStrings("", access_log_last_baggage.?);
     try std.testing.expectEqualStrings("", access_log_last_trace_id.?);
     try std.testing.expectEqualStrings("", access_log_last_span_id.?);
     try std.testing.expectEqualStrings("zigmund-test", access_log_last_user_agent.?);
@@ -323,19 +339,24 @@ test "traceparent context populates trace id and span id in dependencies and sin
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
     const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     const tracestate = "rojo=00f067aa0ba902b7,congo=t61rcWkgMzE";
+    const baggage = "user.id=42,tenant=acme";
     var res = try client.requestWithHeaders(.GET, "/observe", "", &.{
         .{ .name = "traceparent", .value = traceparent },
         .{ .name = "tracestate", .value = tracestate },
+        .{ .name = "baggage", .value = baggage },
     });
     defer res.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(.ok, res.status);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "\"trace_context\":\"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "\"tracestate\":\"rojo=00f067aa0ba902b7,congo=t61rcWkgMzE\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"baggage\":\"user.id=42,tenant=acme\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "\"span_id\":\"00f067aa0ba902b7\"") != null);
     try std.testing.expectEqualStrings("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE", trace_last_tracestate.?);
+    try std.testing.expectEqualStrings("user.id=42,tenant=acme", trace_last_baggage.?);
     try std.testing.expectEqualStrings("rojo=00f067aa0ba902b7,congo=t61rcWkgMzE", access_log_last_tracestate.?);
+    try std.testing.expectEqualStrings("user.id=42,tenant=acme", access_log_last_baggage.?);
     try std.testing.expectEqualStrings("4bf92f3577b34da6a3ce929d0e0e4736", telemetry_last_trace_id.?);
     try std.testing.expectEqualStrings("00f067aa0ba902b7", telemetry_last_span_id.?);
     try std.testing.expectEqualStrings("4bf92f3577b34da6a3ce929d0e0e4736", trace_last_trace_id.?);
