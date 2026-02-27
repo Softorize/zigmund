@@ -81,3 +81,40 @@ test "proxy extraction supports ipv6 trusted proxy cidr allowlist" {
     try std.testing.expectEqualStrings("2001:db8::9", allowed.client_ip.?);
     try std.testing.expectEqualStrings("https", allowed.proto.?);
 }
+
+test "proxy extraction supports RFC forwarded header fields" {
+    const headers = [_]std.http.Header{
+        .{ .name = "forwarded", .value = "for=203.0.113.9;proto=https, for=198.51.100.44;proto=http" },
+    };
+
+    var req = try zigmund.Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/", "", &headers);
+    defer req.deinit();
+
+    const info = zigmund.runtime.extractProxyInfo(&req);
+    try std.testing.expectEqualStrings("203.0.113.9", info.client_ip.?);
+    try std.testing.expectEqualStrings("https", info.proto.?);
+}
+
+test "proxy extraction applies trust policy to forwarded headers" {
+    const headers = [_]std.http.Header{
+        .{ .name = "forwarded", .value = "for=203.0.113.9;proto=https" },
+    };
+
+    var req = try zigmund.Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/", "", &headers);
+    defer req.deinit();
+    req.setPeerAddress(std.net.Address.initIp4(.{ 198, 51, 100, 44 }, 18080));
+
+    const denied = zigmund.runtime.extractProxyInfoWithConfig(&req, .{
+        .trusted_proxy_headers = true,
+        .trusted_proxy_cidrs = &.{"10.0.0.0/8"},
+    });
+    try std.testing.expect(denied.client_ip == null);
+    try std.testing.expect(denied.proto == null);
+
+    const allowed = zigmund.runtime.extractProxyInfoWithConfig(&req, .{
+        .trusted_proxy_headers = true,
+        .trusted_proxy_cidrs = &.{"198.51.100.0/24"},
+    });
+    try std.testing.expectEqualStrings("203.0.113.9", allowed.client_ip.?);
+    try std.testing.expectEqualStrings("https", allowed.proto.?);
+}

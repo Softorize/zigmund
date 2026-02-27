@@ -8,9 +8,10 @@ pub const ProxyInfo = struct {
 };
 
 pub fn extractProxyInfo(req: *const Request) ProxyInfo {
+    const forwarded = parseForwardedHeader(req.header("forwarded"));
     return .{
-        .client_ip = firstValue(req.header("x-forwarded-for")),
-        .proto = firstValue(req.header("x-forwarded-proto")),
+        .client_ip = forwarded.client_ip orelse firstValue(req.header("x-forwarded-for")),
+        .proto = forwarded.proto orelse firstValue(req.header("x-forwarded-proto")),
     };
 }
 
@@ -95,12 +96,108 @@ fn firstValue(raw: ?[]const u8) ?[]const u8 {
     return std.mem.trim(u8, value, " \t");
 }
 
+fn parseForwardedHeader(raw: ?[]const u8) ProxyInfo {
+    const value = raw orelse return .{};
+    const element = firstForwardedElement(value) orelse return .{};
+
+    var out: ProxyInfo = .{};
+    var it = std.mem.splitScalar(u8, element, ';');
+    while (it.next()) |part| {
+        const token = std.mem.trim(u8, part, " \t");
+        if (token.len == 0) continue;
+        const eq = std.mem.indexOfScalar(u8, token, '=') orelse continue;
+        const key = std.mem.trim(u8, token[0..eq], " \t");
+        const raw_value = std.mem.trim(u8, token[eq + 1 ..], " \t");
+        const parsed_value = trimOptionalQuotes(raw_value);
+        if (parsed_value.len == 0) continue;
+
+        if (std.ascii.eqlIgnoreCase(key, "for")) {
+            out.client_ip = normalizeForwardedFor(parsed_value);
+        } else if (std.ascii.eqlIgnoreCase(key, "proto")) {
+            out.proto = parsed_value;
+        }
+    }
+
+    return out;
+}
+
+fn firstForwardedElement(raw: []const u8) ?[]const u8 {
+    var in_quotes = false;
+    var idx: usize = 0;
+    while (idx < raw.len) : (idx += 1) {
+        const ch = raw[idx];
+        if (ch == '"') {
+            in_quotes = !in_quotes;
+            continue;
+        }
+        if (ch == ',' and !in_quotes) {
+            return std.mem.trim(u8, raw[0..idx], " \t");
+        }
+    }
+    return std.mem.trim(u8, raw, " \t");
+}
+
+fn trimOptionalQuotes(value: []const u8) []const u8 {
+    if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"') {
+        return value[1 .. value.len - 1];
+    }
+    return value;
+}
+
+fn normalizeForwardedFor(value: []const u8) ?[]const u8 {
+    const candidate = std.mem.trim(u8, value, " \t");
+    if (candidate.len == 0) return null;
+
+    if (candidate[0] == '[') {
+        const end = std.mem.indexOfScalar(u8, candidate, ']') orelse return candidate;
+        if (end <= 1) return null;
+        return candidate[1..end];
+    }
+
+    // Strip optional host:port for IPv4 values.
+    if (std.mem.indexOfScalar(u8, candidate, ':')) |colon_idx| {
+        if (std.mem.indexOfScalar(u8, candidate, '.')) |_| {
+            return candidate[0..colon_idx];
+        }
+    }
+
+    return candidate;
+}
+
 test "extract first forwarded value" {
     var req = try Request.initSynthetic(std.testing.allocator, .GET, "/", "");
     defer req.deinit();
     // synthetic requests do not have raw headers; this validates null behavior.
     const info = extractProxyInfo(&req);
     try std.testing.expect(info.client_ip == null);
+}
+
+test "forwarded header extraction supports for/proto and precedence over x-forwarded headers" {
+    const headers = [_]std.http.Header{
+        .{ .name = "forwarded", .value = "for=203.0.113.43;proto=https, for=198.51.100.17;proto=http" },
+        .{ .name = "x-forwarded-for", .value = "198.51.100.10" },
+        .{ .name = "x-forwarded-proto", .value = "http" },
+    };
+
+    var req = try Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/", "", &headers);
+    defer req.deinit();
+
+    const info = extractProxyInfo(&req);
+    try std.testing.expectEqualStrings("203.0.113.43", info.client_ip.?);
+    try std.testing.expectEqualStrings("https", info.proto.?);
+}
+
+test "forwarded header extraction handles quoted bracketed ipv6 and port" {
+    const headers = [_]std.http.Header{
+        .{ .name = "forwarded", .value = "for=\"[2001:db8:cafe::17]:4711\";proto=\"https\"" },
+    };
+
+    var req = try Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/", "", &headers);
+    defer req.deinit();
+
+    const info = extractProxyInfo(&req);
+    try std.testing.expectEqualStrings("2001:db8:cafe::17", info.client_ip.?);
+    try std.testing.expectEqualStrings("https", info.proto.?);
 }
 
 test "cidr trust accepts only allowed peer ranges" {

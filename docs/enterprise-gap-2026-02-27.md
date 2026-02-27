@@ -182,6 +182,7 @@
   - `extractProxyInfoWithConfig(...)` now honors `trusted_proxy_headers` policy.
   - CIDR allowlist enforcement is now active via `trusted_proxy_cidrs` (forwarded headers are ignored unless peer IP matches configured ranges).
   - Runtime dispatch now propagates peer socket address into `Request` (`req.peerAddress()`), enabling policy decisions based on real client/proxy source IP.
+  - proxy extraction now supports RFC `Forwarded` header parsing (`for`/`proto`) with precedence over legacy `X-Forwarded-*` values, while still respecting trust/CIDR policy gates.
 - Response API parity progress:
   - added redirect/file/chunked-stream helpers and cookie/etag/last-modified helpers on `Response`.
   - added first-class server-sent events helper (`Response.eventStream(...)`) with SSE-compliant data/event/id/retry formatting and default cache/connection headers.

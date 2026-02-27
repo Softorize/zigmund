@@ -27,6 +27,8 @@
    - `TestClient` now starts app startup hooks lazily on first request/connect, supports explicit `start()` / `close()`, and runs shutdown hooks automatically on `deinit`.
 12. Trace context propagation:
    - `tracestate` headers are now captured into request dependency state and propagated through trace/access-log sink payloads.
+13. Proxy header extraction behavior:
+   - proxy metadata extraction now parses RFC `Forwarded` header values (`for`/`proto`) with precedence over `X-Forwarded-For`/`X-Forwarded-Proto`.
 
 ## Migration Actions
 
