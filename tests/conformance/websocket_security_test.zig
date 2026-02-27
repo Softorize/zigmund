@@ -92,6 +92,18 @@ fn wsHandler(conn: *zigmund.runtime.websocket.Connection, allocator: std.mem.All
     try conn.ping("zigmund");
 }
 
+fn wsApiKeyUnauthorizedDependency(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = req;
+    _ = allocator;
+    return error.Unauthorized;
+}
+
+fn wsApiKeyScopeDependency(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = req;
+    _ = allocator;
+    return error.InsufficientScope;
+}
+
 fn sendWebSocketUpgrade(
     address: std.net.Address,
     target: []const u8,
@@ -231,6 +243,73 @@ test "websocket handshake enforces dependency auth and required scopes" {
 
     try std.testing.expectEqual(@as(?u16, 101), responseStatusCode(upgraded));
     try std.testing.expect(containsIgnoreCase(upgraded, "upgrade: websocket"));
+}
+
+test "websocket api key auth failures return forbidden without bearer challenge" {
+    const port = try reservePort();
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "websocket-api-key-security",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addDependency("ws_api_key_auth", wsApiKeyUnauthorizedDependency);
+    try app.addSecurityScheme("ws_api_key_auth", .{
+        .api_key = .{
+            .name = "x-api-key",
+            .in = .header,
+        },
+    });
+    try app.websocket("/ws-api-key-protected", wsHandler, .{
+        .dependencies = &.{.{ .name = "ws_api_key_auth" }},
+    });
+
+    try app.addDependency("ws_api_key_scope", wsApiKeyScopeDependency);
+    try app.addSecurityScheme("ws_api_key_scope", .{
+        .api_key = .{
+            .name = "api_key",
+            .in = .query,
+        },
+    });
+    try app.websocket("/ws-api-key-scope", wsHandler, .{
+        .dependencies = &.{.{
+            .name = "ws_api_key_scope",
+            .scopes = &.{"admin"},
+        }},
+    });
+
+    const cfg: zigmund.ServerConfig = .{
+        .host = "127.0.0.1",
+        .port = port,
+        .worker_count = 1,
+        .accept_poll_interval_ms = 10,
+        .idle_timeout_ms = 1_000,
+        .shutdown_grace_period_ms = 200,
+    };
+
+    var serve_ctx: ServeThreadCtx = .{
+        .app = &app,
+        .cfg = cfg,
+    };
+
+    const thread = try std.Thread.spawn(.{}, serveThread, .{&serve_ctx});
+    defer {
+        app.requestShutdown();
+        thread.join();
+    }
+
+    const address = try std.net.Address.resolveIp("127.0.0.1", port);
+
+    const unauthorized = try sendWebSocketUpgrade(address, "/ws-api-key-protected", &.{});
+    defer std.testing.allocator.free(unauthorized);
+    try std.testing.expectEqual(@as(?u16, 403), responseStatusCode(unauthorized));
+    try std.testing.expect(!containsIgnoreCase(unauthorized, "www-authenticate:"));
+
+    const insufficient = try sendWebSocketUpgrade(address, "/ws-api-key-scope", &.{});
+    defer std.testing.allocator.free(insufficient);
+    try std.testing.expectEqual(@as(?u16, 403), responseStatusCode(insufficient));
+    try std.testing.expect(!containsIgnoreCase(insufficient, "www-authenticate:"));
 }
 
 test "websocket handshake enforces route origin allowlist" {

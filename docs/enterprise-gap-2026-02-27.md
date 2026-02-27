@@ -93,7 +93,7 @@
     - startup runtime policy snapshot emission (`startup_config`) with structured server config details (`max_query_bytes` and proxy trust controls included) and `serve_failed` capture.
 - Security failure-mode hardening:
   - unauthorized responses now include `WWW-Authenticate: Bearer`.
-  - API-key secured dependency failures now return `403 Forbidden` without bearer challenge fallback headers.
+  - API-key secured dependency failures now return `403 Forbidden` without bearer challenge fallback headers (HTTP + websocket handshake paths).
   - HTTP auth challenges now emit richer scheme-specific `WWW-Authenticate` details:
     - Basic: `Basic realm="zigmund"`,
     - Digest: `Digest realm="zigmund", qop="auth", algorithm=SHA-256`.
@@ -341,6 +341,7 @@
   - OpenID Connect bearer helper resolver behavior and OpenAPI `openIdConnect` scheme emission,
   - OpenAPI OAuth2 flows emission behavior for `implicit`/`password`/`clientCredentials`/`authorizationCode`,
   - websocket handshake security behavior (`401`/`403`/`101`) with dependency + scope enforcement,
+  - websocket API-key auth failure semantics (`403` + no bearer challenge fallback),
   - websocket audit-event coverage for auth/policy rejection paths (`websocket_unauthorized`, `websocket_insufficient_scope`, `origin_rejected`, `subprotocol_rejected`),
   - docs endpoint behavior for embedded Swagger UI/ReDoc assets and UI option wiring,
   - `TestClient` websocket session behavior (message exchange, auth/scope gate, cleanup lifecycle),
