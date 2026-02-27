@@ -157,6 +157,39 @@ test "openapi exposes api key security schemes for query header and cookie" {
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"security\":[{\"key_cookie\":[]}]") != null);
 }
 
+test "openapi route security combines multiple schemes as AND and merges duplicate scopes" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "security-and-merge",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addSecurityScheme("auth_a", .{ .http = .{ .scheme = "bearer" } });
+    try app.addSecurityScheme("auth_b", .{
+        .api_key = .{
+            .name = "x-api-key",
+            .in = .header,
+        },
+    });
+
+    try app.get("/secure-both", protected, .{
+        .dependencies = &.{
+            .{ .name = "auth_a", .scopes = &.{"items:read"} },
+            .{ .name = "auth_b" },
+            .{ .name = "auth_a", .scopes = &.{"items:write"} },
+        },
+    });
+
+    const doc = try app.openapi();
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            doc,
+            "\"security\":[{\"auth_a\":[\"items:read\",\"items:write\"],\"auth_b\":[]}]",
+        ) != null,
+    );
+}
+
 test "openapi deterministic mode sorts security schemes by name" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "security-order",

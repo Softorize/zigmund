@@ -405,6 +405,7 @@ fn writeHttpOperation(
             try writer.writeAll(",");
             try writeFieldName(writer, "security");
             try writeRouteSecurity(
+                allocator,
                 writer,
                 explicit_dependencies,
                 injected_dependencies,
@@ -531,6 +532,7 @@ fn writeWebSocketOperation(
             try writer.writeAll(",");
             try writeFieldName(writer, "security");
             try writeRouteSecurity(
+                allocator,
                 writer,
                 route.options.dependencies,
                 route.injected_dependencies,
@@ -2188,40 +2190,84 @@ fn countRouteSecurityRequirements(
     for (injected_dependencies) |dep| {
         if (lookupSecurityScheme(security_schemes, dep.name) != null) count += 1;
     }
+
     return count;
 }
 
+const RouteSecurityRequirement = struct {
+    name: []const u8,
+    scopes: std.ArrayListUnmanaged([]const u8) = .empty,
+};
+
+fn appendUniqueScope(
+    allocator: std.mem.Allocator,
+    scopes: *std.ArrayListUnmanaged([]const u8),
+    scope: []const u8,
+) !void {
+    for (scopes.items) |existing| {
+        if (std.mem.eql(u8, existing, scope)) return;
+    }
+    try scopes.append(allocator, scope);
+}
+
+fn appendRouteSecurityDependency(
+    allocator: std.mem.Allocator,
+    requirements: *std.ArrayList(RouteSecurityRequirement),
+    dep: types.DependencySpec,
+    security_schemes: []const security.NamedScheme,
+) !void {
+    if (lookupSecurityScheme(security_schemes, dep.name) == null) return;
+
+    var target: ?*RouteSecurityRequirement = null;
+    for (requirements.items) |*existing| {
+        if (!std.mem.eql(u8, existing.name, dep.name)) continue;
+        target = existing;
+        break;
+    }
+
+    if (target == null) {
+        try requirements.append(allocator, .{ .name = dep.name });
+        target = &requirements.items[requirements.items.len - 1];
+    }
+
+    for (dep.scopes) |scope| {
+        try appendUniqueScope(allocator, &target.?.scopes, scope);
+    }
+}
+
 fn writeRouteSecurity(
+    allocator: std.mem.Allocator,
     writer: anytype,
     dependencies: []const types.DependencySpec,
     injected_dependencies: []const types.DependencySpec,
     security_schemes: []const security.NamedScheme,
 ) !void {
-    try writer.writeAll("[");
-    var wrote: usize = 0;
-    for (dependencies) |dep| {
-        if (lookupSecurityScheme(security_schemes, dep.name) == null) continue;
-        if (wrote != 0) try writer.writeAll(",");
-        wrote += 1;
+    var requirements: std.ArrayList(RouteSecurityRequirement) = .empty;
+    defer {
+        for (requirements.items) |*item| item.scopes.deinit(allocator);
+        requirements.deinit(allocator);
+    }
 
-        try writer.writeAll("{");
-        try writeJsonString(writer, dep.name);
-        try writer.writeAll(":");
-        try writeStringArray(writer, dep.scopes);
-        try writer.writeAll("}");
+    for (dependencies) |dep| {
+        try appendRouteSecurityDependency(allocator, &requirements, dep, security_schemes);
     }
     for (injected_dependencies) |dep| {
-        if (lookupSecurityScheme(security_schemes, dep.name) == null) continue;
-        if (wrote != 0) try writer.writeAll(",");
-        wrote += 1;
-
-        try writer.writeAll("{");
-        try writeJsonString(writer, dep.name);
-        try writer.writeAll(":");
-        try writeStringArray(writer, dep.scopes);
-        try writer.writeAll("}");
+        try appendRouteSecurityDependency(allocator, &requirements, dep, security_schemes);
     }
-    try writer.writeAll("]");
+
+    if (requirements.items.len == 0) {
+        try writer.writeAll("[]");
+        return;
+    }
+
+    try writer.writeAll("[{");
+    for (requirements.items, 0..) |requirement, idx| {
+        if (idx != 0) try writer.writeAll(",");
+        try writeJsonString(writer, requirement.name);
+        try writer.writeAll(":");
+        try writeStringArray(writer, requirement.scopes.items);
+    }
+    try writer.writeAll("}]");
 }
 
 fn lookupSecurityScheme(

@@ -133,6 +133,9 @@
      - `applyGrantedScopes(...)` for request dependency-context scope seeding.
    - new public utility export added:
      - `parseScopesRawAlloc(...)` for comma/space-delimited scope set parsing.
+33. OpenAPI security requirement semantics hardening:
+   - route/websocket `security` requirements now emit combined AND semantics in a single requirement object when multiple security schemes are present.
+   - duplicate scheme entries across explicit/injected dependencies are merged with scope-union semantics.
 
 ## Migration Actions
 
@@ -175,6 +178,7 @@
 24. If your OpenAPI consumers require explicit JSON Schema dialect pinning, adopt `AppConfig.json_schema_dialect`; set to `null` only when external tooling enforces/infers dialect out-of-band.
 25. If OpenAPI artifact generation runs via CLI in CI/CD, migrate CLI invocations to use `--json-schema-dialect` / `--no-json-schema-dialect` where dialect policy differs by environment.
 26. If OAuth2 password-flow handlers currently tokenize `scope` manually, migrate to `OAuth2PasswordRequestForm.parsedScopesAlloc(...)` and/or `applyGrantedScopes(...)` for consistent scope parsing and dependency-state integration.
+27. If downstream OpenAPI tooling assumed one-item-per-object security arrays for multi-scheme routes, update parsers to consume standard combined requirement-object semantics (AND within object, OR across array entries).
 
 ## Compatibility Notes
 
