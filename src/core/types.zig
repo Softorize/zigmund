@@ -41,6 +41,7 @@ pub const AppConfig = struct {
     structured_access_logs: bool = false,
     structured_telemetry_logs: bool = false,
     structured_metrics_logs: bool = false,
+    structured_audit_logs: bool = false,
     webhooks: []const OpenApiWebhook = &.{},
 };
 

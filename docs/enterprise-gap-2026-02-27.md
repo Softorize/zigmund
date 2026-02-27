@@ -73,6 +73,9 @@
     - `enableJsonAccessLogSink()`,
     - `enableJsonTelemetrySink()`,
     - `enableJsonMetricsSink()`.
+  - audit event sink added:
+    - `setAuditSink(...)` + `enableJsonAuditSink()`,
+    - audit emissions for lifecycle transitions/failures and auth failure outcomes (`unauthorized`, `insufficient_scope`).
 - Security failure-mode hardening:
   - unauthorized responses now include `WWW-Authenticate: Bearer`.
 - OpenAPI hardening:

@@ -12,6 +12,12 @@ var access_log_last_user_agent: ?[]u8 = null;
 var metrics_event_count: usize = 0;
 var metrics_last_name: ?[]u8 = null;
 var metrics_last_value: f64 = 0;
+var audit_event_count: usize = 0;
+var audit_last_category: ?[]u8 = null;
+var audit_last_action: ?[]u8 = null;
+var audit_last_method: ?[]u8 = null;
+var audit_last_path: ?[]u8 = null;
+var audit_last_detail: ?[]u8 = null;
 
 fn resetTelemetryState(allocator: std.mem.Allocator) void {
     telemetry_event_count = 0;
@@ -34,6 +40,18 @@ fn resetTelemetryState(allocator: std.mem.Allocator) void {
     if (metrics_last_name) |name| allocator.free(name);
     metrics_last_name = null;
     metrics_last_value = 0;
+
+    audit_event_count = 0;
+    if (audit_last_category) |category| allocator.free(category);
+    audit_last_category = null;
+    if (audit_last_action) |action| allocator.free(action);
+    audit_last_action = null;
+    if (audit_last_method) |method| allocator.free(method);
+    audit_last_method = null;
+    if (audit_last_path) |path| allocator.free(path);
+    audit_last_path = null;
+    if (audit_last_detail) |detail| allocator.free(detail);
+    audit_last_detail = null;
 }
 
 fn telemetrySink(event: zigmund.App.TelemetryEvent, allocator: std.mem.Allocator) !void {
@@ -63,11 +81,40 @@ fn metricsSink(event: zigmund.App.MetricsEvent, allocator: std.mem.Allocator) !v
     metrics_event_count += 1;
 }
 
+fn auditSink(event: zigmund.App.AuditEvent, allocator: std.mem.Allocator) !void {
+    if (audit_last_category) |category| allocator.free(category);
+    if (audit_last_action) |action| allocator.free(action);
+    if (audit_last_method) |method| allocator.free(method);
+    if (audit_last_path) |path| allocator.free(path);
+    if (audit_last_detail) |detail| allocator.free(detail);
+
+    audit_last_category = try allocator.dupe(u8, event.category);
+    audit_last_action = try allocator.dupe(u8, event.action);
+    audit_last_method = try allocator.dupe(u8, event.method);
+    audit_last_path = try allocator.dupe(u8, event.path);
+    audit_last_detail = try allocator.dupe(u8, event.detail);
+    audit_event_count += 1;
+}
+
 fn observabilityHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
         .request_id = req.dependency("request_id") orelse "",
         .trace_context = req.dependency("trace_context") orelse "",
     });
+}
+
+fn secureHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    return zigmund.Response.json(allocator, .{ .ok = true });
+}
+
+fn authDependency(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = allocator;
+
+    const bearer = zigmund.HTTPBearer{};
+    const creds = (try bearer.resolve(req)) orelse return null;
+    try zigmund.security.setGrantedScopesRaw(req, req.header("x-scopes") orelse "");
+    return creds.credentials;
 }
 
 test "request id trace context telemetry access logs and metrics are propagated" {
@@ -125,4 +172,54 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqualStrings("trace-123", access_log_last_trace_context.?);
     try std.testing.expectEqualStrings("zigmund-test", access_log_last_user_agent.?);
     try std.testing.expectEqual(@as(usize, 4), metrics_event_count);
+}
+
+test "audit sink receives auth failure events" {
+    resetTelemetryState(std.testing.allocator);
+    defer resetTelemetryState(std.testing.allocator);
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "audit-auth",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    app.setAuditSink(auditSink);
+    try app.addDependency("auth_dep", authDependency);
+    try app.addSecurityScheme("auth_dep", .{
+        .oauth2 = .{
+            .flows = .{
+                .password = .{
+                    .token_url = "/token",
+                    .scopes = &.{.{ .name = "admin" }},
+                },
+            },
+        },
+    });
+    try app.get("/secure", secureHandler, .{
+        .dependencies = &.{.{
+            .name = "auth_dep",
+            .scopes = &.{"admin"},
+        }},
+    });
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var unauthorized = try client.get("/secure");
+    defer unauthorized.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.unauthorized, unauthorized.status);
+    try std.testing.expectEqual(@as(usize, 1), audit_event_count);
+    try std.testing.expectEqualStrings("auth", audit_last_category.?);
+    try std.testing.expectEqualStrings("http_unauthorized", audit_last_action.?);
+    try std.testing.expectEqualStrings("GET", audit_last_method.?);
+    try std.testing.expectEqualStrings("/secure", audit_last_path.?);
+
+    var insufficient = try client.requestWithHeaders(.GET, "/secure", "", &.{
+        .{ .name = "authorization", .value = "Bearer token-a" },
+        .{ .name = "x-scopes", .value = "user" },
+    });
+    defer insufficient.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.forbidden, insufficient.status);
+    try std.testing.expectEqual(@as(usize, 2), audit_event_count);
+    try std.testing.expectEqualStrings("http_insufficient_scope", audit_last_action.?);
 }

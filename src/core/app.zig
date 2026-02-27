@@ -27,6 +27,7 @@ pub const App = struct {
     telemetry_sink: ?TelemetryFn = null,
     access_log_sink: ?AccessLogFn = null,
     metrics_sink: ?MetricsFn = null,
+    audit_sink: ?AuditFn = null,
     metrics: metrics_registry.Registry,
     trace_context_header: ?[]u8 = null,
     openapi_cache: ?[]u8 = null,
@@ -40,6 +41,7 @@ pub const App = struct {
     const TelemetryFn = *const fn (TelemetryEvent, std.mem.Allocator) anyerror!void;
     const AccessLogFn = *const fn (AccessLogEvent, std.mem.Allocator) anyerror!void;
     const MetricsFn = *const fn (MetricsEvent, std.mem.Allocator) anyerror!void;
+    const AuditFn = *const fn (AuditEvent, std.mem.Allocator) anyerror!void;
 
     pub const TelemetryEvent = struct {
         request_id: []const u8,
@@ -67,6 +69,15 @@ pub const App = struct {
         path: []const u8,
         status: std.http.Status,
         latency_us: u64,
+    };
+
+    pub const AuditEvent = struct {
+        category: []const u8,
+        action: []const u8,
+        request_id: []const u8 = "",
+        method: []const u8 = "",
+        path: []const u8 = "",
+        detail: []const u8 = "",
     };
 
     pub const Middleware = struct {
@@ -219,6 +230,10 @@ pub const App = struct {
         self.metrics_sink = normalizeMetricsSink(sink);
     }
 
+    pub fn setAuditSink(self: *App, sink: anytype) void {
+        self.audit_sink = normalizeAuditSink(sink);
+    }
+
     pub fn enableJsonTelemetrySink(self: *App) void {
         self.telemetry_sink = jsonTelemetrySink;
     }
@@ -229,6 +244,10 @@ pub const App = struct {
 
     pub fn enableJsonMetricsSink(self: *App) void {
         self.metrics_sink = jsonMetricsSink;
+    }
+
+    pub fn enableJsonAuditSink(self: *App) void {
+        self.audit_sink = jsonAuditSink;
     }
 
     pub fn setTraceContextHeader(self: *App, header_name: []const u8) !void {
@@ -334,10 +353,47 @@ pub const App = struct {
         self.active_server_cfg = cfg;
         defer self.active_server_cfg = null;
 
-        try self.runHooks(self.startup_hooks.items);
-        defer self.runHooks(self.shutdown_hooks.items) catch |err| {
-            std.log.err("shutdown hook failed: {s}", .{@errorName(err)});
+        self.emitAudit(.{
+            .category = "lifecycle",
+            .action = "startup_begin",
+        });
+        self.runHooks(self.startup_hooks.items) catch |err| {
+            self.emitAudit(.{
+                .category = "lifecycle",
+                .action = "startup_failed",
+                .detail = @errorName(err),
+            });
+            return err;
         };
+        self.emitAudit(.{
+            .category = "lifecycle",
+            .action = "startup_complete",
+        });
+
+        defer {
+            self.emitAudit(.{
+                .category = "lifecycle",
+                .action = "shutdown_begin",
+            });
+
+            var shutdown_failed = false;
+            self.runHooks(self.shutdown_hooks.items) catch |err| {
+                shutdown_failed = true;
+                self.emitAudit(.{
+                    .category = "lifecycle",
+                    .action = "shutdown_failed",
+                    .detail = @errorName(err),
+                });
+                std.log.err("shutdown hook failed: {s}", .{@errorName(err)});
+            };
+
+            if (!shutdown_failed) {
+                self.emitAudit(.{
+                    .category = "lifecycle",
+                    .action = "shutdown_complete",
+                });
+            }
+        }
 
         try runtime.server.serve(self, cfg, dispatchTrampoline, self, shouldStopTrampoline);
     }
@@ -426,6 +482,11 @@ pub const App = struct {
                     ws_route.options.dependencies,
                     self.allocator,
                 ) catch |err| {
+                    switch (err) {
+                        error.Unauthorized => self.emitAuthAudit(&req, "websocket_unauthorized", "dependency"),
+                        error.InsufficientScope => self.emitAuthAudit(&req, "websocket_insufficient_scope", "dependency"),
+                        else => {},
+                    }
                     var dep_response = switch (err) {
                         error.Unauthorized => self.unauthorizedResponseForWebSocket(ws_route.options),
                         error.InsufficientScope => self.insufficientScopeResponseForWebSocket(ws_route.options),
@@ -437,6 +498,14 @@ pub const App = struct {
                 };
 
                 if (!isWebSocketOriginAllowed(req.header("origin"), ws_route.options.allowed_origins)) {
+                    self.emitAudit(.{
+                        .category = "websocket",
+                        .action = "origin_rejected",
+                        .request_id = req.requestId() orelse "",
+                        .method = @tagName(req.method),
+                        .path = req.path,
+                        .detail = "origin not allowed",
+                    });
                     try raw_request.respond("websocket origin not allowed", .{
                         .status = .forbidden,
                         .extra_headers = &.{
@@ -454,6 +523,14 @@ pub const App = struct {
                     ws_route.options.require_subprotocol and
                     selected_subprotocol == null)
                 {
+                    self.emitAudit(.{
+                        .category = "websocket",
+                        .action = "subprotocol_rejected",
+                        .request_id = req.requestId() orelse "",
+                        .method = @tagName(req.method),
+                        .path = req.path,
+                        .detail = "required subprotocol missing or unsupported",
+                    });
                     try raw_request.respond("websocket subprotocol required", .{
                         .status = .bad_request,
                         .extra_headers = &.{
@@ -601,9 +678,11 @@ pub const App = struct {
 
             self.dependency_registry.runRouteDependencies(req, runtime_deps, self.allocator) catch |err| {
                 if (err == error.Unauthorized) {
+                    self.emitAuthAudit(req, "http_unauthorized", "dependency");
                     return self.unauthorizedResponseForRoute(route.options);
                 }
                 if (err == error.InsufficientScope) {
+                    self.emitAuthAudit(req, "http_insufficient_scope", "dependency");
                     return self.insufficientScopeResponseForRoute(route.options);
                 }
                 return dependencyErrorToResponse(self.allocator, err);
@@ -617,9 +696,11 @@ pub const App = struct {
                     return Response.text("unsupported media type").withStatus(.unsupported_media_type);
                 }
                 if (err == error.Unauthorized) {
+                    self.emitAuthAudit(req, "http_unauthorized", "handler");
                     return self.unauthorizedResponseForRoute(route.options);
                 }
                 if (err == error.InsufficientScope) {
+                    self.emitAuthAudit(req, "http_insufficient_scope", "handler");
                     return self.insufficientScopeResponseForRoute(route.options);
                 }
                 if (err == error.DependencyCycleDetected) {
@@ -997,6 +1078,32 @@ pub const App = struct {
         }
     }
 
+    fn emitAudit(self: *App, event: AuditEvent) void {
+        if (self.audit_sink) |sink| {
+            sink(event, self.allocator) catch |err| {
+                std.log.warn("audit sink failed: {s}", .{@errorName(err)});
+            };
+            return;
+        }
+
+        if (self.cfg.structured_audit_logs) {
+            jsonAuditSink(event, self.allocator) catch |err| {
+                std.log.warn("audit json sink failed: {s}", .{@errorName(err)});
+            };
+        }
+    }
+
+    fn emitAuthAudit(self: *App, req: *const Request, action: []const u8, detail: []const u8) void {
+        self.emitAudit(.{
+            .category = "auth",
+            .action = action,
+            .request_id = req.requestId() orelse "",
+            .method = @tagName(req.method),
+            .path = req.path,
+            .detail = detail,
+        });
+    }
+
     fn applyResponseModelShaping(
         self: *App,
         route_options: types.StoredRouteOptions,
@@ -1238,6 +1345,18 @@ pub const App = struct {
         @compileError("Metrics sink must be fn(App.MetricsEvent, std.mem.Allocator) !void");
     }
 
+    fn normalizeAuditSink(sink: anytype) AuditFn {
+        const T = @TypeOf(sink);
+        if (T == AuditFn) return sink;
+        if (@typeInfo(T) == .@"fn") {
+            if (comptime isAuditSinkType(T)) {
+                const ptr: AuditFn = &sink;
+                return ptr;
+            }
+        }
+        @compileError("Audit sink must be fn(App.AuditEvent, std.mem.Allocator) !void");
+    }
+
     fn isTelemetrySinkType(comptime T: type) bool {
         if (@typeInfo(T) != .@"fn") return false;
         const info = @typeInfo(T).@"fn";
@@ -1261,6 +1380,15 @@ pub const App = struct {
         const info = @typeInfo(T).@"fn";
         if (info.params.len != 2) return false;
         if (info.params[0].type != MetricsEvent) return false;
+        if (info.params[1].type != std.mem.Allocator) return false;
+        return isVoidOrErrorVoid(info.return_type orelse return false);
+    }
+
+    fn isAuditSinkType(comptime T: type) bool {
+        if (@typeInfo(T) != .@"fn") return false;
+        const info = @typeInfo(T).@"fn";
+        if (info.params.len != 2) return false;
+        if (info.params[0].type != AuditEvent) return false;
         if (info.params[1].type != std.mem.Allocator) return false;
         return isVoidOrErrorVoid(info.return_type orelse return false);
     }
@@ -1892,6 +2020,23 @@ fn jsonMetricsSink(event: App.MetricsEvent, allocator: std.mem.Allocator) !void 
             std.json.fmt(event.path, .{}),
             @intFromEnum(event.status),
             event.latency_us,
+        },
+    );
+    defer allocator.free(line);
+    try writeStderrLine(line);
+}
+
+fn jsonAuditSink(event: App.AuditEvent, allocator: std.mem.Allocator) !void {
+    const line = try std.fmt.allocPrint(
+        allocator,
+        "{{\"event\":\"audit\",\"category\":{f},\"action\":{f},\"request_id\":{f},\"method\":{f},\"path\":{f},\"detail\":{f}}}",
+        .{
+            std.json.fmt(event.category, .{}),
+            std.json.fmt(event.action, .{}),
+            std.json.fmt(event.request_id, .{}),
+            std.json.fmt(event.method, .{}),
+            std.json.fmt(event.path, .{}),
+            std.json.fmt(event.detail, .{}),
         },
     );
     defer allocator.free(line);
