@@ -832,6 +832,40 @@ test "cloud app slug and scaffold templates are deterministic" {
     try std.testing.expect(std.mem.indexOf(u8, fly_toml, "internal_port = 8000") != null);
 }
 
+test "emit cloud scaffold writes provider files" {
+    var app = try buildDefaultApp(std.testing.allocator);
+    defer app.deinit();
+
+    const unique_id = std.time.nanoTimestamp();
+    const emit_dir = try std.fmt.allocPrint(std.testing.allocator, "zig-cache/test-cloud-{d}", .{unique_id});
+    defer std.testing.allocator.free(emit_dir);
+    std.fs.cwd().deleteTree(emit_dir) catch {};
+    defer std.fs.cwd().deleteTree(emit_dir) catch {};
+
+    try emitCloudScaffold(std.testing.allocator, &app, .flyio, emit_dir);
+
+    const dockerfile_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/Dockerfile", .{emit_dir});
+    defer std.testing.allocator.free(dockerfile_path);
+    const fly_toml_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/fly.toml", .{emit_dir});
+    defer std.testing.allocator.free(fly_toml_path);
+
+    const dockerfile = try std.fs.cwd().readFileAlloc(std.testing.allocator, dockerfile_path, 16 * 1024);
+    defer std.testing.allocator.free(dockerfile);
+    try std.testing.expect(std.mem.indexOf(u8, dockerfile, "ENTRYPOINT") != null);
+
+    const fly_toml = try std.fs.cwd().readFileAlloc(std.testing.allocator, fly_toml_path, 16 * 1024);
+    defer std.testing.allocator.free(fly_toml);
+    try std.testing.expect(std.mem.indexOf(u8, fly_toml, "app = \"zigmund\"") != null);
+
+    const generic_dir = try std.fmt.allocPrint(std.testing.allocator, "zig-cache/test-cloud-generic-{d}", .{unique_id});
+    defer std.testing.allocator.free(generic_dir);
+    std.fs.cwd().deleteTree(generic_dir) catch {};
+    defer std.fs.cwd().deleteTree(generic_dir) catch {};
+
+    try emitCloudScaffold(std.testing.allocator, &app, .generic, generic_dir);
+    try std.testing.expectError(error.FileNotFound, std.fs.cwd().openDir(generic_dir, .{}));
+}
+
 test "sbom renderer outputs cyclonedx metadata and component licenses" {
     var app = try buildDefaultApp(std.testing.allocator);
     defer app.deinit();
