@@ -91,6 +91,9 @@ pub fn build(b: *std.Build) void {
         "tests/conformance/api_surface_snapshot_test.zig",
         "tests/parity/matrix_test.zig",
         "tests/perf/smoke_test.zig",
+        "tests/perf/microbench_test.zig",
+        "tests/perf/mixed_workload_test.zig",
+        "tests/perf/latency_tail_test.zig",
         "tests/interop/proxy_headers_test.zig",
     };
 
@@ -116,6 +119,28 @@ pub fn build(b: *std.Build) void {
     const parity_stubs_cmd = b.addSystemCommand(&.{ "sh", "tools/parity/generate_parity_stubs.sh" });
     const parity_stubs_step = b.step("parity-stubs", "Generate parity stub examples for missing FastAPI pages");
     parity_stubs_step.dependOn(&parity_stubs_cmd.step);
+
+    const perf_step = b.step("perf", "Run performance benchmark families");
+    const perf_files = [_][]const u8{
+        "tests/perf/smoke_test.zig",
+        "tests/perf/microbench_test.zig",
+        "tests/perf/mixed_workload_test.zig",
+        "tests/perf/latency_tail_test.zig",
+    };
+    for (perf_files) |path| {
+        const perf_mod = b.createModule(.{
+            .root_source_file = b.path(path),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zigmund", .module = zigmund_mod },
+            },
+        });
+        const perf_exe = b.addTest(.{ .root_module = perf_mod });
+        applyNativeTlsLinks(perf_exe);
+        const run_perf_exe = b.addRunArtifact(perf_exe);
+        perf_step.dependOn(&run_perf_exe.step);
+    }
 
     const check_step = b.step("check", "Compile Zigmund without running");
     check_step.dependOn(&exe.step);

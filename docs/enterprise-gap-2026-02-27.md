@@ -199,6 +199,14 @@
   - `zigmund openapi` now supports snapshot diff gating via `--diff <path>` with deterministic mismatch failure (`OpenApiSnapshotMismatch`) for CI regression checks.
   - `zigmund cloud` now emits a functional deployment-plan JSON (framework/app metadata, route counts, OpenAPI size) and supports writing it via `--out <path>`.
   - `zigmund sbom` now emits a CycloneDX (`specVersion: 1.5`) software bill of materials with framework metadata, license marker, and runtime components.
+- Performance program progress:
+  - benchmark-family scaffolding now exists under `tests/perf/`:
+    - synthetic microbenchmark (`microbench_test.zig`),
+    - mixed workload benchmark (`mixed_workload_test.zig`),
+    - latency-tail benchmark (`latency_tail_test.zig`),
+    - smoke throughput baseline (`smoke_test.zig`).
+  - dedicated build step `zig build perf` now runs perf families in `ReleaseFast`.
+  - helper script `tools/perf/run_perf_suite.sh` added for local perf suite execution.
 - Release governance baseline progress:
   - public API surface snapshot added at `tools/release/api-surface-v0.txt` with conformance gate (`tests/conformance/api_surface_snapshot_test.zig`) derived from `src/zigmund.zig` exports.
   - governance check script added at `tools/release/check_governance.sh`:
@@ -254,7 +262,9 @@
   - CLI renderer coverage for routes JSON and cloud-plan output shape,
   - CLI OpenAPI snapshot assertion behavior (match + mismatch paths),
   - CLI OpenAPI deterministic flag parsing behavior,
-  - CLI SBOM renderer output shape behavior.
+  - CLI SBOM renderer output shape behavior,
+  - API surface snapshot conformance behavior,
+  - perf benchmark-family scaffolding behavior.
 
 ## Recommended Next Enterprise Sprints
 1. Observability expansion: structured access logging, metrics adapters, trace context propagation.
