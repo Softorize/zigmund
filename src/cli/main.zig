@@ -141,7 +141,7 @@ fn wsEchoHandler(conn: *zigmund.runtime.websocket.Connection, allocator: std.mem
     }
 }
 
-fn parseServeFlags(args: *std.process.ArgIterator, cfg: *zigmund.ServerConfig) !void {
+fn parseServeFlags(args: anytype, cfg: *zigmund.ServerConfig) !void {
     var tls_cert: ?[]const u8 = null;
     var tls_key: ?[]const u8 = null;
 
@@ -190,6 +190,12 @@ fn parseServeFlags(args: *std.process.ArgIterator, cfg: *zigmund.ServerConfig) !
         if (std.mem.eql(u8, arg, "--accept-poll-ms")) {
             const value = args.next() orelse return error.MissingAcceptPollValue;
             cfg.accept_poll_interval_ms = try std.fmt.parseInt(i32, value, 10);
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--header-timeout-ms")) {
+            const value = args.next() orelse return error.MissingHeaderTimeoutValue;
+            cfg.header_timeout_ms = try std.fmt.parseInt(i32, value, 10);
             continue;
         }
 
@@ -503,8 +509,8 @@ fn usage() !void {
     try writeStdout(
         "Usage: zigmund <command> [options]\n" ++
             "Commands:\n" ++
-            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
-            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
             "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
             "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>]\n" ++
@@ -903,6 +909,20 @@ test "parse openapi flags supports deterministic out and diff options" {
     try std.testing.expect(opts.deterministic);
     try std.testing.expectEqualStrings("openapi.json", opts.out_path.?);
     try std.testing.expectEqualStrings("baseline.json", opts.diff_path.?);
+}
+
+test "parse serve flags supports header timeout option" {
+    var cfg = zigmund.ServerConfig{};
+
+    var iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--header-timeout-ms 321 --idle-timeout-ms 654",
+    ));
+    defer iter.deinit();
+
+    try parseServeFlags(&iter, &cfg);
+    try std.testing.expectEqual(@as(i32, 321), cfg.header_timeout_ms);
+    try std.testing.expectEqual(@as(i32, 654), cfg.idle_timeout_ms);
 }
 
 test "routes json renderer includes operation and dependency metadata" {

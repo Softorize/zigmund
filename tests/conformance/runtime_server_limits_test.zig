@@ -411,6 +411,65 @@ test "requestShutdown stops server loop gracefully" {
     try std.testing.expect(serve_ctx.serve_error == null);
 }
 
+test "header_timeout_ms closes connections that do not start headers in time" {
+    const port = try reservePort();
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "runtime-header-timeout",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/ping", guardrailOkHandler, .{});
+
+    const cfg: zigmund.ServerConfig = .{
+        .host = "127.0.0.1",
+        .port = port,
+        .worker_count = 1,
+        .accept_poll_interval_ms = 10,
+        .header_timeout_ms = 50,
+        .idle_timeout_ms = 2_000,
+        .shutdown_grace_period_ms = 100,
+    };
+
+    var serve_ctx: ServeThreadCtx = .{
+        .app = &app,
+        .cfg = cfg,
+    };
+
+    const thread = try std.Thread.spawn(.{}, serveThread, .{&serve_ctx});
+    defer {
+        app.requestShutdown();
+        thread.join();
+    }
+
+    const address = try std.net.Address.resolveIp("127.0.0.1", port);
+    var stream = try connectWithRetry(address);
+    defer stream.close();
+
+    std.Thread.sleep(125 * std.time.ns_per_ms);
+
+    const request =
+        "GET /ping HTTP/1.1\r\n" ++
+        "Host: 127.0.0.1\r\n" ++
+        "Connection: close\r\n" ++
+        "\r\n";
+    stream.writeAll(request) catch |err| switch (err) {
+        error.BrokenPipe, error.ConnectionResetByPeer => return,
+        else => return err,
+    };
+
+    const readable = try waitReadable(stream.handle, 500);
+    try std.testing.expect(readable);
+
+    var read_buf: [1024]u8 = undefined;
+    const n = stream.read(&read_buf) catch |err| switch (err) {
+        error.ConnectionResetByPeer => return,
+        else => return err,
+    };
+    try std.testing.expectEqual(@as(usize, 0), n);
+}
+
 test "audit sink emits startup config and lifecycle events during serve" {
     const port = try reservePort();
 
@@ -432,6 +491,7 @@ test "audit sink emits startup config and lifecycle events during serve" {
         .port = port,
         .worker_count = 1,
         .accept_poll_interval_ms = 10,
+        .header_timeout_ms = 1_500,
         .idle_timeout_ms = 250,
         .shutdown_grace_period_ms = 100,
         .max_header_bytes = 8 * 1024,
@@ -468,6 +528,7 @@ test "audit sink emits startup config and lifecycle events during serve" {
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"tls_enabled\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"trusted_proxy_headers\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"trusted_proxy_cidrs\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "\"header_timeout_ms\":1500") != null);
 
     var port_buf: [32]u8 = undefined;
     const port_fragment = try std.fmt.bufPrint(&port_buf, "\"port\":{d}", .{port});

@@ -152,9 +152,15 @@ fn serveRequests(
     state: *ServeState,
     peer_address: std.net.Address,
 ) !void {
+    var first_request = true;
     while (server.reader.state == .ready) {
-        if (cfg.idle_timeout_ms >= 0) {
-            const ready = try pollReadable(socket_fd, cfg.idle_timeout_ms);
+        const read_timeout_ms: i32 = if (first_request and cfg.header_timeout_ms >= 0)
+            cfg.header_timeout_ms
+        else
+            cfg.idle_timeout_ms;
+
+        if (read_timeout_ms >= 0) {
+            const ready = try pollReadable(socket_fd, read_timeout_ms);
             if (!ready) return;
         }
 
@@ -162,6 +168,7 @@ fn serveRequests(
             error.HttpConnectionClosing => return,
             else => return err,
         };
+        first_request = false;
 
         if (cfg.max_header_bytes != 0 and requestHeaderBytes(&raw_request) > cfg.max_header_bytes) {
             raw_request.respond("request header too large", .{
