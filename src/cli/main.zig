@@ -456,7 +456,7 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
         const max_body = jsonOptionalUsize(max_body_buf[0..], route.options.max_body_bytes);
 
         try writer.print(
-            "{{\"kind\":\"http\",\"method\":{f},\"path\":{f},\"include_in_schema\":{},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"injected_dependencies\":{d},\"strict_validation\":{s},\"max_query_bytes\":{s},\"max_body_bytes\":{s}}}",
+            "{{\"kind\":\"http\",\"method\":{f},\"path\":{f},\"include_in_schema\":{},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"injected_dependencies\":{d},\"dependencies_detail\":",
             .{
                 std.json.fmt(route.method.asString(), .{}),
                 std.json.fmt(route.path, .{}),
@@ -465,6 +465,14 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
                 std.json.fmt(route.options.name orelse "", .{}),
                 route.options.dependencies.len,
                 route.options.injected_dependencies.len,
+            },
+        );
+        try writeDependencySpecsJson(&writer, route.options.dependencies);
+        try writer.writeAll(",\"injected_dependencies_detail\":");
+        try writeDependencySpecsJson(&writer, route.options.injected_dependencies);
+        try writer.print(
+            ",\"strict_validation\":{s},\"max_query_bytes\":{s},\"max_body_bytes\":{s}}}",
+            .{
                 strict_validation,
                 max_query,
                 max_body,
@@ -491,13 +499,21 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
         const send_timeout = jsonOptionalU64(send_timeout_buf[0..], route.options.send_timeout_ms);
 
         try writer.print(
-            "{{\"kind\":\"websocket\",\"path\":{f},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"injected_dependencies\":{d},\"allowed_origins\":{d},\"require_subprotocol\":{},\"subprotocols\":{d},\"idle_timeout_ms\":{s},\"auto_pong\":{},\"ping_interval_ms\":{s},\"pong_timeout_ms\":{s},\"max_message_bytes\":{s},\"max_pending_messages\":{s},\"send_timeout_ms\":{s}}}",
+            "{{\"kind\":\"websocket\",\"path\":{f},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"injected_dependencies\":{d},\"dependencies_detail\":",
             .{
                 std.json.fmt(route.path, .{}),
                 std.json.fmt(route.options.operation_id orelse "", .{}),
                 std.json.fmt(route.options.name orelse "", .{}),
                 route.options.dependencies.len,
                 route.injected_dependencies.len,
+            },
+        );
+        try writeDependencySpecsJson(&writer, route.options.dependencies);
+        try writer.writeAll(",\"injected_dependencies_detail\":");
+        try writeDependencySpecsJson(&writer, route.injected_dependencies);
+        try writer.print(
+            ",\"allowed_origins\":{d},\"require_subprotocol\":{},\"subprotocols\":{d},\"idle_timeout_ms\":{s},\"auto_pong\":{},\"ping_interval_ms\":{s},\"pong_timeout_ms\":{s},\"max_message_bytes\":{s},\"max_pending_messages\":{s},\"send_timeout_ms\":{s}}}",
+            .{
                 route.options.allowed_origins.len,
                 route.options.require_subprotocol,
                 route.options.subprotocols.len,
@@ -533,6 +549,39 @@ fn jsonOptionalU64(buf: []u8, value: ?u64) []const u8 {
         return std.fmt.bufPrint(buf, "{d}", .{v}) catch "null";
     }
     return "null";
+}
+
+fn writeDependencySpecsJson(writer: anytype, deps: []const zigmund.DependencySpec) !void {
+    try writer.writeAll("[");
+    for (deps, 0..) |dep, idx| {
+        if (idx != 0) try writer.writeAll(",");
+        try writer.print(
+            "{{\"name\":{f},\"required\":{},\"use_cache\":{},\"cache_scope\":{f},\"depends_on\":",
+            .{
+                std.json.fmt(dep.name, .{}),
+                dep.required,
+                dep.use_cache,
+                std.json.fmt(switch (dep.cache_scope) {
+                    .request => "request",
+                    .app => "app",
+                }, .{}),
+            },
+        );
+        try writeStringArrayJson(writer, dep.depends_on);
+        try writer.writeAll(",\"scopes\":");
+        try writeStringArrayJson(writer, dep.scopes);
+        try writer.writeAll("}");
+    }
+    try writer.writeAll("]");
+}
+
+fn writeStringArrayJson(writer: anytype, values: []const []const u8) !void {
+    try writer.writeAll("[");
+    for (values, 0..) |value, idx| {
+        if (idx != 0) try writer.writeAll(",");
+        try writer.print("{f}", .{std.json.fmt(value, .{})});
+    }
+    try writer.writeAll("]");
 }
 
 fn renderCloudPlan(allocator: std.mem.Allocator, app: *zigmund.App, provider: CloudProvider) ![]u8 {
@@ -900,6 +949,8 @@ test "routes json renderer includes http and websocket routes" {
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"http\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"method\":\"get\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"include_in_schema\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"dependencies_detail\":[]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"injected_dependencies_detail\":[]") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"strict_validation\":null") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_query_bytes\":null") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_body_bytes\":null") != null);
@@ -1210,11 +1261,16 @@ test "routes json renderer includes operation and dependency metadata" {
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"operation_id\":\"get_meta\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"name\":\"meta_route\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"dependencies\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"dependencies_detail\":[{\"name\":\"auth\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"cache_scope\":\"request\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"depends_on\":[]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"scopes\":[]") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"strict_validation\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_query_bytes\":1024") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"max_body_bytes\":2048") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"operation_id\":\"websocket_meta\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"injected_dependencies\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"injected_dependencies_detail\":[{\"name\":\"auth\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"require_subprotocol\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"allowed_origins\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"subprotocols\":1") != null);

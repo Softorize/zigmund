@@ -66,6 +66,17 @@
    - W3C `baggage` header values are now captured into request dependency state as `baggage`.
    - `App.TraceEvent` and `App.AccessLogEvent` now include additive `baggage` fields.
    - JSON structured trace/access logs now emit `baggage`.
+20. Routes CLI JSON dependency metadata extension:
+   - `zigmund routes --json` now includes detailed dependency objects for HTTP and websocket routes:
+     - `dependencies_detail`,
+     - `injected_dependencies_detail`.
+   - each dependency detail entry includes:
+     - `name`,
+     - `required`,
+     - `use_cache`,
+     - `cache_scope`,
+     - `depends_on`,
+     - `scopes`.
 
 ## Migration Actions
 
@@ -95,6 +106,7 @@
 11. If you consume `AccessLogEvent` programmatically, update sink handlers/schemas to accept the additive `scheme` and `host` fields.
 12. If you parse `zigmund routes --json` output, update consumers to tolerate/additionally consume the new policy metadata fields on HTTP and websocket route objects.
 13. If you consume trace/access sink payloads programmatically, update schemas/handlers to include the additive `baggage` field.
+14. If your CI/ops tooling parses route inventory JSON, migrate from count-only dependency fields to the new detailed dependency arrays when richer policy/governance checks are needed.
 
 ## Compatibility Notes
 
