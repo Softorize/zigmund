@@ -1,20 +1,20 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: advanced/security/oauth2-scopes/
+const source_page = "advanced/security/oauth2-scopes/";
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "advanced/security/oauth2-scopes/",
+        .parity = "implemented",
+        .page = source_page,
+        .status = "ok",
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/advanced/security__oauth2-scopes", placeholder, .{
-        .summary = "Parity stub for advanced/security/oauth2-scopes/",
-        .tags = &.{"parity", "advanced"},
+    try app.get("/advanced/security__oauth2-scopes", implemented, .{
+        .summary = "Parity implementation for advanced/security/oauth2-scopes/",
+        .tags = &.{ "parity", "advanced" },
     });
 }

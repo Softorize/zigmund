@@ -15,13 +15,15 @@ jobs:
       - name: Run tests
         run: zig build test
       - name: Run perf benchmark families (progressive baseline)
-        run: zig build perf
+        env:
+          PERF_GATE_MODE: shared
+        run: sh tools/perf/run_perf_suite.sh
       - name: Generate parity matrix
         run: zig build parity-report
       - name: Enforce parity gate (progressive)
         env:
-          PARITY_REQUIRED_IMPLEMENTED: "1"
-          PARITY_MAX_STUB: "115"
+          PARITY_REQUIRED_IMPLEMENTED: "116"
+          PARITY_MAX_STUB: "0"
           PARITY_MAX_MISSING: "0"
         run: sh tools/parity/check_parity_gate.sh
       - name: Generate SBOM

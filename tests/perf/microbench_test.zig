@@ -32,9 +32,9 @@ test "perf microbenchmark: single json endpoint throughput and mean latency" {
     const mean_latency_us = (@as(f64, @floatFromInt(elapsed_ns)) /
         @as(f64, @floatFromInt(iterations))) / @as(f64, std.time.ns_per_us);
 
-    std.log.info(
-        "perf_micro iterations={d} elapsed_ns={d} throughput_rps={d:.2} mean_latency_us={d:.2}",
-        .{ iterations, elapsed_ns, throughput_rps, mean_latency_us },
+    std.debug.print(
+        "PERF_MICRO iterations={d} throughput_rps={d:.2} mean_latency_us={d:.2}\n",
+        .{ iterations, throughput_rps, mean_latency_us },
     );
     try std.testing.expect(throughput_rps > 0);
     try std.testing.expect(mean_latency_us > 0);

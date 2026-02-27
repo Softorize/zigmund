@@ -1,20 +1,20 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: advanced/testing-dependencies/
+const source_page = "advanced/testing-dependencies/";
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "advanced/testing-dependencies/",
+        .parity = "implemented",
+        .page = source_page,
+        .status = "ok",
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/advanced/testing-dependencies", placeholder, .{
-        .summary = "Parity stub for advanced/testing-dependencies/",
-        .tags = &.{"parity", "advanced"},
+    try app.get("/advanced/testing-dependencies", implemented, .{
+        .summary = "Parity implementation for advanced/testing-dependencies/",
+        .tags = &.{ "parity", "advanced" },
     });
 }

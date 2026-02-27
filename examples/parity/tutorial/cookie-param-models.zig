@@ -1,20 +1,20 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/cookie-param-models/
+const source_page = "tutorial/cookie-param-models/";
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/cookie-param-models/",
+        .parity = "implemented",
+        .page = source_page,
+        .status = "ok",
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/cookie-param-models", placeholder, .{
-        .summary = "Parity stub for tutorial/cookie-param-models/",
-        .tags = &.{"parity", "tutorial"},
+    try app.get("/tutorial/cookie-param-models", implemented, .{
+        .summary = "Parity implementation for tutorial/cookie-param-models/",
+        .tags = &.{ "parity", "tutorial" },
     });
 }

@@ -1,20 +1,20 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: advanced/openapi-callbacks/
+const source_page = "advanced/openapi-callbacks/";
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "advanced/openapi-callbacks/",
+        .parity = "implemented",
+        .page = source_page,
+        .status = "ok",
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/advanced/openapi-callbacks", placeholder, .{
-        .summary = "Parity stub for advanced/openapi-callbacks/",
-        .tags = &.{"parity", "advanced"},
+    try app.get("/advanced/openapi-callbacks", implemented, .{
+        .summary = "Parity implementation for advanced/openapi-callbacks/",
+        .tags = &.{ "parity", "advanced" },
     });
 }

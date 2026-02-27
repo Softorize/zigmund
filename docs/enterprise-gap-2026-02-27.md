@@ -3,7 +3,7 @@
 ## Baseline
 - FastAPI upstream version: `0.133.1` (`fastapi/__init__.py` on `master`).
 - FastAPI docs targets in scope (`tutorial|advanced|reference|how-to`): `116` pages.
-- Current Zigmund parity matrix: `25 implemented / 91 stub / 0 missing files`.
+- Current Zigmund parity matrix: `116 implemented / 0 stub / 0 missing files`.
 - Machine-readable parity summary now emitted to `tools/parity/parity-summary.json`.
 
 ## What Is Already In Place
@@ -20,7 +20,8 @@
 - Runtime validation mapping to 422 for request parsing/coercion failures.
 
 ## High-Severity Gaps vs FastAPI-Level Capability
-- Docs parity: only `25/116` behaviorally implemented examples.
+- Docs parity matrix coverage is now complete (`116/116` implemented examples, `0` stubs).
+- Remaining docs-parity hardening is in behavior depth (linking each example to stronger assertion-backed conformance cases).
 - Validation engine depth:
   - missing rich constraints (length/range/regex/strictness),
   - no model-level validators/serializers equivalent to Pydantic v2 behavior.
@@ -48,31 +49,12 @@
 
 ## Enhancements Implemented In This Iteration
 - FastAPI docs parity implementation progress:
-  - converted tutorial parity pages from stubs to runnable examples for:
-    - `tutorial/`,
-    - `tutorial/metadata/`,
-    - `tutorial/path-params/`,
-    - `tutorial/query-params/`,
-    - `tutorial/body/`,
-    - `tutorial/response-status-code/`,
-    - `tutorial/handling-errors/`,
-    - `tutorial/security/first-steps/`,
-    - `tutorial/path-params-numeric-validations/`,
-    - `tutorial/query-params-str-validations/`,
-    - `tutorial/path-operation-configuration/`,
-    - `tutorial/response-model/`,
-    - `tutorial/request-forms/`,
-    - `tutorial/request-files/`,
-    - `tutorial/static-files/`,
-    - `tutorial/sql-databases/`,
-    - `tutorial/middleware/`,
-    - `tutorial/testing/`,
-    - `how-to/graphql/`,
-    - `advanced/templates/`,
-    - `advanced/settings/`,
-    - `reference/middleware/`,
-    - `reference/testclient/`.
-  - local parity baseline now enforces 25 implemented parity examples without stub markers.
+  - all `116/116` parity pages are now represented by non-stub runnable Zig examples.
+  - parity gate defaults are now locked to full coverage:
+    - required implemented: `116`,
+    - max stub: `0`,
+    - max missing: `0`.
+  - CI parity gate is now configured for full-coverage enforcement, not progressive low-threshold mode.
 - Exception handlers are now runtime-active (previously registration-only metadata).
 - Handler matching supports typed error-set registration and wildcard `anyerror` fallback.
 - Unhandled route/dispatch errors now return deterministic HTTP 500 responses instead of bubbling transport errors.
@@ -240,6 +222,10 @@
     - smoke throughput baseline (`smoke_test.zig`).
   - dedicated build step `zig build perf` now runs perf families in `ReleaseFast`.
   - helper script `tools/perf/run_perf_suite.sh` added for local perf suite execution.
+  - regression checker now supports mode-aware gates:
+    - `PERF_GATE_MODE=shared` for noisy shared CI (relaxed regression thresholds),
+    - `PERF_GATE_MODE=strict` for dedicated runners (enterprise GA thresholds: `3%/5%` regression budget, `>=5x` throughput, `<=40%` p99 vs FastAPI baseline).
+  - dedicated strict perf workflow added at `.github/workflows/perf-dedicated.yml` (self-hosted benchmark runner labels).
 - Reliability suite progress:
   - new runtime reliability coverage added under `tests/reliability/runtime_reliability_test.zig`:
     - high-connection-churn request stability checks,

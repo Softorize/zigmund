@@ -44,8 +44,8 @@ test "perf latency tail: p95/p99 for mixed normal and slow requests" {
     const p95 = percentile(latencies_us, 0.95);
     const p99 = percentile(latencies_us, 0.99);
 
-    std.log.info(
-        "perf_tail iterations={d} p95_us={d} p99_us={d}",
+    std.debug.print(
+        "PERF_TAIL iterations={d} p95_us={d} p99_us={d}\n",
         .{ iterations, p95, p99 },
     );
     try std.testing.expect(p95 > 0);

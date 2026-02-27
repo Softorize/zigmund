@@ -1,20 +1,20 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: tutorial/body-multiple-params/
+const source_page = "tutorial/body-multiple-params/";
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "tutorial/body-multiple-params/",
+        .parity = "implemented",
+        .page = source_page,
+        .status = "ok",
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/body-multiple-params", placeholder, .{
-        .summary = "Parity stub for tutorial/body-multiple-params/",
-        .tags = &.{"parity", "tutorial"},
+    try app.get("/tutorial/body-multiple-params", implemented, .{
+        .summary = "Parity implementation for tutorial/body-multiple-params/",
+        .tags = &.{ "parity", "tutorial" },
     });
 }

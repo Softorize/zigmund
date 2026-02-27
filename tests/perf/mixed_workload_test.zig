@@ -64,9 +64,9 @@ test "perf mixed workload: representative route mix throughput" {
     const throughput_rps = @as(f64, @floatFromInt(iterations)) /
         (@as(f64, @floatFromInt(elapsed_ns)) / @as(f64, std.time.ns_per_s));
 
-    std.log.info(
-        "perf_mixed iterations={d} elapsed_ns={d} throughput_rps={d:.2}",
-        .{ iterations, elapsed_ns, throughput_rps },
+    std.debug.print(
+        "PERF_MIXED iterations={d} throughput_rps={d:.2}\n",
+        .{ iterations, throughput_rps },
     );
     try std.testing.expect(throughput_rps > 0);
 }

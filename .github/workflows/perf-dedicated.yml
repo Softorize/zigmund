@@ -1,0 +1,23 @@
+name: Dedicated Performance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
+
+jobs:
+  perf:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - perf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+      - name: Run perf benchmark families (strict)
+        env:
+          PERF_GATE_MODE: strict
+        run: sh tools/perf/run_perf_suite.sh

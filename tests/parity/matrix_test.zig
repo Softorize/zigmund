@@ -11,43 +11,39 @@ fn fileContains(path: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, data, needle) != null;
 }
 
+fn verifyNoStubMarkersInDir(dir: std.fs.Dir, rel_prefix: []const u8, checked_count: *usize) !void {
+    var it = dir.iterate();
+    while (try it.next()) |entry| {
+        const rel_path = try std.fs.path.join(std.testing.allocator, &.{ rel_prefix, entry.name });
+        defer std.testing.allocator.free(rel_path);
+
+        switch (entry.kind) {
+            .directory => {
+                var child = try dir.openDir(entry.name, .{ .iterate = true });
+                defer child.close();
+                try verifyNoStubMarkersInDir(child, rel_path, checked_count);
+            },
+            .file => {
+                if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
+                try std.testing.expect(!fileContains(rel_path, "ZIGMUND_PARITY_STUB"));
+                checked_count.* += 1;
+            },
+            else => {},
+        }
+    }
+}
+
 test "parity tooling and example scaffolds exist" {
     try std.testing.expect(fileExists("tools/parity/fetch_fastapi_sitemap.sh"));
     try std.testing.expect(fileExists("tools/parity/check_parity_gate.sh"));
     try std.testing.expect(fileExists("examples/parity/tutorial/first-steps.zig"));
 }
 
-test "parity baseline examples are implemented (no stub markers)" {
-    const implemented_examples = [_][]const u8{
-        "examples/parity/tutorial/first-steps.zig",
-        "examples/parity/tutorial/background-tasks.zig",
-        "examples/parity/tutorial/index.zig",
-        "examples/parity/tutorial/metadata.zig",
-        "examples/parity/tutorial/path-params.zig",
-        "examples/parity/tutorial/query-params.zig",
-        "examples/parity/tutorial/body.zig",
-        "examples/parity/tutorial/response-status-code.zig",
-        "examples/parity/tutorial/handling-errors.zig",
-        "examples/parity/tutorial/security__first-steps.zig",
-        "examples/parity/tutorial/path-params-numeric-validations.zig",
-        "examples/parity/tutorial/query-params-str-validations.zig",
-        "examples/parity/tutorial/path-operation-configuration.zig",
-        "examples/parity/tutorial/response-model.zig",
-        "examples/parity/tutorial/request-forms.zig",
-        "examples/parity/tutorial/request-files.zig",
-        "examples/parity/tutorial/static-files.zig",
-        "examples/parity/tutorial/sql-databases.zig",
-        "examples/parity/tutorial/middleware.zig",
-        "examples/parity/tutorial/testing.zig",
-        "examples/parity/how-to/graphql.zig",
-        "examples/parity/advanced/templates.zig",
-        "examples/parity/advanced/settings.zig",
-        "examples/parity/reference/middleware.zig",
-        "examples/parity/reference/testclient.zig",
-    };
+test "all parity examples are non-stub implementations" {
+    var dir = try std.fs.cwd().openDir("examples/parity", .{ .iterate = true });
+    defer dir.close();
 
-    for (implemented_examples) |example_path| {
-        try std.testing.expect(fileExists(example_path));
-        try std.testing.expect(!fileContains(example_path, "ZIGMUND_PARITY_STUB"));
-    }
+    var checked_count: usize = 0;
+    try verifyNoStubMarkersInDir(dir, "examples/parity", &checked_count);
+    try std.testing.expect(checked_count >= 116);
 }

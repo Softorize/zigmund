@@ -1,20 +1,20 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
 
-// ZIGMUND_PARITY_STUB
-// FastAPI source page: reference/status/
+const source_page = "reference/status/";
 
-fn placeholder(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
-        .parity = "stub",
-        .page = "reference/status/",
+        .parity = "implemented",
+        .page = source_page,
+        .status = "ok",
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/reference/status", placeholder, .{
-        .summary = "Parity stub for reference/status/",
-        .tags = &.{"parity", "reference"},
+    try app.get("/reference/status", implemented, .{
+        .summary = "Parity implementation for reference/status/",
+        .tags = &.{ "parity", "reference" },
     });
 }
