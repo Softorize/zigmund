@@ -191,6 +191,7 @@
   - runtime body-limit + shutdown behavior,
   - runtime header-limit enforcement behavior,
   - TLS startup validation path behavior,
+  - audit emission on runtime startup failure paths (`serve_failed` on TLS load errors),
   - strict/coercion + constraints validation behavior,
   - dependency DAG ordering + cycle detection + app-scope cache behavior,
   - nested provider injection + marker cache behavior + registered injected app-scope reuse,
