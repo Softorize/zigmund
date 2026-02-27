@@ -123,6 +123,10 @@
    - `AppConfig` now includes `json_schema_dialect` (default: `https://json-schema.org/draft/2020-12/schema`).
    - generated OpenAPI documents now emit top-level `jsonSchemaDialect` when configured.
    - emission can be disabled by setting `json_schema_dialect = null`.
+31. OpenAPI CLI dialect controls:
+   - `zigmund openapi` now supports:
+     - `--json-schema-dialect <uri>` to override emitted `jsonSchemaDialect`,
+     - `--no-json-schema-dialect` to suppress `jsonSchemaDialect` emission in CLI-generated output.
 
 ## Migration Actions
 
@@ -163,6 +167,7 @@
 22. If your platform requires custom auth failure envelopes/headers, migrate from middleware-based response patching to `setUnauthorizedHandler(...)` / `setInsufficientScopeHandler(...)` for deterministic security failure responses.
 23. If response payload invariants were previously validated ad hoc in handlers/middleware, migrate them into model-local `zigmund_response_validate(...)` hooks for deterministic post-shaping validation.
 24. If your OpenAPI consumers require explicit JSON Schema dialect pinning, adopt `AppConfig.json_schema_dialect`; set to `null` only when external tooling enforces/infers dialect out-of-band.
+25. If OpenAPI artifact generation runs via CLI in CI/CD, migrate CLI invocations to use `--json-schema-dialect` / `--no-json-schema-dialect` where dialect policy differs by environment.
 
 ## Compatibility Notes
 

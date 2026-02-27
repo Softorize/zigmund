@@ -47,6 +47,11 @@ pub fn main() !void {
         if (opts.deterministic) {
             app.cfg.openapi_deterministic = true;
         }
+        switch (opts.json_schema_dialect) {
+            .none => {},
+            .disabled => app.cfg.json_schema_dialect = null,
+            .value => |dialect| app.cfg.json_schema_dialect = dialect,
+        }
 
         const doc = try app.openapi();
         if (opts.diff_path) |path| {
@@ -344,9 +349,16 @@ fn parseRoutesFlags(args: *std.process.ArgIterator) !bool {
 }
 
 const OpenApiCommandOptions = struct {
+    const JsonSchemaDialectOverride = union(enum) {
+        none,
+        disabled,
+        value: []const u8,
+    };
+
     out_path: ?[]const u8 = null,
     diff_path: ?[]const u8 = null,
     deterministic: bool = false,
+    json_schema_dialect: JsonSchemaDialectOverride = .none,
 };
 
 const CloudProvider = enum {
@@ -383,6 +395,15 @@ fn parseOpenApiFlags(args: anytype) !OpenApiCommandOptions {
         }
         if (std.mem.eql(u8, arg, "--deterministic")) {
             opts.deterministic = true;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--json-schema-dialect")) {
+            const value = args.next() orelse return error.MissingJsonSchemaDialectValue;
+            opts.json_schema_dialect = .{ .value = value };
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--no-json-schema-dialect")) {
+            opts.json_schema_dialect = .disabled;
             continue;
         }
         return error.UnknownFlag;
@@ -717,7 +738,7 @@ fn usage() !void {
             "  serve [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
-            "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
+            "  openapi [--deterministic] [--json-schema-dialect <uri>|--no-json-schema-dialect] [--out <path>] [--diff <path>]\n" ++
             "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>]\n" ++
             "  sbom [--out <path>]\n",
     );
@@ -1113,10 +1134,10 @@ test "openapi snapshot assertion fails when docs differ" {
     try std.testing.expectEqual(@as(?usize, 5), firstDiffIndex("{\"a\":1}", "{\"a\":2}"));
 }
 
-test "parse openapi flags supports deterministic out and diff options" {
+test "parse openapi flags supports deterministic out diff and json-schema dialect options" {
     var iter = (try std.process.ArgIteratorGeneral(.{}).init(
         std.testing.allocator,
-        "--deterministic --out openapi.json --diff baseline.json",
+        "--deterministic --out openapi.json --diff baseline.json --json-schema-dialect https://example.com/schema",
     ));
     defer iter.deinit();
 
@@ -1124,6 +1145,19 @@ test "parse openapi flags supports deterministic out and diff options" {
     try std.testing.expect(opts.deterministic);
     try std.testing.expectEqualStrings("openapi.json", opts.out_path.?);
     try std.testing.expectEqualStrings("baseline.json", opts.diff_path.?);
+    switch (opts.json_schema_dialect) {
+        .value => |value| try std.testing.expectEqualStrings("https://example.com/schema", value),
+        else => return error.TestUnexpectedResult,
+    }
+
+    var disable_iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--no-json-schema-dialect",
+    ));
+    defer disable_iter.deinit();
+
+    const disable_opts = try parseOpenApiFlags(&disable_iter);
+    try std.testing.expect(disable_opts.json_schema_dialect == .disabled);
 }
 
 test "parse serve flags supports header timeout option" {

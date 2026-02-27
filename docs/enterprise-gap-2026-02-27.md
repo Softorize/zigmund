@@ -258,6 +258,9 @@
   - `zigmund routes` now supports machine-readable output via `--json`, including route policy metadata (HTTP strict/header/query/body limit knobs and websocket runtime controls) plus detailed dependency metadata arrays for HTTP/websocket routes.
   - `zigmund openapi` now supports file export via `--out <path>` / `--output <path>`.
   - `zigmund openapi` now supports deterministic generation mode via `--deterministic` (stable path/method/component ordering for CI snapshots).
+  - `zigmund openapi` now supports JSON Schema dialect controls:
+    - `--json-schema-dialect <uri>` to override emitted top-level `jsonSchemaDialect`,
+    - `--no-json-schema-dialect` to suppress dialect emission for tooling-specific compatibility requirements.
   - `zigmund openapi` now supports snapshot diff gating via `--diff <path>` with deterministic mismatch failure (`OpenApiSnapshotMismatch`) for CI regression checks.
   - `zigmund cloud` now supports provider-aware deployment planning:
     - `--provider <generic|docker|flyio>` for provider-specific deploy command/artifact metadata,
