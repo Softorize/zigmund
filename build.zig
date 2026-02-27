@@ -95,6 +95,7 @@ pub fn build(b: *std.Build) void {
         "tests/perf/microbench_test.zig",
         "tests/perf/mixed_workload_test.zig",
         "tests/perf/latency_tail_test.zig",
+        "tests/reliability/runtime_reliability_test.zig",
         "tests/interop/proxy_headers_test.zig",
     };
 

@@ -236,6 +236,11 @@
     - smoke throughput baseline (`smoke_test.zig`).
   - dedicated build step `zig build perf` now runs perf families in `ReleaseFast`.
   - helper script `tools/perf/run_perf_suite.sh` added for local perf suite execution.
+- Reliability suite progress:
+  - new runtime reliability coverage added under `tests/reliability/runtime_reliability_test.zig`:
+    - high-connection-churn request stability checks,
+    - graceful shutdown drain behavior for in-flight requests.
+  - reliability suite is now part of standard `zig build test` execution.
 - Release governance baseline progress:
   - public API surface snapshot added at `tools/release/api-surface-v0.txt` with conformance gate (`tests/conformance/api_surface_snapshot_test.zig`) derived from `src/zigmund.zig` exports.
   - governance check script added at `tools/release/check_governance.sh`:
