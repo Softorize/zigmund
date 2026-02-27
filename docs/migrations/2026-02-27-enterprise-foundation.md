@@ -14,6 +14,8 @@
    - `DependsOptions.cleanup` for request-scoped provider cleanup hooks on `Depends(...)` markers.
 6. Dependency injection runtime behavior:
    - unnamed provider markers now use callable-identity cache keys, so `Depends(provider, .{})` with `use_cache=true` caches once per request without requiring explicit `name`.
+7. Validation behavior:
+   - marker `pattern` constraints now evaluate full regex expressions (POSIX ERE), not only literal prefix/suffix/contains matching.
 
 ## Migration Actions
 

@@ -45,6 +45,18 @@ fn strictMarkerBoolHandler(
     });
 }
 
+fn regexPatternHandler(
+    code: zigmund.Query([]const u8, .{
+        .alias = "code",
+        .pattern = "^[a-z]{3}-[0-9]{2}$",
+    }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .code = code.value,
+    });
+}
+
 test "query constraints enforce ge/le/min_length/max_length/pattern/enum" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "constraints",
@@ -138,4 +150,26 @@ test "marker strict option enforces strict behavior without route strict mode" {
     defer strict_fail.deinit(std.testing.allocator);
     try std.testing.expectEqual(.unprocessable_entity, strict_fail.status);
     try std.testing.expect(std.mem.indexOf(u8, strict_fail.body, "\"type\":\"strict_bool\"") != null);
+}
+
+test "pattern constraints support regex expressions" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "regex-patterns",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/regex", regexPatternHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
+
+    var ok = try client.get("/regex?code=abc-42");
+    defer ok.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, ok.status);
+
+    var bad = try client.get("/regex?code=ab-42");
+    defer bad.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.unprocessable_entity, bad.status);
+    try std.testing.expect(std.mem.indexOf(u8, bad.body, "\"type\":\"pattern\"") != null);
 }

@@ -192,6 +192,7 @@
   - websocket session shutdown now triggers dependency cleanup hooks reliably.
 - Validation/serialization parity progress (M2 slice):
   - Param/body marker options now include constraint controls (`gt/ge/lt/le/min_length/max_length/pattern/enum_values`) and marker strictness (`strict`).
+  - `pattern` constraints now execute regex expressions (POSIX ERE), improving FastAPI-style constraint parity for complex validation patterns.
   - Route/global strict validation mode added (`RouteOptions.strict_validation`, `AppConfig.strict_validation`) with deterministic precedence.
   - Runtime constraint enforcement now maps violations into 422 validation payloads.
   - Response-model include/exclude shaping now supports deep dotted-path filtering (for nested objects/arrays), not only top-level keys.

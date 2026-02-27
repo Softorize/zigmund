@@ -5,6 +5,9 @@ const security = @import("../security/mod.zig");
 const BackgroundTasks = @import("background.zig").BackgroundTasks;
 const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
+const c = @cImport({
+    @cInclude("regex.h");
+});
 
 pub const HttpHandler = *const fn (*Request, std.mem.Allocator) anyerror!Response;
 
@@ -483,6 +486,30 @@ fn stringInList(haystack: []const []const u8, needle: []const u8) bool {
 }
 
 fn patternMatches(value: []const u8, pattern: []const u8) bool {
+    if (patternMatchesPosix(value, pattern)) |matched| return matched;
+    return patternMatchesLiteral(value, pattern);
+}
+
+fn patternMatchesPosix(value: []const u8, pattern: []const u8) ?bool {
+    if (pattern.len == 0) return true;
+
+    const pattern_z = std.heap.c_allocator.dupeZ(u8, pattern) catch return null;
+    defer std.heap.c_allocator.free(pattern_z);
+
+    var regex: c.regex_t = undefined;
+    if (c.regcomp(&regex, pattern_z.ptr, c.REG_EXTENDED) != 0) return null;
+    defer c.regfree(&regex);
+
+    const value_z = std.heap.c_allocator.dupeZ(u8, value) catch return null;
+    defer std.heap.c_allocator.free(value_z);
+
+    const exec_rc = c.regexec(&regex, value_z.ptr, 0, null, 0);
+    if (exec_rc == 0) return true;
+    if (exec_rc == c.REG_NOMATCH) return false;
+    return null;
+}
+
+fn patternMatchesLiteral(value: []const u8, pattern: []const u8) bool {
     if (pattern.len == 0) return true;
 
     const anchored_start = pattern[0] == '^';
