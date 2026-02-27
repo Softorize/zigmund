@@ -192,6 +192,12 @@ fn parseServeFlags(
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--max-query-bytes")) {
+            const value = args.next() orelse return error.MissingMaxQueryBytesValue;
+            cfg.max_query_bytes = try std.fmt.parseInt(usize, value, 10);
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--max-connections")) {
             const value = args.next() orelse return error.MissingMaxConnectionsValue;
             cfg.max_connections = try std.fmt.parseInt(usize, value, 10);
@@ -583,8 +589,8 @@ fn usage() !void {
     try writeStdout(
         "Usage: zigmund <command> [options]\n" ++
             "Commands:\n" ++
-            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
-            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
             "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
             "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>]\n" ++
@@ -1000,6 +1006,21 @@ test "parse serve flags supports header timeout option" {
     try std.testing.expectEqual(@as(i32, 321), cfg.header_timeout_ms);
     try std.testing.expectEqual(@as(i32, 777), cfg.body_timeout_ms);
     try std.testing.expectEqual(@as(i32, 654), cfg.idle_timeout_ms);
+}
+
+test "parse serve flags supports max query bytes option" {
+    var cfg = zigmund.ServerConfig{};
+    var owned: ServeFlagsOwned = .{};
+    defer owned.deinit(std.testing.allocator);
+
+    var iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--max-query-bytes 4096",
+    ));
+    defer iter.deinit();
+
+    try parseServeFlags(std.testing.allocator, &iter, &cfg, &owned);
+    try std.testing.expectEqual(@as(usize, 4096), cfg.max_query_bytes);
 }
 
 test "parse serve flags supports trusted proxy header toggles" {

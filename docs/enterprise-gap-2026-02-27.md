@@ -90,7 +90,7 @@
   - audit event sink added:
     - `setAuditSink(...)` + `enableJsonAuditSink()`,
     - audit emissions for lifecycle transitions/failures and auth failure outcomes (`unauthorized`, `insufficient_scope`),
-    - startup runtime policy snapshot emission (`startup_config`) with structured server config details and `serve_failed` capture.
+    - startup runtime policy snapshot emission (`startup_config`) with structured server config details (`max_query_bytes` and proxy trust controls included) and `serve_failed` capture.
 - Security failure-mode hardening:
   - unauthorized responses now include `WWW-Authenticate: Bearer`.
   - HTTP auth challenges now emit richer scheme-specific `WWW-Authenticate` details:
@@ -237,6 +237,7 @@
   - top-level Zigmund exports now expose these integration types/helpers directly for app wiring.
 - CLI and operational DX progress:
   - `zigmund dev` now runs a live reload loop (workspace fingerprint watch + `serve` child process restart on file change) with configurable watch interval via `--watch-ms`.
+  - `zigmund serve` / `zigmund dev` now support query-size guardrail flag `--max-query-bytes <n>`.
   - `zigmund routes` now supports machine-readable output via `--json`.
   - `zigmund openapi` now supports file export via `--out <path>` / `--output <path>`.
   - `zigmund openapi` now supports deterministic generation mode via `--deterministic` (stable path/method/component ordering for CI snapshots).

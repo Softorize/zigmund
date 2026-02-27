@@ -42,6 +42,9 @@
      - `client_ip`, `scheme`, `host`,
      - `zigmund.proxy.client_ip`, `zigmund.proxy.proto`, `zigmund.proxy.host`.
    - structured access logs now prefer trusted proxy client IP context (`zigmund.proxy.client_ip`) over raw peer socket address.
+16. Runtime CLI/config parity improvement:
+   - `zigmund serve` and `zigmund dev` now support `--max-query-bytes <n>` to configure query-size guardrails from CLI.
+   - lifecycle startup audit payloads now include `max_query_bytes` for runtime-policy observability.
 
 ## Migration Actions
 
@@ -67,6 +70,7 @@
 9. If downstream handlers or telemetry consumers need edge client metadata, migrate to dependency keys populated from trusted proxy context:
    - `req.dependency("client_ip")` / `req.dependency("scheme")` / `req.dependency("host")`,
    - or namespaced equivalents under `zigmund.proxy.*`.
+10. If you manage runtime limits from CLI wrappers/scripts, add `--max-query-bytes` alongside existing `--max-header-bytes`/`--max-body-bytes` controls for explicit query guardrails.
 
 ## Compatibility Notes
 
