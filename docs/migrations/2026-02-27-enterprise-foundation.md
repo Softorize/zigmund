@@ -115,6 +115,10 @@
      - `setUnauthorizedHandler(...)`,
      - `setInsufficientScopeHandler(...)`.
    - when configured, handlers override default unauthorized/insufficient-scope response construction (HTTP + websocket handshake paths).
+29. Response-model validation hook extension:
+   - response model types can now define `zigmund_response_validate(value: *const std.json.Value, allocator: std.mem.Allocator) !void`.
+   - validation hook executes after response-model transform/include/exclude/default/null/alias shaping and before final payload serialization.
+   - failed hooks trigger deterministic internal-server-error response fallback.
 
 ## Migration Actions
 
@@ -153,6 +157,7 @@
 20. If your response-model types require custom serialization logic, migrate from handler-local ad hoc JSON mutation to model-local `zigmund_response_transform(...)` hooks for deterministic post-handler shaping.
 21. If request payload/domain validation previously lived only in handlers, migrate it into model-local `zigmund_validate(...)` hooks to produce standardized 422 validation issue payloads.
 22. If your platform requires custom auth failure envelopes/headers, migrate from middleware-based response patching to `setUnauthorizedHandler(...)` / `setInsufficientScopeHandler(...)` for deterministic security failure responses.
+23. If response payload invariants were previously validated ad hoc in handlers/middleware, migrate them into model-local `zigmund_response_validate(...)` hooks for deterministic post-shaping validation.
 
 ## Compatibility Notes
 

@@ -1576,6 +1576,10 @@ pub const App = struct {
             );
         }
 
+        if (route_options.response_model_validate) |validate| {
+            try validate(&shaped, self.allocator);
+        }
+
         const payload = try std.fmt.allocPrint(self.allocator, "{f}", .{std.json.fmt(shaped, .{})});
         if (response.owned_body) |body| self.allocator.free(body);
         response.body = payload;
@@ -2055,6 +2059,7 @@ pub const App = struct {
 
 fn needsResponseShaping(options: types.StoredRouteOptions) bool {
     if (options.response_model_transform != null) return true;
+    if (options.response_model_validate != null) return true;
     if (options.response_model_field_rules.len != 0) return true;
     if (options.response_model_include.len != 0) return true;
     if (options.response_model_exclude.len != 0) return true;

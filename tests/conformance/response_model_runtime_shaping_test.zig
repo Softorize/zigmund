@@ -60,6 +60,26 @@ const TransformModel = struct {
     }
 };
 
+const ValidatedModel = struct {
+    id: u32,
+    status: []const u8,
+
+    pub fn zigmund_response_validate(value: *const std.json.Value, allocator: std.mem.Allocator) !void {
+        _ = allocator;
+        const object = switch (value.*) {
+            .object => |object| object,
+            else => return error.InvalidPayload,
+        };
+        const status = object.get("status") orelse return error.MissingStatus;
+        switch (status) {
+            .string => |raw| {
+                if (!std.mem.eql(u8, raw, "ok")) return error.InvalidStatus;
+            },
+            else => return error.InvalidStatusType,
+        }
+    }
+};
+
 fn shapedHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{
@@ -118,6 +138,22 @@ fn transformHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmun
         .name = "before",
         .serialized = false,
         .extra = "drop-me",
+    });
+}
+
+fn validatedOkHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    return zigmund.Response.json(allocator, .{
+        .id = @as(u32, 5),
+        .status = "ok",
+    });
+}
+
+fn validatedBadHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    return zigmund.Response.json(allocator, .{
+        .id = @as(u32, 5),
+        .status = "broken",
     });
 }
 
@@ -318,4 +354,29 @@ test "response_model runtime shaping applies model transform hook" {
         else => return error.TestUnexpectedResult,
     }
     try std.testing.expect(root.get("extra") == null);
+}
+
+test "response_model runtime shaping applies model validation hook" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "response-model-runtime-validate",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/validate-ok", validatedOkHandler, .{
+        .response_model = ValidatedModel,
+    });
+    try app.get("/validate-bad", validatedBadHandler, .{
+        .response_model = ValidatedModel,
+    });
+
+    var ok = try app.dispatchSynthetic(.GET, "/validate-ok", "");
+    defer ok.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, ok.status);
+    try std.testing.expect(std.mem.indexOf(u8, ok.body, "\"status\":\"ok\"") != null);
+
+    var bad = try app.dispatchSynthetic(.GET, "/validate-bad", "");
+    defer bad.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.internal_server_error, bad.status);
+    try std.testing.expectEqualStrings("internal server error", bad.body);
 }

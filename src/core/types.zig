@@ -232,6 +232,7 @@ pub const ResponseModelFieldRule = struct {
 };
 
 pub const ResponseModelTransformFn = *const fn (*std.json.Value, std.mem.Allocator) anyerror!void;
+pub const ResponseModelValidateFn = *const fn (*const std.json.Value, std.mem.Allocator) anyerror!void;
 
 pub const RouteOptions = struct {
     name: ?[]const u8 = null,
@@ -278,6 +279,7 @@ pub const StoredRouteOptions = struct {
     openapi_extensions: []const OpenApiExtension = &.{},
     response_model_field_rules: []const ResponseModelFieldRule = &.{},
     response_model_transform: ?ResponseModelTransformFn = null,
+    response_model_validate: ?ResponseModelValidateFn = null,
     response_model_include: []const []const u8 = &.{},
     response_model_exclude: []const []const u8 = &.{},
     response_model_by_alias: bool = true,
@@ -315,6 +317,7 @@ pub fn storeRouteOptions(opts: RouteOptions) StoredRouteOptions {
         .openapi_extensions = opts.openapi_extensions,
         .response_model_field_rules = if (opts.response_model) |T| deriveResponseModelFieldRules(T) else &.{},
         .response_model_transform = if (opts.response_model) |T| deriveResponseModelTransformFn(T) else null,
+        .response_model_validate = if (opts.response_model) |T| deriveResponseModelValidateFn(T) else null,
         .response_model_include = opts.response_model_include,
         .response_model_exclude = opts.response_model_exclude,
         .response_model_by_alias = opts.response_model_by_alias,
@@ -435,6 +438,18 @@ fn deriveResponseModelTransformFn(comptime T: type) ?ResponseModelTransformFn {
             if (!@hasDecl(Root, "zigmund_response_transform")) break :blk null;
             const transform: ResponseModelTransformFn = &Root.zigmund_response_transform;
             break :blk transform;
+        },
+        else => null,
+    };
+}
+
+fn deriveResponseModelValidateFn(comptime T: type) ?ResponseModelValidateFn {
+    const Root = responseModelRuleRootType(T);
+    return switch (@typeInfo(Root)) {
+        .@"struct", .@"enum", .@"union", .@"opaque" => blk: {
+            if (!@hasDecl(Root, "zigmund_response_validate")) break :blk null;
+            const validate: ResponseModelValidateFn = &Root.zigmund_response_validate;
+            break :blk validate;
         },
         else => null,
     };
