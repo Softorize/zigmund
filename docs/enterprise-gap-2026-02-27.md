@@ -213,6 +213,7 @@
 - Release governance baseline progress:
   - public API surface snapshot added at `tools/release/api-surface-v0.txt` with conformance gate (`tests/conformance/api_surface_snapshot_test.zig`) derived from `src/zigmund.zig` exports.
   - governance check script added at `tools/release/check_governance.sh`:
+    - runs dependency policy allowlist gate (`tools/release/check_dependency_policy.sh`, `tools/release/allowed-dependencies.txt`),
     - validates public API surface against snapshot (breaking-export drift guard),
     - validates MIT license marker,
     - enforces pinned Zig version in `build.zig.zon`,

@@ -1,0 +1,2 @@
+# One dependency name per line (matching build.zig.zon .dependencies keys).
+# Keep this list minimal and explicitly reviewed.

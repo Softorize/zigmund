@@ -4,6 +4,8 @@ set -eu
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+sh tools/release/check_dependency_policy.sh
+
 if [ ! -f LICENSE ]; then
   echo "missing LICENSE file" >&2
   exit 1
