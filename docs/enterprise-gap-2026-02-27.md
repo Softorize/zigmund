@@ -60,6 +60,7 @@
   - request-id availability in request dependency state,
   - telemetry sink API (`setTelemetrySink`) with method/path/status/latency events.
   - structured access-log sink API (`setAccessLogSink`) with trace context, remote address, user-agent, and latency fields.
+  - trace sink API (`setTraceSink`) with request/trace context propagation fields.
   - metrics sink API (`setMetricsSink`) emitting request-count and latency events.
   - trace-context propagation hook (`setTraceContextHeader(...)`) with dependency exposure (`trace_context`).
 - Observability hardening progress (M4 slice):
@@ -68,10 +69,12 @@
   - structured JSON fallback logging controls added in `AppConfig`:
     - `structured_access_logs`,
     - `structured_telemetry_logs`,
+    - `structured_trace_logs`,
     - `structured_metrics_logs`.
   - built-in JSON sink adapters added on `App`:
     - `enableJsonAccessLogSink()`,
     - `enableJsonTelemetrySink()`,
+    - `enableJsonTraceSink()`,
     - `enableJsonMetricsSink()`.
   - audit event sink added:
     - `setAuditSink(...)` + `enableJsonAuditSink()`,
@@ -202,6 +205,7 @@
   - response-model alias/default/unset runtime semantics,
   - advanced OpenAPI objects (callbacks/webhooks/examples/discriminator composition),
   - observability sinks + trace-context propagation behavior,
+  - trace sink propagation behavior (`setTraceSink`) with request-id and trace-context coverage,
   - proxy extraction policy behavior (including CIDR allowlist),
   - deep response-model include/exclude path shaping,
   - `TestClient` cookie persistence/deletion behavior,

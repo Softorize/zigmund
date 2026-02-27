@@ -25,6 +25,7 @@ pub const App = struct {
     middleware: std.ArrayListUnmanaged(MiddlewareEntry) = .empty,
     exception_handlers: std.ArrayListUnmanaged(ExceptionHandlerRegistration) = .empty,
     telemetry_sink: ?TelemetryFn = null,
+    trace_sink: ?TraceFn = null,
     access_log_sink: ?AccessLogFn = null,
     metrics_sink: ?MetricsFn = null,
     audit_sink: ?AuditFn = null,
@@ -39,12 +40,22 @@ pub const App = struct {
     const ResponseMiddlewareFn = *const fn (*Request, *Response, std.mem.Allocator) anyerror!void;
     const ExceptionHandlerFn = *const fn (*Request, anyerror, std.mem.Allocator) anyerror!Response;
     const TelemetryFn = *const fn (TelemetryEvent, std.mem.Allocator) anyerror!void;
+    const TraceFn = *const fn (TraceEvent, std.mem.Allocator) anyerror!void;
     const AccessLogFn = *const fn (AccessLogEvent, std.mem.Allocator) anyerror!void;
     const MetricsFn = *const fn (MetricsEvent, std.mem.Allocator) anyerror!void;
     const AuditFn = *const fn (AuditEvent, std.mem.Allocator) anyerror!void;
 
     pub const TelemetryEvent = struct {
         request_id: []const u8,
+        method: std.http.Method,
+        path: []const u8,
+        status: std.http.Status,
+        latency_us: u64,
+    };
+
+    pub const TraceEvent = struct {
+        request_id: []const u8,
+        trace_context: []const u8,
         method: std.http.Method,
         path: []const u8,
         status: std.http.Status,
@@ -222,6 +233,10 @@ pub const App = struct {
         self.telemetry_sink = normalizeTelemetrySink(sink);
     }
 
+    pub fn setTraceSink(self: *App, sink: anytype) void {
+        self.trace_sink = normalizeTraceSink(sink);
+    }
+
     pub fn setAccessLogSink(self: *App, sink: anytype) void {
         self.access_log_sink = normalizeAccessLogSink(sink);
     }
@@ -236,6 +251,10 @@ pub const App = struct {
 
     pub fn enableJsonTelemetrySink(self: *App) void {
         self.telemetry_sink = jsonTelemetrySink;
+    }
+
+    pub fn enableJsonTraceSink(self: *App) void {
+        self.trace_sink = jsonTraceSink;
     }
 
     pub fn enableJsonAccessLogSink(self: *App) void {
@@ -993,6 +1012,7 @@ pub const App = struct {
         self.attachRequestIdHeader(req, response);
         const latency_us = elapsedMicros(start_ns);
         self.emitTelemetry(req, response.status, latency_us);
+        self.emitTrace(req, response.status, latency_us);
         self.emitAccessLog(req, response.status, latency_us);
         self.emitMetrics(req, response.status, latency_us);
     }
@@ -1024,6 +1044,30 @@ pub const App = struct {
         if (self.cfg.structured_telemetry_logs) {
             jsonTelemetrySink(event, self.allocator) catch |err| {
                 std.log.warn("telemetry json sink failed: {s}", .{@errorName(err)});
+            };
+        }
+    }
+
+    fn emitTrace(self: *App, req: *const Request, status: std.http.Status, latency_us: u64) void {
+        const event: TraceEvent = .{
+            .request_id = req.requestId() orelse "",
+            .trace_context = req.dependency("trace_context") orelse "",
+            .method = req.method,
+            .path = req.path,
+            .status = status,
+            .latency_us = latency_us,
+        };
+
+        if (self.trace_sink) |sink| {
+            sink(event, self.allocator) catch |err| {
+                std.log.warn("trace sink failed: {s}", .{@errorName(err)});
+            };
+            return;
+        }
+
+        if (self.cfg.structured_trace_logs) {
+            jsonTraceSink(event, self.allocator) catch |err| {
+                std.log.warn("trace json sink failed: {s}", .{@errorName(err)});
             };
         }
     }
@@ -1380,6 +1424,18 @@ pub const App = struct {
         @compileError("Telemetry sink must be fn(App.TelemetryEvent, std.mem.Allocator) !void");
     }
 
+    fn normalizeTraceSink(sink: anytype) TraceFn {
+        const T = @TypeOf(sink);
+        if (T == TraceFn) return sink;
+        if (@typeInfo(T) == .@"fn") {
+            if (comptime isTraceSinkType(T)) {
+                const ptr: TraceFn = &sink;
+                return ptr;
+            }
+        }
+        @compileError("Trace sink must be fn(App.TraceEvent, std.mem.Allocator) !void");
+    }
+
     fn normalizeAccessLogSink(sink: anytype) AccessLogFn {
         const T = @TypeOf(sink);
         if (T == AccessLogFn) return sink;
@@ -1421,6 +1477,15 @@ pub const App = struct {
         const info = @typeInfo(T).@"fn";
         if (info.params.len != 2) return false;
         if (info.params[0].type != TelemetryEvent) return false;
+        if (info.params[1].type != std.mem.Allocator) return false;
+        return isVoidOrErrorVoid(info.return_type orelse return false);
+    }
+
+    fn isTraceSinkType(comptime T: type) bool {
+        if (@typeInfo(T) != .@"fn") return false;
+        const info = @typeInfo(T).@"fn";
+        if (info.params.len != 2) return false;
+        if (info.params[0].type != TraceEvent) return false;
         if (info.params[1].type != std.mem.Allocator) return false;
         return isVoidOrErrorVoid(info.return_type orelse return false);
     }
@@ -2039,6 +2104,23 @@ fn jsonTelemetrySink(event: App.TelemetryEvent, allocator: std.mem.Allocator) !v
         "{{\"event\":\"telemetry\",\"request_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
         .{
             std.json.fmt(event.request_id, .{}),
+            std.json.fmt(@tagName(event.method), .{}),
+            std.json.fmt(event.path, .{}),
+            @intFromEnum(event.status),
+            event.latency_us,
+        },
+    );
+    defer allocator.free(line);
+    try writeStderrLine(line);
+}
+
+fn jsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator) !void {
+    const line = try std.fmt.allocPrint(
+        allocator,
+        "{{\"event\":\"trace\",\"request_id\":{f},\"trace_context\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
+        .{
+            std.json.fmt(event.request_id, .{}),
+            std.json.fmt(event.trace_context, .{}),
             std.json.fmt(@tagName(event.method), .{}),
             std.json.fmt(event.path, .{}),
             @intFromEnum(event.status),

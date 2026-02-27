@@ -6,6 +6,9 @@ var telemetry_last_status: ?std.http.Status = null;
 var telemetry_last_latency_us: u64 = 0;
 var telemetry_last_path: ?[]u8 = null;
 var telemetry_last_request_id: ?[]u8 = null;
+var trace_event_count: usize = 0;
+var trace_last_trace_context: ?[]u8 = null;
+var trace_last_request_id: ?[]u8 = null;
 var access_log_event_count: usize = 0;
 var access_log_last_trace_context: ?[]u8 = null;
 var access_log_last_user_agent: ?[]u8 = null;
@@ -29,6 +32,12 @@ fn resetTelemetryState(allocator: std.mem.Allocator) void {
 
     if (telemetry_last_request_id) |request_id| allocator.free(request_id);
     telemetry_last_request_id = null;
+
+    trace_event_count = 0;
+    if (trace_last_trace_context) |trace_context| allocator.free(trace_context);
+    trace_last_trace_context = null;
+    if (trace_last_request_id) |request_id| allocator.free(request_id);
+    trace_last_request_id = null;
 
     access_log_event_count = 0;
     if (access_log_last_trace_context) |trace_context| allocator.free(trace_context);
@@ -63,6 +72,15 @@ fn telemetrySink(event: zigmund.App.TelemetryEvent, allocator: std.mem.Allocator
     telemetry_last_status = event.status;
     telemetry_last_latency_us = event.latency_us;
     telemetry_event_count += 1;
+}
+
+fn traceSink(event: zigmund.App.TraceEvent, allocator: std.mem.Allocator) !void {
+    if (trace_last_trace_context) |trace_context| allocator.free(trace_context);
+    if (trace_last_request_id) |request_id| allocator.free(request_id);
+
+    trace_last_trace_context = try allocator.dupe(u8, event.trace_context);
+    trace_last_request_id = try allocator.dupe(u8, event.request_id);
+    trace_event_count += 1;
 }
 
 fn accessLogSink(event: zigmund.App.AccessLogEvent, allocator: std.mem.Allocator) !void {
@@ -128,6 +146,7 @@ test "request id trace context telemetry access logs and metrics are propagated"
     defer app.deinit();
 
     app.setTelemetrySink(telemetrySink);
+    app.setTraceSink(traceSink);
     app.setAccessLogSink(accessLogSink);
     app.setMetricsSink(metricsSink);
     try app.setTraceContextHeader("x-trace-id");
@@ -148,6 +167,9 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqualStrings("/observe", telemetry_last_path.?);
     try std.testing.expectEqualStrings(generated_request_id, telemetry_last_request_id.?);
     try std.testing.expect(telemetry_last_latency_us >= 0);
+    try std.testing.expectEqual(@as(usize, 1), trace_event_count);
+    try std.testing.expectEqualStrings("", trace_last_trace_context.?);
+    try std.testing.expectEqualStrings(generated_request_id, trace_last_request_id.?);
     try std.testing.expectEqual(@as(usize, 1), access_log_event_count);
     try std.testing.expectEqualStrings("", access_log_last_trace_context.?);
     try std.testing.expectEqual(@as(usize, 2), metrics_event_count);
@@ -168,6 +190,9 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expect(std.mem.indexOf(u8, forwarded.body, "\"trace_context\":\"trace-123\"") != null);
     try std.testing.expectEqual(@as(usize, 2), telemetry_event_count);
     try std.testing.expectEqualStrings("external-request-id-1", telemetry_last_request_id.?);
+    try std.testing.expectEqual(@as(usize, 2), trace_event_count);
+    try std.testing.expectEqualStrings("trace-123", trace_last_trace_context.?);
+    try std.testing.expectEqualStrings("external-request-id-1", trace_last_request_id.?);
     try std.testing.expectEqual(@as(usize, 2), access_log_event_count);
     try std.testing.expectEqualStrings("trace-123", access_log_last_trace_context.?);
     try std.testing.expectEqualStrings("zigmund-test", access_log_last_user_agent.?);
