@@ -181,3 +181,32 @@ test "sql session provider dependency lifecycle is deterministic" {
     try std.testing.expect(std.mem.indexOf(u8, res.body, "postgres://svc@localhost/main") != null);
     try std.testing.expectEqual(@as(usize, 0), Provider.activeCount());
 }
+
+test "compatibility adapters apply proxy trust policy to server config" {
+    var cfg: zigmund.ServerConfig = .{
+        .trusted_proxy_headers = true,
+        .trusted_proxy_cidrs = &.{"127.0.0.1/32"},
+    };
+
+    const proxy_mode = zigmund.CompatibilityAdapters{
+        .enable_proxy_mode = true,
+        .trusted_proxy_headers = true,
+        .trusted_proxy_cidrs = &.{
+            "10.0.0.0/8",
+            "192.168.0.0/16",
+        },
+    };
+    proxy_mode.applyToServerConfig(&cfg);
+
+    try std.testing.expect(cfg.trusted_proxy_headers);
+    try std.testing.expectEqual(@as(usize, 2), cfg.trusted_proxy_cidrs.len);
+    try std.testing.expectEqualStrings("10.0.0.0/8", cfg.trusted_proxy_cidrs[0]);
+
+    const direct_mode = zigmund.CompatibilityAdapters{
+        .enable_proxy_mode = false,
+    };
+    direct_mode.applyToServerConfig(&cfg);
+
+    try std.testing.expect(!cfg.trusted_proxy_headers);
+    try std.testing.expectEqual(@as(usize, 0), cfg.trusted_proxy_cidrs.len);
+}
