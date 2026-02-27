@@ -2,6 +2,7 @@ const std = @import("std");
 const types = @import("types.zig");
 const params = @import("../params/mod.zig");
 const security = @import("../security/mod.zig");
+const BackgroundTasks = @import("background.zig").BackgroundTasks;
 const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
 
@@ -132,6 +133,7 @@ fn resolveArg(
     context: *ResolveContext,
 ) anyerror!ParamType {
     if (ParamType == *Request) return req;
+    if (ParamType == *BackgroundTasks) return req.backgroundTasks();
     if (ParamType == std.mem.Allocator) return allocator;
 
     if (comptime isParamMarkerType(ParamType)) {
@@ -144,7 +146,7 @@ fn resolveArg(
 
     @compileError(
         "Unsupported handler parameter type `" ++ @typeName(ParamType) ++
-            "`. Use *Request, std.mem.Allocator, Query/Path/Header/Cookie/Body/Form/File, Depends, or Security.",
+            "`. Use *Request, *BackgroundTasks, std.mem.Allocator, Query/Path/Header/Cookie/Body/Form/File, Depends, or Security.",
     );
 }
 

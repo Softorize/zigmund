@@ -458,6 +458,9 @@ pub const App = struct {
     ) !Response {
         var req = try Request.initSyntheticWithHeaders(self.allocator, method, target, body, headers);
         defer req.deinit();
+        defer req.runBackgroundTasks() catch |err| {
+            std.log.warn("background task failed: {s}", .{@errorName(err)});
+        };
         return self.dispatchWithPipeline(&req);
     }
 
@@ -516,6 +519,9 @@ pub const App = struct {
             else => return err,
         };
         defer req.deinit();
+        defer req.runBackgroundTasks() catch |err| {
+            std.log.warn("background task failed: {s}", .{@errorName(err)});
+        };
 
         if (raw_request.upgradeRequested() == .websocket) {
             if (try self.router.findWebSocket(req.path, &req)) |ws_route| {

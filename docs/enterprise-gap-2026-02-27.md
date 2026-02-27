@@ -163,6 +163,10 @@
   - Runtime dispatch now propagates peer socket address into `Request` (`req.peerAddress()`), enabling policy decisions based on real client/proxy source IP.
 - Response API parity progress:
   - added redirect/file/chunked-stream helpers and cookie/etag/last-modified helpers on `Response`.
+- Background task parity progress:
+  - handler injection now supports `*BackgroundTasks` directly.
+  - request lifecycle now executes queued background tasks after response handling for both runtime and `TestClient` dispatch paths.
+  - background-task failures are isolated from HTTP response delivery (logged but non-fatal).
 - Testing API parity progress:
   - `TestClient` now persists cookies across requests from `Set-Cookie` headers and applies deletion semantics (`Max-Age<=0`, epoch `Expires`), bringing integration test behavior closer to FastAPI-style clients.
   - `TestClient` now supports in-process websocket sessions (`websocketConnect` / `websocketConnectWithHeaders`) with send/receive/ping/close primitives and deterministic handler lifecycle joins.

@@ -1,6 +1,6 @@
 # FastAPI Parity Matrix
 
-Generated: 2026-02-27T06:44:19Z
+Generated: 2026-02-27T08:45:27Z
 
 Total docs targets: 116
 
@@ -75,7 +75,7 @@ Total docs targets: 116
 | `reference/uploadfile/` | `examples/parity/reference/uploadfile.zig` | stub |
 | `reference/websockets/` | `examples/parity/reference/websockets.zig` | stub |
 | `tutorial/` | `examples/parity/tutorial/index.zig` | stub |
-| `tutorial/background-tasks/` | `examples/parity/tutorial/background-tasks.zig` | stub |
+| `tutorial/background-tasks/` | `examples/parity/tutorial/background-tasks.zig` | implemented |
 | `tutorial/bigger-applications/` | `examples/parity/tutorial/bigger-applications.zig` | stub |
 | `tutorial/body-fields/` | `examples/parity/tutorial/body-fields.zig` | stub |
 | `tutorial/body-multiple-params/` | `examples/parity/tutorial/body-multiple-params.zig` | stub |
@@ -123,6 +123,6 @@ Total docs targets: 116
 | `tutorial/static-files/` | `examples/parity/tutorial/static-files.zig` | stub |
 | `tutorial/testing/` | `examples/parity/tutorial/testing.zig` | stub |
 
-Implemented: 1/116
-Stub: 115/116
+Implemented: 2/116
+Stub: 114/116
 Missing: 0/116

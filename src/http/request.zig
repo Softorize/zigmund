@@ -1,4 +1,5 @@
 const std = @import("std");
+const BackgroundTasks = @import("../core/background.zig").BackgroundTasks;
 
 pub const Request = struct {
     pub const ValidationLocation = enum {
@@ -73,6 +74,8 @@ pub const Request = struct {
     dependency_cleanups: std.ArrayListUnmanaged(DependencyCleanup) = .empty,
     dependency_cleanups_ran: bool = false,
     validation_issues: std.ArrayListUnmanaged(ValidationIssue) = .empty,
+    background_tasks: BackgroundTasks,
+    background_tasks_ran: bool = false,
 
     pub const BodyError = error{BodyTooLarge} || std.http.Server.Request.ExpectContinueError || std.Io.Reader.LimitedAllocError;
 
@@ -105,6 +108,7 @@ pub const Request = struct {
             .path = split.path,
             .query = split.query,
             .body = "",
+            .background_tasks = BackgroundTasks.init(allocator),
         };
         errdefer req.deinit();
 
@@ -140,6 +144,7 @@ pub const Request = struct {
             .path = split.path,
             .query = split.query,
             .body = body,
+            .background_tasks = BackgroundTasks.init(allocator),
         };
         errdefer req.deinit();
 
@@ -174,6 +179,7 @@ pub const Request = struct {
         self.dependency_cleanups.deinit(self.allocator);
 
         self.validation_issues.deinit(self.allocator);
+        self.background_tasks.deinit();
         for (self.synthetic_headers.items) |hdr| {
             self.allocator.free(hdr.name);
             self.allocator.free(hdr.value);
@@ -644,6 +650,16 @@ pub const Request = struct {
 
     pub fn hasValidationIssues(self: *const Request) bool {
         return self.validation_issues.items.len != 0;
+    }
+
+    pub fn backgroundTasks(self: *Request) *BackgroundTasks {
+        return &self.background_tasks;
+    }
+
+    pub fn runBackgroundTasks(self: *Request) !void {
+        if (self.background_tasks_ran) return;
+        self.background_tasks_ran = true;
+        try self.background_tasks.runAll();
     }
 
     fn splitTarget(target: []const u8) struct { path: []const u8, query: []const u8 } {
