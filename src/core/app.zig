@@ -387,6 +387,25 @@ pub const App = struct {
         defer self.active_server_cfg = null;
 
         self.emitStartupConfigAudit(cfg);
+        try self.runStartupLifecycle();
+
+        defer {
+            self.runShutdownLifecycle() catch |err| {
+                std.log.err("shutdown hook failed: {s}", .{@errorName(err)});
+            };
+        }
+
+        runtime.server.serve(self, cfg, dispatchTrampoline, self, shouldStopTrampoline) catch |err| {
+            self.emitAudit(.{
+                .category = "lifecycle",
+                .action = "serve_failed",
+                .detail = @errorName(err),
+            });
+            return err;
+        };
+    }
+
+    pub fn runStartupLifecycle(self: *App) !void {
         self.emitAudit(.{
             .category = "lifecycle",
             .action = "startup_begin",
@@ -403,40 +422,33 @@ pub const App = struct {
             .category = "lifecycle",
             .action = "startup_complete",
         });
+    }
 
-        defer {
+    pub fn runStartupHooksOnly(self: *App) !void {
+        try self.runHooks(self.startup_hooks.items);
+    }
+
+    pub fn runShutdownLifecycle(self: *App) !void {
+        self.emitAudit(.{
+            .category = "lifecycle",
+            .action = "shutdown_begin",
+        });
+        self.runHooks(self.shutdown_hooks.items) catch |err| {
             self.emitAudit(.{
                 .category = "lifecycle",
-                .action = "shutdown_begin",
-            });
-
-            var shutdown_failed = false;
-            self.runHooks(self.shutdown_hooks.items) catch |err| {
-                shutdown_failed = true;
-                self.emitAudit(.{
-                    .category = "lifecycle",
-                    .action = "shutdown_failed",
-                    .detail = @errorName(err),
-                });
-                std.log.err("shutdown hook failed: {s}", .{@errorName(err)});
-            };
-
-            if (!shutdown_failed) {
-                self.emitAudit(.{
-                    .category = "lifecycle",
-                    .action = "shutdown_complete",
-                });
-            }
-        }
-
-        runtime.server.serve(self, cfg, dispatchTrampoline, self, shouldStopTrampoline) catch |err| {
-            self.emitAudit(.{
-                .category = "lifecycle",
-                .action = "serve_failed",
+                .action = "shutdown_failed",
                 .detail = @errorName(err),
             });
             return err;
         };
+        self.emitAudit(.{
+            .category = "lifecycle",
+            .action = "shutdown_complete",
+        });
+    }
+
+    pub fn runShutdownHooksOnly(self: *App) !void {
+        try self.runHooks(self.shutdown_hooks.items);
     }
 
     pub fn openapi(self: *App) ![]const u8 {

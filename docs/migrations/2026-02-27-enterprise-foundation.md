@@ -23,6 +23,8 @@
    - registered injected websocket dependencies are now executed during handshake dependency checks (pre-upgrade), matching HTTP dependency pre-execution semantics.
 10. OpenAPI websocket metadata:
    - `x-zigmund-websocket` operations now include merged `dependencies` metadata and derived `security` requirements from both explicit and injected websocket dependencies.
+11. Test client lifecycle helpers:
+   - `TestClient` now starts app startup hooks lazily on first request/connect, supports explicit `start()` / `close()`, and runs shutdown hooks automatically on `deinit`.
 
 ## Migration Actions
 
@@ -41,6 +43,7 @@
    - cleanup is request-scoped; app-scoped cache + cleanup is intentionally rejected at compile-time.
 6. Existing websocket handlers can remain unchanged.
    - Optionally migrate to request-aware signatures when path/header/query state is needed inside websocket handlers.
+7. For lifecycle-sensitive integration tests, use `TestClient.start()` / `TestClient.close()` when you need explicit hook boundaries; otherwise lazy startup + `deinit` shutdown remains automatic.
 
 ## Compatibility Notes
 

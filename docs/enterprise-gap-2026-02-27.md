@@ -191,6 +191,7 @@
   - background-task failures are isolated from HTTP response delivery (logged but non-fatal).
 - Testing API parity progress:
   - `TestClient` now persists cookies across requests from `Set-Cookie` headers and applies deletion semantics (`Max-Age<=0`, epoch `Expires`), bringing integration test behavior closer to FastAPI-style clients.
+  - `TestClient` now supports lifecycle helpers (`start`, `close`) with lazy startup on first request/connect and automatic shutdown on `deinit`, enabling deterministic startup/shutdown hook coverage in integration tests.
   - `TestClient` now supports in-process websocket sessions (`websocketConnect` / `websocketConnectWithHeaders`) with send/receive/ping/close primitives and deterministic handler lifecycle joins.
   - websocket sessions execute route dependencies before handler startup and enforce auth/scope failures (`Unauthorized`, `InsufficientScope`) at connect time.
   - websocket session shutdown now triggers dependency cleanup hooks reliably.

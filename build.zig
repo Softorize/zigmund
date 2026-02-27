@@ -89,6 +89,7 @@ pub fn build(b: *std.Build) void {
         "tests/conformance/validation_error_test.zig",
         "tests/conformance/parameter_constraints_strict_test.zig",
         "tests/conformance/testclient_cookie_persistence_test.zig",
+        "tests/conformance/testclient_lifecycle_test.zig",
         "tests/conformance/api_surface_snapshot_test.zig",
         "tests/parity/matrix_test.zig",
         "tests/perf/smoke_test.zig",

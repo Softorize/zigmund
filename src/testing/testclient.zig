@@ -10,6 +10,7 @@ pub const TestClient = struct {
     allocator: std.mem.Allocator,
     app: *App,
     cookies: std.ArrayListUnmanaged(CookieEntry) = .empty,
+    lifespan_started: bool = false,
 
     const CookieEntry = struct {
         name: []u8,
@@ -125,8 +126,23 @@ pub const TestClient = struct {
     }
 
     pub fn deinit(self: *TestClient) void {
+        self.close() catch |err| {
+            std.log.err("test client shutdown lifecycle failed: {s}", .{@errorName(err)});
+        };
         self.clearCookies();
         self.cookies.deinit(self.allocator);
+    }
+
+    pub fn start(self: *TestClient) !void {
+        if (self.lifespan_started) return;
+        try self.app.runStartupHooksOnly();
+        self.lifespan_started = true;
+    }
+
+    pub fn close(self: *TestClient) !void {
+        if (!self.lifespan_started) return;
+        try self.app.runShutdownHooksOnly();
+        self.lifespan_started = false;
     }
 
     pub fn request(self: *TestClient, method: std.http.Method, target: []const u8, body: []const u8) !Response {
@@ -140,6 +156,7 @@ pub const TestClient = struct {
         body: []const u8,
         headers: []const std.http.Header,
     ) !Response {
+        try self.start();
         if (headers.len == 0 and self.cookies.items.len == 0) {
             var direct = try self.app.dispatchSynthetic(method, target, body);
             self.applySetCookieHeaders(&direct) catch |err| {
@@ -169,6 +186,7 @@ pub const TestClient = struct {
         target: []const u8,
         headers: []const std.http.Header,
     ) !WebSocketSession {
+        try self.start();
         var effective = try self.effectiveHeaders(headers);
         defer effective.deinit(self.allocator);
 
