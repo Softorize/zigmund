@@ -104,6 +104,20 @@ fn wsApiKeyScopeDependency(req: *zigmund.Request, allocator: std.mem.Allocator) 
     return error.InsufficientScope;
 }
 
+fn wsUnauthorizedResponseHandler(req: *const zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    var response = zigmund.Response.text("ws custom unauthorized").withStatus(.unauthorized);
+    try response.setHeader(allocator, "x-auth-handler", "ws-unauthorized");
+    return response;
+}
+
+fn wsInsufficientScopeResponseHandler(req: *const zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    var response = zigmund.Response.text("ws custom insufficient").withStatus(.forbidden);
+    try response.setHeader(allocator, "x-auth-handler", "ws-insufficient");
+    return response;
+}
+
 fn sendWebSocketUpgrade(
     address: std.net.Address,
     target: []const u8,
@@ -309,6 +323,76 @@ test "websocket api key auth failures return forbidden without bearer challenge"
     const insufficient = try sendWebSocketUpgrade(address, "/ws-api-key-scope", &.{});
     defer std.testing.allocator.free(insufficient);
     try std.testing.expectEqual(@as(?u16, 403), responseStatusCode(insufficient));
+    try std.testing.expect(!containsIgnoreCase(insufficient, "www-authenticate:"));
+}
+
+test "websocket handshake uses custom auth failure handlers when configured" {
+    const port = try reservePort();
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "websocket-custom-auth-failure",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    app.setUnauthorizedHandler(wsUnauthorizedResponseHandler);
+    app.setInsufficientScopeHandler(wsInsufficientScopeResponseHandler);
+
+    try app.addDependency("ws_auth", wsAuthDependency);
+    try app.addSecurityScheme("ws_auth", .{
+        .oauth2 = .{
+            .flows = .{
+                .password = .{
+                    .token_url = "/token",
+                    .scopes = &.{.{ .name = "chat:write" }},
+                },
+            },
+        },
+    });
+    try app.websocket("/ws-custom-auth", wsHandler, .{
+        .dependencies = &.{.{
+            .name = "ws_auth",
+            .scopes = &.{"chat:write"},
+        }},
+    });
+
+    const cfg: zigmund.ServerConfig = .{
+        .host = "127.0.0.1",
+        .port = port,
+        .worker_count = 1,
+        .accept_poll_interval_ms = 10,
+        .idle_timeout_ms = 1_000,
+        .shutdown_grace_period_ms = 200,
+    };
+
+    var serve_ctx: ServeThreadCtx = .{
+        .app = &app,
+        .cfg = cfg,
+    };
+
+    const thread = try std.Thread.spawn(.{}, serveThread, .{&serve_ctx});
+    defer {
+        app.requestShutdown();
+        thread.join();
+    }
+
+    const address = try std.net.Address.resolveIp("127.0.0.1", port);
+
+    const unauthorized = try sendWebSocketUpgrade(address, "/ws-custom-auth", &.{});
+    defer std.testing.allocator.free(unauthorized);
+    try std.testing.expectEqual(@as(?u16, 401), responseStatusCode(unauthorized));
+    try std.testing.expect(containsIgnoreCase(unauthorized, "x-auth-handler: ws-unauthorized"));
+    try std.testing.expect(std.mem.indexOf(u8, unauthorized, "ws custom unauthorized") != null);
+    try std.testing.expect(!containsIgnoreCase(unauthorized, "www-authenticate:"));
+
+    const insufficient = try sendWebSocketUpgrade(address, "/ws-custom-auth", &.{
+        .{ .name = "authorization", .value = "Bearer token-a" },
+        .{ .name = "x-scopes", .value = "chat:read" },
+    });
+    defer std.testing.allocator.free(insufficient);
+    try std.testing.expectEqual(@as(?u16, 403), responseStatusCode(insufficient));
+    try std.testing.expect(containsIgnoreCase(insufficient, "x-auth-handler: ws-insufficient"));
+    try std.testing.expect(std.mem.indexOf(u8, insufficient, "ws custom insufficient") != null);
     try std.testing.expect(!containsIgnoreCase(insufficient, "www-authenticate:"));
 }
 
