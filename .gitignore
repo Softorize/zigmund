@@ -1,3 +1,4 @@
 .zig-cache/
 zig-out/
-
+zigmund.sbom.json
+tools/parity/parity-summary.json

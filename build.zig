@@ -32,6 +32,12 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_cmd.addArgs(args);
     run_step.dependOn(&run_cmd.step);
 
+    const sbom_step = b.step("sbom", "Generate CycloneDX SBOM");
+    const sbom_cmd = b.addRunArtifact(exe);
+    sbom_cmd.step.dependOn(b.getInstallStep());
+    sbom_cmd.addArgs(&.{ "sbom", "--out", "zigmund.sbom.json" });
+    sbom_step.dependOn(&sbom_cmd.step);
+
     const test_step = b.step("test", "Run library and integration tests");
 
     const lib_tests = b.addTest(.{ .root_module = zigmund_mod });
@@ -82,6 +88,7 @@ pub fn build(b: *std.Build) void {
         "tests/conformance/validation_error_test.zig",
         "tests/conformance/parameter_constraints_strict_test.zig",
         "tests/conformance/testclient_cookie_persistence_test.zig",
+        "tests/conformance/api_surface_snapshot_test.zig",
         "tests/parity/matrix_test.zig",
         "tests/perf/smoke_test.zig",
         "tests/interop/proxy_headers_test.zig",

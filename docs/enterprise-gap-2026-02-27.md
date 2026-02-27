@@ -4,6 +4,7 @@
 - FastAPI upstream version: `0.133.1` (`fastapi/__init__.py` on `master`).
 - FastAPI docs targets in scope (`tutorial|advanced|reference|how-to`): `116` pages.
 - Current Zigmund parity matrix: `1 implemented / 115 stub / 0 missing files`.
+- Machine-readable parity summary now emitted to `tools/parity/parity-summary.json`.
 
 ## What Is Already In Place
 - Core HTTP routing for standard methods and path params.
@@ -197,6 +198,19 @@
   - `zigmund openapi` now supports deterministic generation mode via `--deterministic` (stable path/method/component ordering for CI snapshots).
   - `zigmund openapi` now supports snapshot diff gating via `--diff <path>` with deterministic mismatch failure (`OpenApiSnapshotMismatch`) for CI regression checks.
   - `zigmund cloud` now emits a functional deployment-plan JSON (framework/app metadata, route counts, OpenAPI size) and supports writing it via `--out <path>`.
+  - `zigmund sbom` now emits a CycloneDX (`specVersion: 1.5`) software bill of materials with framework metadata, license marker, and runtime components.
+- Release governance baseline progress:
+  - public API surface snapshot added at `tools/release/api-surface-v0.txt` with conformance gate (`tests/conformance/api_surface_snapshot_test.zig`) derived from `src/zigmund.zig` exports.
+  - governance check script added at `tools/release/check_governance.sh`:
+    - validates public API surface against snapshot (breaking-export drift guard),
+    - validates MIT license marker,
+    - enforces pinned Zig version in `build.zig.zon`,
+    - validates generated SBOM shape/license markers.
+  - CI now generates and uploads `zigmund.sbom.json` artifact and runs governance checks.
+  - parity governance gate added via `tools/parity/check_parity_gate.sh` with progressive threshold env knobs:
+    - `PARITY_REQUIRED_IMPLEMENTED`,
+    - `PARITY_MAX_STUB`,
+    - `PARITY_MAX_MISSING`.
 - Routing/OpenAPI parity progress:
   - router matching now supports FastAPI-style catch-all path converters (`{file_path:path}`) for HTTP path params.
   - OpenAPI fallback path-parameter generation now strips converter suffixes (e.g. `{file_path:path}` -> parameter name `file_path`).
@@ -239,7 +253,8 @@
   - metrics endpoint conformance (Prometheus output shape, enable/disable behavior, App JSON sink adapter wiring),
   - CLI renderer coverage for routes JSON and cloud-plan output shape,
   - CLI OpenAPI snapshot assertion behavior (match + mismatch paths),
-  - CLI OpenAPI deterministic flag parsing behavior.
+  - CLI OpenAPI deterministic flag parsing behavior,
+  - CLI SBOM renderer output shape behavior.
 
 ## Recommended Next Enterprise Sprints
 1. Observability expansion: structured access logging, metrics adapters, trace context propagation.

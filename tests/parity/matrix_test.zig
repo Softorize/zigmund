@@ -7,5 +7,6 @@ fn fileExists(path: []const u8) bool {
 
 test "parity tooling and example scaffolds exist" {
     try std.testing.expect(fileExists("tools/parity/fetch_fastapi_sitemap.sh"));
+    try std.testing.expect(fileExists("tools/parity/check_parity_gate.sh"));
     try std.testing.expect(fileExists("examples/parity/tutorial/first-steps.zig"));
 }

@@ -16,3 +16,18 @@ jobs:
         run: zig build test
       - name: Generate parity matrix
         run: zig build parity-report
+      - name: Enforce parity gate (progressive)
+        env:
+          PARITY_REQUIRED_IMPLEMENTED: "1"
+          PARITY_MAX_STUB: "115"
+          PARITY_MAX_MISSING: "0"
+        run: sh tools/parity/check_parity_gate.sh
+      - name: Generate SBOM
+        run: zig build run -- sbom --out zigmund.sbom.json
+      - name: Governance checks
+        run: sh tools/release/check_governance.sh
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zigmund-sbom
+          path: zigmund.sbom.json

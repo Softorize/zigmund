@@ -1,5 +1,6 @@
 const std = @import("std");
 const zigmund = @import("zigmund");
+const builtin = @import("builtin");
 
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
@@ -66,6 +67,20 @@ pub fn main() !void {
             try writeFile(path, plan);
         } else {
             try writeStdout(plan);
+            try writeStdout("\n");
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, command, "sbom")) {
+        const out_path = try parseCloudFlags(&args);
+        const sbom = try renderSbom(allocator, &app);
+        defer allocator.free(sbom);
+
+        if (out_path) |path| {
+            try writeFile(path, sbom);
+        } else {
+            try writeStdout(sbom);
             try writeStdout("\n");
         }
         return;
@@ -332,6 +347,18 @@ fn renderCloudPlan(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
     );
 }
 
+fn renderSbom(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
+    return std.fmt.allocPrint(
+        allocator,
+        "{{\"bomFormat\":\"CycloneDX\",\"specVersion\":\"1.5\",\"version\":1,\"metadata\":{{\"component\":{{\"type\":\"application\",\"name\":{f},\"version\":{f},\"licenses\":[{{\"license\":{{\"id\":\"MIT\"}}}}]}}}},\"components\":[{{\"type\":\"framework\",\"name\":\"zig\",\"version\":{f}}},{{\"type\":\"library\",\"name\":\"openssl\",\"version\":\"runtime\"}}]}}",
+        .{
+            std.json.fmt(app.cfg.title, .{}),
+            std.json.fmt(app.cfg.version, .{}),
+            std.json.fmt(builtin.zig_version_string, .{}),
+        },
+    );
+}
+
 fn usage() !void {
     try writeStdout(
         "Usage: zigmund <command> [options]\n" ++
@@ -340,7 +367,8 @@ fn usage() !void {
             "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
             "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
-            "  cloud [--out <path>]\n",
+            "  cloud [--out <path>]\n" ++
+            "  sbom [--out <path>]\n",
     );
 }
 
@@ -597,6 +625,20 @@ test "cloud plan renderer outputs route counts and openapi size" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"http_routes\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"websocket_routes\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"openapi_bytes\":") != null);
+}
+
+test "sbom renderer outputs cyclonedx metadata and component licenses" {
+    var app = try buildDefaultApp(std.testing.allocator);
+    defer app.deinit();
+
+    const sbom = try renderSbom(std.testing.allocator, &app);
+    defer std.testing.allocator.free(sbom);
+
+    try std.testing.expect(std.mem.indexOf(u8, sbom, "\"bomFormat\":\"CycloneDX\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sbom, "\"specVersion\":\"1.5\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sbom, "\"licenses\":[{\"license\":{\"id\":\"MIT\"}}]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sbom, "\"name\":\"zig\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sbom, "\"name\":\"openssl\"") != null);
 }
 
 test "openapi snapshot assertion passes when docs match" {
