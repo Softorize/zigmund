@@ -310,10 +310,15 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
         if (wrote != 0) try writer.writeAll(",");
         wrote += 1;
         try writer.print(
-            "{{\"kind\":\"http\",\"method\":{f},\"path\":{f}}}",
+            "{{\"kind\":\"http\",\"method\":{f},\"path\":{f},\"include_in_schema\":{},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"injected_dependencies\":{d}}}",
             .{
                 std.json.fmt(route.method.asString(), .{}),
                 std.json.fmt(route.path, .{}),
+                route.options.include_in_schema,
+                std.json.fmt(route.options.operation_id orelse "", .{}),
+                std.json.fmt(route.options.name orelse "", .{}),
+                route.options.dependencies.len,
+                route.options.injected_dependencies.len,
             },
         );
     }
@@ -322,8 +327,16 @@ fn renderRoutesJson(allocator: std.mem.Allocator, app: *zigmund.App) ![]u8 {
         if (wrote != 0) try writer.writeAll(",");
         wrote += 1;
         try writer.print(
-            "{{\"kind\":\"websocket\",\"path\":{f}}}",
-            .{std.json.fmt(route.path, .{})},
+            "{{\"kind\":\"websocket\",\"path\":{f},\"operation_id\":{f},\"name\":{f},\"dependencies\":{d},\"allowed_origins\":{d},\"require_subprotocol\":{},\"subprotocols\":{d}}}",
+            .{
+                std.json.fmt(route.path, .{}),
+                std.json.fmt(route.options.operation_id orelse "", .{}),
+                std.json.fmt(route.options.name orelse "", .{}),
+                route.options.dependencies.len,
+                route.options.allowed_origins.len,
+                route.options.require_subprotocol,
+                route.options.subprotocols.len,
+            },
         );
     }
 
@@ -610,8 +623,10 @@ test "routes json renderer includes http and websocket routes" {
 
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"http\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"method\":\"get\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"include_in_schema\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"kind\":\"websocket\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, payload, "\"path\":\"/ws\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"require_subprotocol\":false") != null);
 }
 
 test "cloud plan renderer outputs route counts and openapi size" {
@@ -664,4 +679,51 @@ test "parse openapi flags supports deterministic out and diff options" {
     try std.testing.expect(opts.deterministic);
     try std.testing.expectEqualStrings("openapi.json", opts.out_path.?);
     try std.testing.expectEqualStrings("baseline.json", opts.diff_path.?);
+}
+
+test "routes json renderer includes operation and dependency metadata" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "routes-json-meta",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    const auth_dep = struct {
+        fn resolve(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+            _ = req;
+            _ = allocator;
+            return "token";
+        }
+    };
+    const ws_handler = struct {
+        fn run(conn: *zigmund.runtime.websocket.Connection, allocator: std.mem.Allocator) !void {
+            _ = conn;
+            _ = allocator;
+        }
+    };
+
+    try app.addDependency("auth", auth_dep.resolve);
+    try app.get("/meta", healthHandler, .{
+        .name = "meta_route",
+        .operation_id = "get_meta",
+        .dependencies = &.{.{ .name = "auth" }},
+    });
+    try app.websocket("/ws-meta", ws_handler.run, .{
+        .name = "meta_ws",
+        .operation_id = "websocket_meta",
+        .allowed_origins = &.{"https://example.com"},
+        .subprotocols = &.{"chat.v1"},
+        .require_subprotocol = true,
+    });
+
+    const payload = try renderRoutesJson(std.testing.allocator, &app);
+    defer std.testing.allocator.free(payload);
+
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"operation_id\":\"get_meta\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"name\":\"meta_route\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"dependencies\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"operation_id\":\"websocket_meta\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"require_subprotocol\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"allowed_origins\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"subprotocols\":1") != null);
 }
