@@ -94,6 +94,7 @@
   - Per-request body-size limits are enforced and oversized payloads return `413 Payload Too Large`.
   - Per-request header-size limits are now enforced via `ServerConfig.max_header_bytes`, with oversized request headers returning `431 Request Header Fields Too Large`.
   - Per-request query-size limits are now enforced via `ServerConfig.max_query_bytes`, with oversized query strings returning `414 URI Too Long`.
+  - Connection-overload behavior for `ServerConfig.max_connections` now emits explicit `503 Service Unavailable` responses (instead of silent drop).
   - Idle polling/timeout primitives are wired in the server loop for deterministic connection teardown.
   - TLS runtime path is now implemented via OpenSSL-backed in-process connections (PEM cert/key loading + handshake + HTTP dispatch over TLS), removing the previous hard `TlsNotYetImplemented` runtime block.
 - Auth failure hardening:

@@ -113,7 +113,10 @@ test "server enforces max_body_bytes with 413 response" {
     };
 
     const thread = try std.Thread.spawn(.{}, serveThread, .{&serve_ctx});
-    defer thread.join();
+    defer {
+        app.requestShutdown();
+        thread.join();
+    }
 
     const address = try std.net.Address.resolveIp("127.0.0.1", port);
     var stream = try connectWithRetry(address);
@@ -136,8 +139,6 @@ test "server enforces max_body_bytes with 413 response" {
     const n = try stream.read(&read_buf);
     try std.testing.expect(n > 0);
     try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "413") != null);
-
-    app.requestShutdown();
 }
 
 test "server enforces max_header_bytes with 431 response" {
@@ -165,7 +166,10 @@ test "server enforces max_header_bytes with 431 response" {
     };
 
     const thread = try std.Thread.spawn(.{}, serveThread, .{&serve_ctx});
-    defer thread.join();
+    defer {
+        app.requestShutdown();
+        thread.join();
+    }
 
     const address = try std.net.Address.resolveIp("127.0.0.1", port);
     var stream = try connectWithRetry(address);
@@ -188,8 +192,6 @@ test "server enforces max_header_bytes with 431 response" {
     const n = try stream.read(&read_buf);
     try std.testing.expect(n > 0);
     try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "431") != null);
-
-    app.requestShutdown();
 }
 
 test "server enforces max_query_bytes with 414 response" {
@@ -217,7 +219,10 @@ test "server enforces max_query_bytes with 414 response" {
     };
 
     const thread = try std.Thread.spawn(.{}, serveThread, .{&serve_ctx});
-    defer thread.join();
+    defer {
+        app.requestShutdown();
+        thread.join();
+    }
 
     const address = try std.net.Address.resolveIp("127.0.0.1", port);
     var stream = try connectWithRetry(address);
@@ -236,8 +241,6 @@ test "server enforces max_query_bytes with 414 response" {
     const n = try stream.read(&read_buf);
     try std.testing.expect(n > 0);
     try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "414") != null);
-
-    app.requestShutdown();
 }
 
 test "requestShutdown stops server loop gracefully" {

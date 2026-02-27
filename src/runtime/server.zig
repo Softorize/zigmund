@@ -98,6 +98,7 @@ fn workerLoop(
         }
 
         if (cfg.max_connections != 0 and state.active_connections.load(.acquire) >= cfg.max_connections) {
+            sendOverloadedResponse(connection.stream.handle);
             connection.stream.close();
             continue;
         }
@@ -220,6 +221,17 @@ fn requestHeaderBytes(raw_request: *std.http.Server.Request) usize {
     return total;
 }
 
+fn sendOverloadedResponse(fd: std.posix.fd_t) void {
+    const response =
+        "HTTP/1.1 503 Service Unavailable\r\n" ++
+        "content-type: text/plain; charset=utf-8\r\n" ++
+        "content-length: 17\r\n" ++
+        "connection: close\r\n" ++
+        "\r\n" ++
+        "server overloaded";
+    _ = std.posix.write(fd, response) catch {};
+}
+
 fn shutdownRequested(state: *const ServeState) bool {
     const should_stop_fn = state.should_stop_fn orelse return false;
     const stop_ctx = state.should_stop_ctx orelse return false;
@@ -242,4 +254,27 @@ fn shouldTerminate(state: *ServeState, cfg: ServerConfig) bool {
     const now_ms = std.time.milliTimestamp();
     const elapsed_ms: u64 = @intCast(if (now_ms > started_ms) now_ms - started_ms else 0);
     return elapsed_ms >= cfg.shutdown_grace_period_ms;
+}
+
+test "sendOverloadedResponse writes 503 payload" {
+    const bind_address = try std.net.Address.resolveIp("127.0.0.1", 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    defer listener.deinit();
+
+    const client_address = try std.net.Address.resolveIp("127.0.0.1", listener.listen_address.getPort());
+    var client = try std.net.tcpConnectToAddress(client_address);
+    defer client.close();
+
+    const accepted = try listener.accept();
+    defer accepted.stream.close();
+
+    sendOverloadedResponse(accepted.stream.handle);
+
+    var read_buf: [512]u8 = undefined;
+    const n = try client.read(&read_buf);
+    try std.testing.expect(n > 0);
+    try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "503 Service Unavailable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "server overloaded") != null);
 }
