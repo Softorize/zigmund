@@ -4,18 +4,41 @@ set -eu
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 OUT_DIR="$ROOT_DIR/tools/parity"
 URLS_FILE="$OUT_DIR/fastapi_urls.txt"
+BASELINE_FILE="$OUT_DIR/fastapi_urls.baseline.txt"
 MATRIX_FILE="$OUT_DIR/parity-matrix.md"
 SUMMARY_FILE="$OUT_DIR/parity-summary.json"
 GENERATED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+SOURCE="${PARITY_URLS_SOURCE:-baseline}"
 
 mkdir -p "$OUT_DIR"
 
-curl -fsSL https://fastapi.tiangolo.com/sitemap.xml \
-  | grep -o '<loc>[^<]*' \
-  | sed 's#<loc>##' \
-  | grep -E '^https://fastapi\.tiangolo\.com/(tutorial|advanced|reference|how-to)/' \
-  | sed 's#https://fastapi\.tiangolo\.com/##' \
-  | sort > "$URLS_FILE"
+case "$SOURCE" in
+  baseline)
+    if [ ! -f "$BASELINE_FILE" ]; then
+      echo "missing parity baseline file: $BASELINE_FILE" >&2
+      exit 1
+    fi
+    cp "$BASELINE_FILE" "$URLS_FILE"
+    ;;
+  remote)
+    curl -fsSL https://fastapi.tiangolo.com/sitemap.xml \
+      | grep -o '<loc>[^<]*' \
+      | sed 's#<loc>##' \
+      | grep -E '^https://fastapi\.tiangolo\.com/(tutorial|advanced|reference|how-to)/' \
+      | sed 's#https://fastapi\.tiangolo\.com/##' \
+      | sort > "$URLS_FILE"
+    ;;
+  local)
+    if [ ! -f "$URLS_FILE" ]; then
+      echo "missing local parity urls file: $URLS_FILE" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "invalid PARITY_URLS_SOURCE '$SOURCE' (expected: baseline|remote|local)" >&2
+    exit 1
+    ;;
+esac
 
 total_count="$(wc -l < "$URLS_FILE" | tr -d ' ')"
 implemented_count=0

@@ -1,0 +1,69 @@
+name: Release Channels
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel override
+        required: false
+        type: choice
+        options:
+          - nightly
+          - alpha
+          - beta
+          - rc
+          - stable
+      perf_mode:
+        description: Perf gate mode override
+        required: false
+        type: choice
+        options:
+          - auto
+          - shared
+          - strict
+  push:
+    tags:
+      - "nightly-*"
+      - "alpha-*"
+      - "beta-*"
+      - "rc-*"
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+      - name: Resolve channel
+        id: resolve_channel
+        run: |
+          channel="$(sh tools/release/detect_channel.sh "${{ github.event.inputs.channel }}")"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Resolve perf mode
+        id: resolve_perf
+        run: |
+          input_mode="${{ github.event.inputs.perf_mode }}"
+          if [ "$input_mode" = "shared" ] || [ "$input_mode" = "strict" ]; then
+            mode="$input_mode"
+          else
+            case "${{ steps.resolve_channel.outputs.channel }}" in
+              rc|stable) mode="strict" ;;
+              *) mode="shared" ;;
+            esac
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+      - name: Run release channel pipeline
+        env:
+          PERF_GATE_MODE: ${{ steps.resolve_perf.outputs.mode }}
+          RELEASE_REF: ${{ github.ref_name }}
+        run: sh tools/release/run_release_channel.sh "${{ steps.resolve_channel.outputs.channel }}"
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zigmund-release-${{ steps.resolve_channel.outputs.channel }}
+          path: dist/release/*

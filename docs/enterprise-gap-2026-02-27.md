@@ -251,6 +251,10 @@
   - release artifact baseline pipeline added:
     - `tools/release/build_release_artifacts.sh` builds `ReleaseFast` binary, generates SBOM, and emits SHA-256 checksums,
     - CI now uploads `dist/release/*` artifacts for reproducible release validation.
+  - release-channel automation is now wired:
+    - channel detection script (`tools/release/detect_channel.sh`) maps tags/inputs to `nightly|alpha|beta|rc|stable`,
+    - channel pipeline runner (`tools/release/run_release_channel.sh`) executes tests, parity gate, perf gate, governance checks, and artifact build,
+    - `.github/workflows/release-channels.yml` runs the channel pipeline on tags and manual dispatch, and uploads channel-scoped artifacts.
 - Routing/OpenAPI parity progress:
   - router matching now supports FastAPI-style catch-all path converters (`{file_path:path}`) for HTTP path params.
   - OpenAPI fallback path-parameter generation now strips converter suffixes (e.g. `{file_path:path}` -> parameter name `file_path`).

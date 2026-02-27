@@ -1,8 +1,8 @@
 # FastAPI Parity Matrix
 
-Generated: 2026-02-27T18:59:56Z
+Generated: 2026-02-27T19:03:34Z
 
-Total docs targets: 116
+Total docs targets: 118
 
 | FastAPI Doc Path | Zigmund Example | Status |
 |---|---|---|
@@ -30,6 +30,7 @@ Total docs targets: 116
 | `advanced/security/http-basic-auth/` | `examples/parity/advanced/security__http-basic-auth.zig` | implemented |
 | `advanced/security/oauth2-scopes/` | `examples/parity/advanced/security__oauth2-scopes.zig` | implemented |
 | `advanced/settings/` | `examples/parity/advanced/settings.zig` | implemented |
+| `advanced/stream-data/` | `examples/parity/advanced/stream-data.zig` | implemented |
 | `advanced/strict-content-type/` | `examples/parity/advanced/strict-content-type.zig` | implemented |
 | `advanced/sub-applications/` | `examples/parity/advanced/sub-applications.zig` | implemented |
 | `advanced/templates/` | `examples/parity/advanced/templates.zig` | implemented |
@@ -121,8 +122,9 @@ Total docs targets: 116
 | `tutorial/security/simple-oauth2/` | `examples/parity/tutorial/security__simple-oauth2.zig` | implemented |
 | `tutorial/sql-databases/` | `examples/parity/tutorial/sql-databases.zig` | implemented |
 | `tutorial/static-files/` | `examples/parity/tutorial/static-files.zig` | implemented |
+| `tutorial/stream-json-lines/` | `examples/parity/tutorial/stream-json-lines.zig` | implemented |
 | `tutorial/testing/` | `examples/parity/tutorial/testing.zig` | implemented |
 
-Implemented: 116/116
-Stub: 0/116
-Missing: 0/116
+Implemented: 118/118
+Stub: 0/118
+Missing: 0/118
