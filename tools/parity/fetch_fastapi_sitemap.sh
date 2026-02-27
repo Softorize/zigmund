@@ -7,7 +7,6 @@ URLS_FILE="$OUT_DIR/fastapi_urls.txt"
 BASELINE_FILE="$OUT_DIR/fastapi_urls.baseline.txt"
 MATRIX_FILE="$OUT_DIR/parity-matrix.md"
 SUMMARY_FILE="$OUT_DIR/parity-summary.json"
-GENERATED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 SOURCE="${PARITY_URLS_SOURCE:-baseline}"
 
 mkdir -p "$OUT_DIR"
@@ -47,7 +46,7 @@ missing_count=0
 
 {
   printf '# FastAPI Parity Matrix\n\n'
-  printf 'Generated: %s\n\n' "$GENERATED_AT"
+  printf 'Source: %s\n\n' "$SOURCE"
   printf 'Total docs targets: %s\n\n' "$total_count"
   printf '| FastAPI Doc Path | Zigmund Example | Status |\n'
   printf '|---|---|---|\n'
@@ -87,7 +86,7 @@ missing_count=0
 } > "$MATRIX_FILE"
 
 cat > "$SUMMARY_FILE" <<EOF
-{"generated_at":"$GENERATED_AT","total":$total_count,"implemented":$implemented_count,"stub":$stub_count,"missing":$missing_count}
+{"source":"$SOURCE","total":$total_count,"implemented":$implemented_count,"stub":$stub_count,"missing":$missing_count}
 EOF
 
 printf 'Wrote %s, %s, and %s\n' "$URLS_FILE" "$MATRIX_FILE" "$SUMMARY_FILE"

@@ -3,4 +3,5 @@ zig-out/
 zigmund.sbom.json
 tools/parity/parity-summary.json
 dist/release/
+dist/reports/
 tools/perf/latest.json

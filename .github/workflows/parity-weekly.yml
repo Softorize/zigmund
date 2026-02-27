@@ -1,0 +1,21 @@
+name: Parity Weekly Report
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 1"
+
+jobs:
+  parity-report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate baseline vs remote parity report
+        run: sh tools/parity/generate_weekly_report.sh
+      - name: Upload parity report artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zigmund-parity-weekly
+          path: dist/reports/parity-weekly/*
