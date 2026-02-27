@@ -7,6 +7,37 @@ const ServeThreadCtx = struct {
     serve_error: ?anyerror = null,
 };
 
+const AuditCapture = struct {
+    mutex: std.Thread.Mutex = .{},
+    actions: std.ArrayListUnmanaged([]u8) = .empty,
+
+    fn deinit(self: *AuditCapture, allocator: std.mem.Allocator) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        for (self.actions.items) |action| allocator.free(action);
+        self.actions.deinit(allocator);
+    }
+
+    fn containsAction(self: *const AuditCapture, action: []const u8) bool {
+        for (self.actions.items) |item| {
+            if (std.mem.eql(u8, item, action)) return true;
+        }
+        return false;
+    }
+};
+
+var active_audit_capture: ?*AuditCapture = null;
+
+fn websocketAuditSink(event: zigmund.App.AuditEvent, allocator: std.mem.Allocator) !void {
+    const capture = active_audit_capture orelse return;
+    const owned_action = try allocator.dupe(u8, event.action);
+    errdefer allocator.free(owned_action);
+
+    capture.mutex.lock();
+    defer capture.mutex.unlock();
+    try capture.actions.append(allocator, owned_action);
+}
+
 fn serveThread(ctx: *ServeThreadCtx) void {
     ctx.app.serve(ctx.cfg) catch |err| {
         ctx.serve_error = err;
@@ -306,4 +337,100 @@ test "websocket handshake enforces required subprotocol negotiation" {
     defer std.testing.allocator.free(negotiated);
     try std.testing.expectEqual(@as(?u16, 101), responseStatusCode(negotiated));
     try std.testing.expect(containsIgnoreCase(negotiated, "sec-websocket-protocol: chat.v1"));
+}
+
+test "websocket handshake emits audit events for auth and policy rejections" {
+    const port = try reservePort();
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "websocket-audit-events",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    var capture: AuditCapture = .{};
+    defer capture.deinit(std.testing.allocator);
+    active_audit_capture = &capture;
+    defer active_audit_capture = null;
+    app.setAuditSink(websocketAuditSink);
+
+    try app.addDependency("ws_auth", wsAuthDependency);
+    try app.addSecurityScheme("ws_auth", .{
+        .oauth2 = .{
+            .flows = .{
+                .password = .{
+                    .token_url = "/token",
+                    .scopes = &.{
+                        .{ .name = "chat:read" },
+                        .{ .name = "chat:write" },
+                    },
+                },
+            },
+        },
+    });
+
+    try app.websocket("/ws-protected", wsHandler, .{
+        .dependencies = &.{.{
+            .name = "ws_auth",
+            .scopes = &.{"chat:write"},
+        }},
+    });
+    try app.websocket("/ws-origin", wsHandler, .{
+        .allowed_origins = &.{"https://allowed.example"},
+    });
+    try app.websocket("/ws-subprotocol", wsHandler, .{
+        .subprotocols = &.{ "chat.v2", "chat.v1" },
+        .require_subprotocol = true,
+    });
+
+    const cfg: zigmund.ServerConfig = .{
+        .host = "127.0.0.1",
+        .port = port,
+        .worker_count = 1,
+        .accept_poll_interval_ms = 10,
+        .idle_timeout_ms = 1_000,
+        .shutdown_grace_period_ms = 200,
+    };
+
+    var serve_ctx: ServeThreadCtx = .{
+        .app = &app,
+        .cfg = cfg,
+    };
+
+    const thread = try std.Thread.spawn(.{}, serveThread, .{&serve_ctx});
+    defer {
+        app.requestShutdown();
+        thread.join();
+    }
+
+    const address = try std.net.Address.resolveIp("127.0.0.1", port);
+
+    const unauthorized = try sendWebSocketUpgrade(address, "/ws-protected", &.{});
+    defer std.testing.allocator.free(unauthorized);
+    try std.testing.expectEqual(@as(?u16, 401), responseStatusCode(unauthorized));
+
+    const insufficient = try sendWebSocketUpgrade(address, "/ws-protected", &.{
+        .{ .name = "authorization", .value = "Bearer token-a" },
+        .{ .name = "x-scopes", .value = "chat:read" },
+    });
+    defer std.testing.allocator.free(insufficient);
+    try std.testing.expectEqual(@as(?u16, 403), responseStatusCode(insufficient));
+
+    const denied_origin = try sendWebSocketUpgrade(address, "/ws-origin", &.{
+        .{ .name = "origin", .value = "https://denied.example" },
+    });
+    defer std.testing.allocator.free(denied_origin);
+    try std.testing.expectEqual(@as(?u16, 403), responseStatusCode(denied_origin));
+
+    const missing_protocol = try sendWebSocketUpgrade(address, "/ws-subprotocol", &.{});
+    defer std.testing.allocator.free(missing_protocol);
+    try std.testing.expectEqual(@as(?u16, 400), responseStatusCode(missing_protocol));
+
+    capture.mutex.lock();
+    defer capture.mutex.unlock();
+
+    try std.testing.expect(capture.containsAction("websocket_unauthorized"));
+    try std.testing.expect(capture.containsAction("websocket_insufficient_scope"));
+    try std.testing.expect(capture.containsAction("origin_rejected"));
+    try std.testing.expect(capture.containsAction("subprotocol_rejected"));
 }

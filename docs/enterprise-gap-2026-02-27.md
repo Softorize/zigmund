@@ -204,6 +204,7 @@
   - OAuth2 password request form parsing and grant-type validation behavior,
   - OAuth2 password form client credentials fields and additional OAuth2 bearer helper resolver behavior,
   - websocket handshake security behavior (`401`/`403`/`101`) with dependency + scope enforcement,
+  - websocket audit-event coverage for auth/policy rejection paths (`websocket_unauthorized`, `websocket_insufficient_scope`, `origin_rejected`, `subprotocol_rejected`),
   - docs endpoint behavior for embedded Swagger UI/ReDoc assets and UI option wiring,
   - `TestClient` websocket session behavior (message exchange, auth/scope gate, cleanup lifecycle),
   - websocket timeout + close-code behavior in `TestClient` sessions,
