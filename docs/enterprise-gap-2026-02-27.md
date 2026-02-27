@@ -2,8 +2,8 @@
 
 ## Baseline
 - FastAPI upstream version: `0.133.1` (`fastapi/__init__.py` on `master`).
-- FastAPI docs targets in scope (`tutorial|advanced|reference|how-to`): `116` pages.
-- Current Zigmund parity matrix: `116 implemented / 0 stub / 0 missing files`.
+- FastAPI docs targets in scope (`tutorial|advanced|reference|how-to`): `118` pages.
+- Current Zigmund parity matrix: `118 implemented / 0 stub / 0 missing files`.
 - Machine-readable parity summary now emitted to `tools/parity/parity-summary.json`.
 
 ## What Is Already In Place
@@ -20,7 +20,7 @@
 - Runtime validation mapping to 422 for request parsing/coercion failures.
 
 ## High-Severity Gaps vs FastAPI-Level Capability
-- Docs parity matrix coverage is now complete (`116/116` implemented examples, `0` stubs).
+- Docs parity matrix coverage is now complete (`118/118` implemented examples, `0` stubs).
 - Remaining docs-parity hardening is in behavior depth (linking each example to stronger assertion-backed conformance cases).
 - Validation engine depth:
   - missing rich constraints (length/range/regex/strictness),
@@ -49,9 +49,9 @@
 
 ## Enhancements Implemented In This Iteration
 - FastAPI docs parity implementation progress:
-  - all `116/116` parity pages are now represented by non-stub runnable Zig examples.
+  - all `118/118` parity pages are now represented by non-stub runnable Zig examples.
   - parity gate defaults are now locked to full coverage:
-    - required implemented: `116`,
+    - required implemented: baseline total target count,
     - max stub: `0`,
     - max missing: `0`.
   - CI parity gate is now configured for full-coverage enforcement, not progressive low-threshold mode.
