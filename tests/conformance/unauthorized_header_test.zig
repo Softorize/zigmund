@@ -7,6 +7,12 @@ fn authDependency(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const
     return error.Unauthorized;
 }
 
+fn scopeFailDependency(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = req;
+    _ = allocator;
+    return error.InsufficientScope;
+}
+
 fn protected(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     _ = req;
     return zigmund.Response.json(allocator, .{ .ok = true });
@@ -76,5 +82,57 @@ test "unauthorized challenge matches configured HTTP security scheme" {
     defer res.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(.unauthorized, res.status);
-    try std.testing.expectEqualStrings("Basic", res.header("www-authenticate").?);
+    const challenge = res.header("www-authenticate").?;
+    try std.testing.expect(std.mem.startsWith(u8, challenge, "Basic"));
+    try std.testing.expect(std.mem.indexOf(u8, challenge, "realm=\"zigmund\"") != null);
+}
+
+test "digest unauthorized and insufficient-scope challenges include digest auth details" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "unauthorized-digest",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addDependency("digest_auth", authDependency);
+    try app.addSecurityScheme("digest_auth", .{
+        .http = .{
+            .scheme = "digest",
+        },
+    });
+
+    try app.get("/digest-protected", protected, .{
+        .dependencies = &.{.{ .name = "digest_auth" }},
+    });
+
+    try app.addDependency("digest_scope", scopeFailDependency);
+    try app.addSecurityScheme("digest_scope", .{
+        .http = .{
+            .scheme = "digest",
+        },
+    });
+    try app.get("/digest-scope", protected, .{
+        .dependencies = &.{.{
+            .name = "digest_scope",
+            .scopes = &.{"read"},
+        }},
+    });
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var unauthorized = try client.get("/digest-protected");
+    defer unauthorized.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.unauthorized, unauthorized.status);
+    const unauthorized_challenge = unauthorized.header("www-authenticate").?;
+    try std.testing.expect(std.mem.startsWith(u8, unauthorized_challenge, "Digest"));
+    try std.testing.expect(std.mem.indexOf(u8, unauthorized_challenge, "realm=\"zigmund\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, unauthorized_challenge, "qop=\"auth\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, unauthorized_challenge, "algorithm=SHA-256") != null);
+
+    var insufficient = try client.get("/digest-scope");
+    defer insufficient.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.forbidden, insufficient.status);
+    const insufficient_challenge = insufficient.header("www-authenticate").?;
+    try std.testing.expect(std.mem.startsWith(u8, insufficient_challenge, "Digest"));
+    try std.testing.expect(std.mem.indexOf(u8, insufficient_challenge, "insufficient_scope") == null);
 }

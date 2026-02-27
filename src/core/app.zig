@@ -2147,9 +2147,13 @@ fn challengeForSecurityScheme(scheme: security.OpenApiSecurityScheme) ?[]const u
 }
 
 fn httpChallenge(raw_scheme: []const u8) []const u8 {
-    if (std.ascii.eqlIgnoreCase(raw_scheme, "basic")) return "Basic";
+    if (std.ascii.eqlIgnoreCase(raw_scheme, "basic")) {
+        return "Basic realm=\"zigmund\"";
+    }
     if (std.ascii.eqlIgnoreCase(raw_scheme, "bearer")) return "Bearer";
-    if (std.ascii.eqlIgnoreCase(raw_scheme, "digest")) return "Digest";
+    if (std.ascii.eqlIgnoreCase(raw_scheme, "digest")) {
+        return "Digest realm=\"zigmund\", qop=\"auth\", algorithm=SHA-256";
+    }
     return raw_scheme;
 }
 

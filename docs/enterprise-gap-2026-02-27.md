@@ -84,6 +84,9 @@
     - startup runtime policy snapshot emission (`startup_config`) with structured server config details and `serve_failed` capture.
 - Security failure-mode hardening:
   - unauthorized responses now include `WWW-Authenticate: Bearer`.
+  - HTTP auth challenges now emit richer scheme-specific `WWW-Authenticate` details:
+    - Basic: `Basic realm="zigmund"`,
+    - Digest: `Digest realm="zigmund", qop="auth", algorithm=SHA-256`.
 - OpenAPI hardening:
   - response-model schemas are deduplicated under `components.schemas`,
   - route responses now use `$ref` to component schemas,
@@ -227,6 +230,7 @@
   - observability request-id/telemetry behavior,
   - dependency cleanup lifecycle,
   - unauthorized header behavior,
+  - scheme-specific auth challenge behavior for Basic/Digest unauthorized and insufficient-scope responses,
   - OpenAPI components + operation-id stability,
   - OpenAPI deterministic ordering and extension-hook behavior (including invalid extension key/JSON rejection),
   - runtime body-limit + shutdown behavior,

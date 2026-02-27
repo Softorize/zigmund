@@ -142,6 +142,7 @@ pub const Registry = struct {
 
             const maybe_value = entry.resolver(req, allocator) catch |err| switch (err) {
                 error.Unauthorized => return error.Unauthorized,
+                error.InsufficientScope => return error.InsufficientScope,
                 else => return error.DependencyExecutionFailed,
             };
 
