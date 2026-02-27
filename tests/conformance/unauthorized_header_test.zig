@@ -32,6 +32,20 @@ fn securityProtected(
     });
 }
 
+fn customUnauthorizedHandler(req: *const zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    var res = zigmund.Response.text("custom unauthorized").withStatus(.unauthorized);
+    try res.setHeader(allocator, "x-auth-handler", "unauthorized");
+    return res;
+}
+
+fn customInsufficientScopeHandler(req: *const zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    var res = zigmund.Response.text("custom insufficient_scope").withStatus(.forbidden);
+    try res.setHeader(allocator, "x-auth-handler", "insufficient_scope");
+    return res;
+}
+
 test "unauthorized responses include WWW-Authenticate header" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "unauthorized-header",
@@ -179,5 +193,45 @@ test "api key auth failures return forbidden without bearer challenge headers" {
     var insufficient = try client.get("/api-key-scope");
     defer insufficient.deinit(std.testing.allocator);
     try std.testing.expectEqual(.forbidden, insufficient.status);
+    try std.testing.expect(insufficient.header("www-authenticate") == null);
+}
+
+test "custom auth failure handlers override default unauthorized and insufficient-scope responses" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "custom-auth-failures",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    app.setUnauthorizedHandler(customUnauthorizedHandler);
+    app.setInsufficientScopeHandler(customInsufficientScopeHandler);
+
+    try app.addDependency("auth", authDependency);
+    try app.get("/unauthorized", protected, .{
+        .dependencies = &.{.{ .name = "auth" }},
+    });
+
+    try app.addDependency("scope", scopeFailDependency);
+    try app.get("/insufficient", protected, .{
+        .dependencies = &.{.{
+            .name = "scope",
+            .scopes = &.{"admin"},
+        }},
+    });
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var unauthorized = try client.get("/unauthorized");
+    defer unauthorized.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.unauthorized, unauthorized.status);
+    try std.testing.expectEqualStrings("custom unauthorized", unauthorized.body);
+    try std.testing.expectEqualStrings("unauthorized", unauthorized.header("x-auth-handler").?);
+    try std.testing.expect(unauthorized.header("www-authenticate") == null);
+
+    var insufficient = try client.get("/insufficient");
+    defer insufficient.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.forbidden, insufficient.status);
+    try std.testing.expectEqualStrings("custom insufficient_scope", insufficient.body);
+    try std.testing.expectEqualStrings("insufficient_scope", insufficient.header("x-auth-handler").?);
     try std.testing.expect(insufficient.header("www-authenticate") == null);
 }

@@ -29,6 +29,8 @@ pub const App = struct {
     access_log_sink: ?AccessLogFn = null,
     metrics_sink: ?MetricsFn = null,
     audit_sink: ?AuditFn = null,
+    unauthorized_handler: ?AuthFailureFn = null,
+    insufficient_scope_handler: ?AuthFailureFn = null,
     metrics: metrics_registry.Registry,
     trace_context_header: ?[]u8 = null,
     openapi_cache: ?[]u8 = null,
@@ -44,6 +46,7 @@ pub const App = struct {
     const AccessLogFn = *const fn (AccessLogEvent, std.mem.Allocator) anyerror!void;
     const MetricsFn = *const fn (MetricsEvent, std.mem.Allocator) anyerror!void;
     const AuditFn = *const fn (AuditEvent, std.mem.Allocator) anyerror!void;
+    const AuthFailureFn = *const fn (*const Request, std.mem.Allocator) anyerror!Response;
 
     pub const TelemetryEvent = struct {
         request_id: []const u8,
@@ -259,6 +262,14 @@ pub const App = struct {
 
     pub fn setAuditSink(self: *App, sink: anytype) void {
         self.audit_sink = normalizeAuditSink(sink);
+    }
+
+    pub fn setUnauthorizedHandler(self: *App, handler: anytype) void {
+        self.unauthorized_handler = normalizeAuthFailureHandler(handler);
+    }
+
+    pub fn setInsufficientScopeHandler(self: *App, handler: anytype) void {
+        self.insufficient_scope_handler = normalizeAuthFailureHandler(handler);
     }
 
     pub fn enableJsonTelemetrySink(self: *App) void {
@@ -603,8 +614,8 @@ pub const App = struct {
                         else => {},
                     }
                     var dep_response = switch (err) {
-                        error.Unauthorized => self.unauthorizedResponseForWebSocket(ws_route.options),
-                        error.InsufficientScope => self.insufficientScopeResponseForWebSocket(ws_route.options),
+                        error.Unauthorized => self.unauthorizedResponseForWebSocket(&req, ws_route.options),
+                        error.InsufficientScope => self.insufficientScopeResponseForWebSocket(&req, ws_route.options),
                         else => dependencyErrorToResponse(self.allocator, err),
                     };
                     defer dep_response.deinit(self.allocator);
@@ -847,11 +858,11 @@ pub const App = struct {
             self.dependency_registry.runRouteDependencies(req, runtime_deps.items, self.allocator) catch |err| {
                 if (err == error.Unauthorized) {
                     self.emitAuthAudit(req, "http_unauthorized", "dependency");
-                    return self.unauthorizedResponseForRoute(route.options);
+                    return self.unauthorizedResponseForRoute(req, route.options);
                 }
                 if (err == error.InsufficientScope) {
                     self.emitAuthAudit(req, "http_insufficient_scope", "dependency");
-                    return self.insufficientScopeResponseForRoute(route.options);
+                    return self.insufficientScopeResponseForRoute(req, route.options);
                 }
                 return dependencyErrorToResponse(self.allocator, err);
             };
@@ -865,11 +876,11 @@ pub const App = struct {
                 }
                 if (err == error.Unauthorized) {
                     self.emitAuthAudit(req, "http_unauthorized", "handler");
-                    return self.unauthorizedResponseForRoute(route.options);
+                    return self.unauthorizedResponseForRoute(req, route.options);
                 }
                 if (err == error.InsufficientScope) {
                     self.emitAuthAudit(req, "http_insufficient_scope", "handler");
-                    return self.insufficientScopeResponseForRoute(route.options);
+                    return self.insufficientScopeResponseForRoute(req, route.options);
                 }
                 if (err == error.DependencyCycleDetected) {
                     return Response.text("dependency cycle detected").withStatus(.internal_server_error);
@@ -1571,7 +1582,18 @@ pub const App = struct {
         response.owned_body = payload;
     }
 
-    fn unauthorizedResponseForRoute(self: *const App, route_options: types.StoredRouteOptions) Response {
+    fn unauthorizedResponseForRoute(
+        self: *const App,
+        req: *const Request,
+        route_options: types.StoredRouteOptions,
+    ) Response {
+        if (self.unauthorized_handler) |handler| {
+            return handler(req, self.allocator) catch |err| {
+                std.log.warn("unauthorized handler failed: {s}", .{@errorName(err)});
+                return Response.text("internal server error").withStatus(.internal_server_error);
+            };
+        }
+
         const auth_style = self.routeSecurityStyle(route_options);
         const status: std.http.Status = if (auth_style == .api_key) .forbidden else .unauthorized;
         var response = Response.text(if (status == .forbidden) "forbidden" else "unauthorized").withStatus(status);
@@ -1584,7 +1606,18 @@ pub const App = struct {
         return response;
     }
 
-    fn unauthorizedResponseForWebSocket(self: *const App, route_options: types.WebSocketRouteOptions) Response {
+    fn unauthorizedResponseForWebSocket(
+        self: *const App,
+        req: *const Request,
+        route_options: types.WebSocketRouteOptions,
+    ) Response {
+        if (self.unauthorized_handler) |handler| {
+            return handler(req, self.allocator) catch |err| {
+                std.log.warn("unauthorized handler failed: {s}", .{@errorName(err)});
+                return Response.text("internal server error").withStatus(.internal_server_error);
+            };
+        }
+
         const auth_style = self.dependenciesSecurityStyle(route_options.dependencies);
         const status: std.http.Status = if (auth_style == .api_key) .forbidden else .unauthorized;
         var response = Response.text(if (status == .forbidden) "forbidden" else "unauthorized").withStatus(status);
@@ -1597,7 +1630,18 @@ pub const App = struct {
         return response;
     }
 
-    fn insufficientScopeResponseForRoute(self: *const App, route_options: types.StoredRouteOptions) Response {
+    fn insufficientScopeResponseForRoute(
+        self: *const App,
+        req: *const Request,
+        route_options: types.StoredRouteOptions,
+    ) Response {
+        if (self.insufficient_scope_handler) |handler| {
+            return handler(req, self.allocator) catch |err| {
+                std.log.warn("insufficient-scope handler failed: {s}", .{@errorName(err)});
+                return Response.text("internal server error").withStatus(.internal_server_error);
+            };
+        }
+
         const challenge_base_opt = self.routeSecurityChallenge(route_options);
         const auth_style = self.routeSecurityStyle(route_options);
         if (challenge_base_opt == null and auth_style == .api_key) {
@@ -1650,8 +1694,16 @@ pub const App = struct {
 
     fn insufficientScopeResponseForWebSocket(
         self: *const App,
+        req: *const Request,
         route_options: types.WebSocketRouteOptions,
     ) Response {
+        if (self.insufficient_scope_handler) |handler| {
+            return handler(req, self.allocator) catch |err| {
+                std.log.warn("insufficient-scope handler failed: {s}", .{@errorName(err)});
+                return Response.text("internal server error").withStatus(.internal_server_error);
+            };
+        }
+
         const challenge_base_opt = self.dependenciesSecurityChallenge(route_options.dependencies);
         const auth_style = self.dependenciesSecurityStyle(route_options.dependencies);
         if (challenge_base_opt == null and auth_style == .api_key) {
@@ -1829,6 +1881,18 @@ pub const App = struct {
         @compileError("Audit sink must be fn(App.AuditEvent, std.mem.Allocator) !void");
     }
 
+    fn normalizeAuthFailureHandler(handler: anytype) AuthFailureFn {
+        const T = @TypeOf(handler);
+        if (T == AuthFailureFn) return handler;
+        if (@typeInfo(T) == .@"fn") {
+            if (comptime isAuthFailureHandlerType(T)) {
+                const ptr: AuthFailureFn = &handler;
+                return ptr;
+            }
+        }
+        @compileError("Auth failure handler must be fn(*const Request, std.mem.Allocator) !Response");
+    }
+
     fn isTelemetrySinkType(comptime T: type) bool {
         if (@typeInfo(T) != .@"fn") return false;
         const info = @typeInfo(T).@"fn";
@@ -1872,6 +1936,18 @@ pub const App = struct {
         if (info.params[0].type != AuditEvent) return false;
         if (info.params[1].type != std.mem.Allocator) return false;
         return isVoidOrErrorVoid(info.return_type orelse return false);
+    }
+
+    fn isAuthFailureHandlerType(comptime T: type) bool {
+        if (@typeInfo(T) != .@"fn") return false;
+        const info = @typeInfo(T).@"fn";
+        if (info.params.len != 2) return false;
+        if (info.params[0].type != *const Request) return false;
+        if (info.params[1].type != std.mem.Allocator) return false;
+
+        const return_type = info.return_type orelse return false;
+        if (@typeInfo(return_type) != .error_union) return false;
+        return @typeInfo(return_type).error_union.payload == Response;
     }
 
     fn docsHtml(self: *App) ![]const u8 {

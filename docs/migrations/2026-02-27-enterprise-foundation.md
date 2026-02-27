@@ -110,6 +110,11 @@
      - `fn(ValueType) !void`,
      - `fn(ValueType, *Request) !void`.
    - failed hooks now emit 422 validation issues with `type="model_validator"` and structured error-name input.
+28. Auth failure handler extension:
+   - reusable auth failure handlers can now be registered on `App`:
+     - `setUnauthorizedHandler(...)`,
+     - `setInsufficientScopeHandler(...)`.
+   - when configured, handlers override default unauthorized/insufficient-scope response construction (HTTP + websocket handshake paths).
 
 ## Migration Actions
 
@@ -147,6 +152,7 @@
 19. If downstream OpenAPI consumers lint/enforce vendor extensions, allowlist `x-zigmund-route-policy` for routes that configure strictness or HTTP guardrails.
 20. If your response-model types require custom serialization logic, migrate from handler-local ad hoc JSON mutation to model-local `zigmund_response_transform(...)` hooks for deterministic post-handler shaping.
 21. If request payload/domain validation previously lived only in handlers, migrate it into model-local `zigmund_validate(...)` hooks to produce standardized 422 validation issue payloads.
+22. If your platform requires custom auth failure envelopes/headers, migrate from middleware-based response patching to `setUnauthorizedHandler(...)` / `setInsufficientScopeHandler(...)` for deterministic security failure responses.
 
 ## Compatibility Notes
 

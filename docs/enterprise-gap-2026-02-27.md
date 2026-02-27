@@ -94,6 +94,7 @@
 - Security failure-mode hardening:
   - unauthorized responses now include `WWW-Authenticate: Bearer`.
   - API-key secured dependency failures now return `403 Forbidden` without bearer challenge fallback headers (HTTP + websocket handshake paths).
+  - reusable auth failure handlers are now available on `App` (`setUnauthorizedHandler`, `setInsufficientScopeHandler`) for enterprise-specific response envelopes/headers across HTTP and websocket handshake paths.
   - HTTP auth challenges now emit richer scheme-specific `WWW-Authenticate` details:
     - Basic: `Basic realm="zigmund"`,
     - Digest: `Digest realm="zigmund", qop="auth", algorithm=SHA-256`.
