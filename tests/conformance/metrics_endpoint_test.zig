@@ -102,6 +102,41 @@ test "metrics endpoint supports custom path" {
     try std.testing.expectEqual(.not_found, missing.status);
 }
 
+test "metrics endpoint aggregates parameterized route metrics by template path" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "metrics-template-path",
+        .version = "0.0.1",
+        .metrics_url = "/metrics",
+    });
+    defer app.deinit();
+
+    try app.get("/items/{item_id}", okHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var first = try client.get("/items/42");
+    defer first.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, first.status);
+
+    var second = try client.get("/items/999");
+    defer second.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, second.status);
+
+    var metrics = try client.get("/metrics");
+    defer metrics.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, metrics.status);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        metrics.body,
+        "zigmund_http_requests_total{method=\"GET\",path=\"/items/{item_id}\",status=\"200\"} 2",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        metrics.body,
+        "zigmund_http_request_latency_us_count{method=\"GET\",path=\"/items/{item_id}\",status=\"200\"} 2",
+    ) != null);
+}
+
 test "json sink adapters can be enabled directly on app" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "json-sinks",

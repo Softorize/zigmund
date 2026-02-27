@@ -771,6 +771,9 @@ pub const App = struct {
         }
 
         if (try self.router.findHttp(req)) |route| {
+            req.setDependencyValueBorrowed("zigmund.route.path_template", route.path) catch |err| {
+                std.log.warn("failed to set route template dependency: {s}", .{@errorName(err)});
+            };
             self.seedRouteValidationMode(req, route.options);
             defer req.runDependencyCleanups(self.allocator) catch |err| {
                 std.log.err("dependency cleanup failed: {s}", .{@errorName(err)});
@@ -1181,12 +1184,13 @@ pub const App = struct {
         if (self.telemetry_sink == null and !self.cfg.structured_telemetry_logs) return;
 
         const trace_identity = buildTraceIdentity(req);
+        const path = observabilityPath(req);
         const event: TelemetryEvent = .{
             .request_id = req.requestId() orelse "",
             .trace_id = trace_identity.trace_id,
             .span_id = trace_identity.span_id,
             .method = req.method,
-            .path = req.path,
+            .path = path,
             .status = status,
             .latency_us = latency_us,
         };
@@ -1209,13 +1213,14 @@ pub const App = struct {
         if (self.trace_sink == null and !self.cfg.structured_trace_logs) return;
 
         const trace_identity = buildTraceIdentity(req);
+        const path = observabilityPath(req);
         const event: TraceEvent = .{
             .request_id = req.requestId() orelse "",
             .trace_context = trace_identity.trace_context,
             .trace_id = trace_identity.trace_id,
             .span_id = trace_identity.span_id,
             .method = req.method,
-            .path = req.path,
+            .path = path,
             .status = status,
             .latency_us = latency_us,
         };
@@ -1243,6 +1248,7 @@ pub const App = struct {
         else
             "";
         const trace_identity = buildTraceIdentity(req);
+        const path = observabilityPath(req);
 
         const event: AccessLogEvent = .{
             .request_id = req.requestId() orelse "",
@@ -1250,7 +1256,7 @@ pub const App = struct {
             .trace_id = trace_identity.trace_id,
             .span_id = trace_identity.span_id,
             .method = req.method,
-            .path = req.path,
+            .path = path,
             .status = status,
             .latency_us = latency_us,
             .remote_addr = remote_addr,
@@ -1275,9 +1281,10 @@ pub const App = struct {
         const collect_registry = self.cfg.metrics_url != null;
         const emit_sink_or_logs = self.metrics_sink != null or self.cfg.structured_metrics_logs;
         if (!collect_registry and !emit_sink_or_logs) return;
+        const path = observabilityPath(req);
 
         if (collect_registry) {
-            self.metrics.observe(req.method, req.path, status, latency_us) catch |err| {
+            self.metrics.observe(req.method, path, status, latency_us) catch |err| {
                 std.log.warn("metrics registry observe failed: {s}", .{@errorName(err)});
             };
         }
@@ -1286,7 +1293,7 @@ pub const App = struct {
             .name = "zigmund_http_requests_total",
             .value = 1,
             .method = req.method,
-            .path = req.path,
+            .path = path,
             .status = status,
             .latency_us = latency_us,
         };
@@ -1295,7 +1302,7 @@ pub const App = struct {
             .name = "zigmund_http_request_latency_us",
             .value = @as(f64, @floatFromInt(latency_us)),
             .method = req.method,
-            .path = req.path,
+            .path = path,
             .status = status,
             .latency_us = latency_us,
         };
@@ -1811,6 +1818,10 @@ fn elapsedMicros(start_ns: i128) u64 {
     const now_ns = std.time.nanoTimestamp();
     const latency_ns: i128 = if (now_ns > start_ns) now_ns - start_ns else 0;
     return @intCast(@divFloor(latency_ns, 1_000));
+}
+
+fn observabilityPath(req: *const Request) []const u8 {
+    return req.dependency("zigmund.route.path_template") orelse req.path;
 }
 
 fn isJsonContentType(content_type: []const u8) bool {

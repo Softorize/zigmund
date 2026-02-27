@@ -20,6 +20,7 @@ var access_log_last_span_id: ?[]u8 = null;
 var access_log_last_user_agent: ?[]u8 = null;
 var metrics_event_count: usize = 0;
 var metrics_last_name: ?[]u8 = null;
+var metrics_last_path: ?[]u8 = null;
 var metrics_last_value: f64 = 0;
 var audit_event_count: usize = 0;
 var audit_last_category: ?[]u8 = null;
@@ -66,6 +67,8 @@ fn resetTelemetryState(allocator: std.mem.Allocator) void {
     metrics_event_count = 0;
     if (metrics_last_name) |name| allocator.free(name);
     metrics_last_name = null;
+    if (metrics_last_path) |path| allocator.free(path);
+    metrics_last_path = null;
     metrics_last_value = 0;
 
     audit_event_count = 0;
@@ -124,7 +127,9 @@ fn accessLogSink(event: zigmund.App.AccessLogEvent, allocator: std.mem.Allocator
 
 fn metricsSink(event: zigmund.App.MetricsEvent, allocator: std.mem.Allocator) !void {
     if (metrics_last_name) |name| allocator.free(name);
+    if (metrics_last_path) |path| allocator.free(path);
     metrics_last_name = try allocator.dupe(u8, event.name);
+    metrics_last_path = try allocator.dupe(u8, event.path);
     metrics_last_value = event.value;
     metrics_event_count += 1;
 }
@@ -212,6 +217,7 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqualStrings("", telemetry_last_span_id.?);
     try std.testing.expectEqual(@as(usize, 2), metrics_event_count);
     try std.testing.expect(std.mem.eql(u8, metrics_last_name.?, "zigmund_http_request_latency_us"));
+    try std.testing.expectEqualStrings("/observe", metrics_last_path.?);
     try std.testing.expect(metrics_last_value >= 0);
 
     const headers = [_]std.http.Header{
@@ -241,6 +247,7 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqualStrings("", access_log_last_span_id.?);
     try std.testing.expectEqualStrings("zigmund-test", access_log_last_user_agent.?);
     try std.testing.expectEqual(@as(usize, 4), metrics_event_count);
+    try std.testing.expectEqualStrings("/observe", metrics_last_path.?);
 }
 
 test "request id propagation can be disabled via app config" {
@@ -350,4 +357,39 @@ test "audit sink receives auth failure events" {
     try std.testing.expectEqual(.forbidden, insufficient.status);
     try std.testing.expectEqual(@as(usize, 2), audit_event_count);
     try std.testing.expectEqualStrings("http_insufficient_scope", audit_last_action.?);
+}
+
+test "observability and metrics sinks use route templates for parameterized paths" {
+    resetTelemetryState(std.testing.allocator);
+    defer resetTelemetryState(std.testing.allocator);
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "observability-path-template",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    app.setTelemetrySink(telemetrySink);
+    app.setMetricsSink(metricsSink);
+    try app.get("/items/{item_id}", observabilityHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var first = try client.get("/items/42");
+    defer first.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, first.status);
+
+    try std.testing.expectEqual(@as(usize, 1), telemetry_event_count);
+    try std.testing.expectEqualStrings("/items/{item_id}", telemetry_last_path.?);
+    try std.testing.expectEqual(@as(usize, 2), metrics_event_count);
+    try std.testing.expectEqualStrings("/items/{item_id}", metrics_last_path.?);
+
+    var second = try client.get("/items/999");
+    defer second.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, second.status);
+
+    try std.testing.expectEqual(@as(usize, 2), telemetry_event_count);
+    try std.testing.expectEqualStrings("/items/{item_id}", telemetry_last_path.?);
+    try std.testing.expectEqual(@as(usize, 4), metrics_event_count);
+    try std.testing.expectEqualStrings("/items/{item_id}", metrics_last_path.?);
 }
