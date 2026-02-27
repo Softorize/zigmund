@@ -94,6 +94,13 @@
    - `RouteOptions` now includes `max_header_bytes` for route-level header-size policy control.
    - runtime route guardrail enforcement now applies route-level header/query/body overrides (`max_header_bytes`, `max_query_bytes`, `max_body_bytes`).
    - `zigmund routes --json` now emits HTTP `max_header_bytes` policy metadata alongside query/body limits.
+25. OpenAPI route-policy metadata extension:
+   - HTTP operations now emit `x-zigmund-route-policy` when route guardrails/strictness are configured.
+   - extension payload includes additive route policy controls:
+     - `strict_validation`,
+     - `max_header_bytes`,
+     - `max_query_bytes`,
+     - `max_body_bytes`.
 
 ## Migration Actions
 
@@ -128,6 +135,7 @@
 16. For OAuth2 helper usage, you can now configure `scopes` on `OAuth2AuthorizationCodeBearer` in the same pattern as other OAuth2 bearer helper types.
 17. If downstream consumers depended on bearer challenge headers for API-key protected routes, update expectations: API-key failures now return `403` without `WWW-Authenticate`.
 18. If you enforce header-size limits per endpoint, migrate to route-level `max_header_bytes` instead of only global `ServerConfig.max_header_bytes`.
+19. If downstream OpenAPI consumers lint/enforce vendor extensions, allowlist `x-zigmund-route-policy` for routes that configure strictness or HTTP guardrails.
 
 ## Compatibility Notes
 

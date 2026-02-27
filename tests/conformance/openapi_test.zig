@@ -17,6 +17,10 @@ test "openapi document includes registered path and method" {
     try app.get("/hello/{item_id}", helloHandler, .{
         .summary = "Hello",
         .tags = &.{"greeting"},
+        .strict_validation = true,
+        .max_header_bytes = 1024,
+        .max_query_bytes = 256,
+        .max_body_bytes = 4096,
         .dependencies = &.{.{ .name = "auth" }},
         .responses = &.{.{ .status_code = .created, .description = "Created" }},
         .response_model = []const u8,
@@ -28,6 +32,7 @@ test "openapi document includes registered path and method" {
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"openapi\":\"3.1.0\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"tags\":[\"greeting\"]") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"x-zigmund-dependencies\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"x-zigmund-route-policy\":{\"strict_validation\":true,\"max_header_bytes\":1024,\"max_query_bytes\":256,\"max_body_bytes\":4096}") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"parameters\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"201\"") != null);
 }

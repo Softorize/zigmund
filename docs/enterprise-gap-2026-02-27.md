@@ -118,6 +118,11 @@
   - `default_response_class` is now wired into OpenAPI response generation:
     - route-level `RouteOptions.default_response_class` maps to default response content type,
     - include-router default (`IncludeRouterOptions.default_response_class`) now propagates to included routes that do not define one.
+  - HTTP operations now emit `x-zigmund-route-policy` when route policy controls are configured:
+    - `strict_validation`,
+    - `max_header_bytes`,
+    - `max_query_bytes`,
+    - `max_body_bytes`.
 - Runtime floor hardening (M1 progress):
   - `ServerConfig` now includes body/connection limits and shutdown/timeout tuning knobs.
   - Separate request-header timeout control added (`ServerConfig.header_timeout_ms`) to close slow-header connections before keepalive idle timeout.

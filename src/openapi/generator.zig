@@ -432,6 +432,43 @@ fn writeHttpOperation(
         try writeJsonString(writer, model_name);
     }
 
+    if (route.options.strict_validation != null or
+        route.options.max_header_bytes != null or
+        route.options.max_query_bytes != null or
+        route.options.max_body_bytes != null)
+    {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "x-zigmund-route-policy");
+        try writer.writeAll("{");
+
+        var wrote_policy_field = false;
+
+        if (route.options.strict_validation) |strict_validation| {
+            try writeFieldName(writer, "strict_validation");
+            try writer.writeAll(if (strict_validation) "true" else "false");
+            wrote_policy_field = true;
+        }
+        if (route.options.max_header_bytes) |max_header| {
+            if (wrote_policy_field) try writer.writeAll(",");
+            try writeFieldName(writer, "max_header_bytes");
+            try writer.print("{d}", .{max_header});
+            wrote_policy_field = true;
+        }
+        if (route.options.max_query_bytes) |max_query| {
+            if (wrote_policy_field) try writer.writeAll(",");
+            try writeFieldName(writer, "max_query_bytes");
+            try writer.print("{d}", .{max_query});
+            wrote_policy_field = true;
+        }
+        if (route.options.max_body_bytes) |max_body| {
+            if (wrote_policy_field) try writer.writeAll(",");
+            try writeFieldName(writer, "max_body_bytes");
+            try writer.print("{d}", .{max_body});
+        }
+
+        try writer.writeAll("}");
+    }
+
     if (route.options.openapi_callbacks.len > 0) {
         try writer.writeAll(",");
         try writeFieldName(writer, "callbacks");
