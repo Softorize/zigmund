@@ -71,6 +71,7 @@ pub fn build(b: *std.Build) void {
         "tests/conformance/provider_injection_runtime_test.zig",
         "tests/conformance/unauthorized_header_test.zig",
         "tests/conformance/openapi_components_operation_id_test.zig",
+        "tests/conformance/openapi_customization_test.zig",
         "tests/conformance/websocket_security_test.zig",
         "tests/conformance/runtime_server_limits_test.zig",
         "tests/conformance/runtime_tls_config_test.zig",

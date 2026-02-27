@@ -8,6 +8,17 @@ const ComponentSchema = struct {
     schema: types.OpenApiSchema,
 };
 
+const deterministic_http_method_order = [_]types.RouteMethod{
+    .GET,
+    .POST,
+    .PUT,
+    .PATCH,
+    .DELETE,
+    .OPTIONS,
+    .HEAD,
+    .TRACE,
+};
+
 pub fn generate(
     allocator: std.mem.Allocator,
     cfg: types.AppConfig,
@@ -27,6 +38,11 @@ pub fn generate(
     var response_components: std.ArrayList(ComponentSchema) = .empty;
     defer response_components.deinit(allocator);
     try collectResponseComponents(allocator, &response_components, http_routes);
+
+    if (cfg.openapi_deterministic) {
+        std.mem.sort([]const u8, unique_paths.items, {}, lessThanString);
+        std.mem.sort(ComponentSchema, response_components.items, {}, lessThanComponentSchema);
+    }
 
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
@@ -75,180 +91,44 @@ pub fn generate(
 
         var field_count: usize = 0;
 
-        for (http_routes) |route| {
-            if (!std.mem.eql(u8, route.path, path)) continue;
-            if (!route.options.include_in_schema) continue;
-            if (field_count != 0) try writer.writeAll(",");
-            field_count += 1;
-
-            try writeJsonString(&writer, route.method.asString());
-            try writer.writeAll(":{");
-
-            var owned_operation_id: ?[]u8 = null;
-            defer {
-                if (owned_operation_id) |op_id| allocator.free(op_id);
-            }
-
-            const operation_id = route.options.operation_id orelse route.options.name orelse blk: {
-                const generated = try buildDefaultHttpOperationId(allocator, route.method, route.path);
-                owned_operation_id = generated;
-                break :blk generated;
-            };
-            const summary = route.options.summary orelse operation_id;
-            const description = route.options.description orelse "";
-
-            try writeFieldName(&writer, "operationId");
-            try writeJsonString(&writer, operation_id);
-            try writer.writeAll(",");
-
-            try writeFieldName(&writer, "summary");
-            try writeJsonString(&writer, summary);
-            try writer.writeAll(",");
-
-            try writeFieldName(&writer, "description");
-            try writeJsonString(&writer, description);
-            try writer.writeAll(",");
-
-            try writeFieldName(&writer, "deprecated");
-            try writer.writeAll(if (route.options.deprecated) "true" else "false");
-
-            if (route.options.tags.len > 0) {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "tags");
-                try writeStringArray(&writer, route.options.tags);
-            }
-
-            const injected_parameters = route.options.injected_parameters;
-            if (pathParamCount(route.path) > 0 or injected_parameters.len > 0) {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "parameters");
-                try writeOperationParameterArray(&writer, route.path, injected_parameters);
-            }
-
-            const explicit_dependencies = route.options.dependencies;
-            const injected_dependencies = route.options.injected_dependencies;
-            const injected_request_bodies = route.options.injected_request_bodies;
-            if (explicit_dependencies.len + injected_dependencies.len > 0) {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "x-zigmund-dependencies");
-                try writeDependenciesArray(&writer, explicit_dependencies, injected_dependencies);
-
-                if (countRouteSecurityRequirements(
-                    explicit_dependencies,
-                    injected_dependencies,
-                    security_schemes,
-                ) > 0) {
-                    try writer.writeAll(",");
-                    try writeFieldName(&writer, "security");
-                    try writeRouteSecurity(
+        if (cfg.openapi_deterministic) {
+            for (deterministic_http_method_order) |method| {
+                for (http_routes) |route| {
+                    if (!std.mem.eql(u8, route.path, path)) continue;
+                    if (route.method != method) continue;
+                    if (!route.options.include_in_schema) continue;
+                    if (field_count != 0) try writer.writeAll(",");
+                    field_count += 1;
+                    try writeHttpOperation(
                         &writer,
-                        explicit_dependencies,
-                        injected_dependencies,
+                        allocator,
+                        route,
                         security_schemes,
+                        response_components.items,
                     );
                 }
             }
-
-            if (injected_request_bodies.len > 0) {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "requestBody");
-                try writeInjectedRequestBody(
+        } else {
+            for (http_routes) |route| {
+                if (!std.mem.eql(u8, route.path, path)) continue;
+                if (!route.options.include_in_schema) continue;
+                if (field_count != 0) try writer.writeAll(",");
+                field_count += 1;
+                try writeHttpOperation(
                     &writer,
-                    injected_request_bodies,
-                    route.options.openapi_request_examples,
+                    allocator,
+                    route,
+                    security_schemes,
+                    response_components.items,
                 );
             }
-
-            if (route.options.response_model_name) |model_name| {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "x-zigmund-response-model");
-                try writeJsonString(&writer, model_name);
-            }
-
-            if (route.options.openapi_callbacks.len > 0) {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "callbacks");
-                try writeOperationCallbacks(&writer, allocator, route.options.openapi_callbacks);
-            }
-
-            try writer.writeAll(",");
-            try writeFieldName(&writer, "responses");
-            const response_component_name = responseComponentName(route.options, response_components.items);
-            try writeResponsesObject(&writer, allocator, route.options, response_component_name);
-
-            try writer.writeAll("}");
         }
 
         for (websocket_routes) |route| {
             if (!std.mem.eql(u8, route.path, path)) continue;
             if (field_count != 0) try writer.writeAll(",");
             field_count += 1;
-
-            try writeFieldName(&writer, "x-zigmund-websocket");
-            try writer.writeAll("{");
-            var owned_ws_operation_id: ?[]u8 = null;
-            defer {
-                if (owned_ws_operation_id) |op_id| allocator.free(op_id);
-            }
-
-            const operation_id = route.options.operation_id orelse route.options.name orelse blk: {
-                const generated = try buildDefaultWebSocketOperationId(allocator, route.path);
-                owned_ws_operation_id = generated;
-                break :blk generated;
-            };
-            try writeFieldName(&writer, "operationId");
-            try writeJsonString(&writer, operation_id);
-            if (route.options.allowed_origins.len > 0) {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "allowedOrigins");
-                try writeStringArray(&writer, route.options.allowed_origins);
-            }
-            if (route.options.subprotocols.len > 0) {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "subprotocols");
-                try writeStringArray(&writer, route.options.subprotocols);
-            }
-            if (route.options.require_subprotocol) {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "requireSubprotocol");
-                try writer.writeAll("true");
-            }
-            if (route.options.ping_interval_ms) |ping_interval_ms| {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "pingIntervalMs");
-                try writer.print("{d}", .{ping_interval_ms});
-            }
-            if (route.options.pong_timeout_ms) |pong_timeout_ms| {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "pongTimeoutMs");
-                try writer.print("{d}", .{pong_timeout_ms});
-            }
-            if (route.options.max_message_bytes) |max_message_bytes| {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "maxMessageBytes");
-                try writer.print("{d}", .{max_message_bytes});
-            }
-            if (route.options.max_pending_messages) |max_pending_messages| {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "maxPendingMessages");
-                try writer.print("{d}", .{max_pending_messages});
-            }
-            if (route.options.send_timeout_ms) |send_timeout_ms| {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "sendTimeoutMs");
-                try writer.print("{d}", .{send_timeout_ms});
-            }
-            if (route.options.idle_timeout_ms) |idle_timeout_ms| {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "idleTimeoutMs");
-                try writer.print("{d}", .{idle_timeout_ms});
-            }
-            if (!route.options.auto_pong) {
-                try writer.writeAll(",");
-                try writeFieldName(&writer, "autoPong");
-                try writer.writeAll("false");
-            }
-            try writer.writeAll("}");
+            try writeWebSocketOperation(&writer, allocator, route);
         }
 
         try writer.writeAll("}");
@@ -261,9 +141,220 @@ pub fn generate(
         try writeFieldName(&writer, "webhooks");
         try writeWebhooks(&writer, allocator, cfg.webhooks);
     }
+    try writeOpenApiExtensions(&writer, allocator, cfg.openapi_extensions);
     try writer.writeAll("}");
 
     return out.toOwnedSlice(allocator);
+}
+
+fn lessThanString(_: void, lhs: []const u8, rhs: []const u8) bool {
+    return std.mem.order(u8, lhs, rhs) == .lt;
+}
+
+fn lessThanComponentSchema(_: void, lhs: ComponentSchema, rhs: ComponentSchema) bool {
+    return std.mem.order(u8, lhs.name, rhs.name) == .lt;
+}
+
+fn writeHttpOperation(
+    writer: anytype,
+    allocator: std.mem.Allocator,
+    route: router_mod.HttpRoute,
+    security_schemes: []const security.NamedScheme,
+    response_components: []const ComponentSchema,
+) !void {
+    try writeJsonString(writer, route.method.asString());
+    try writer.writeAll(":{");
+
+    var owned_operation_id: ?[]u8 = null;
+    defer {
+        if (owned_operation_id) |op_id| allocator.free(op_id);
+    }
+
+    const operation_id = route.options.operation_id orelse route.options.name orelse blk: {
+        const generated = try buildDefaultHttpOperationId(allocator, route.method, route.path);
+        owned_operation_id = generated;
+        break :blk generated;
+    };
+    const summary = route.options.summary orelse operation_id;
+    const description = route.options.description orelse "";
+
+    try writeFieldName(writer, "operationId");
+    try writeJsonString(writer, operation_id);
+    try writer.writeAll(",");
+
+    try writeFieldName(writer, "summary");
+    try writeJsonString(writer, summary);
+    try writer.writeAll(",");
+
+    try writeFieldName(writer, "description");
+    try writeJsonString(writer, description);
+    try writer.writeAll(",");
+
+    try writeFieldName(writer, "deprecated");
+    try writer.writeAll(if (route.options.deprecated) "true" else "false");
+
+    if (route.options.tags.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "tags");
+        try writeStringArray(writer, route.options.tags);
+    }
+
+    const injected_parameters = route.options.injected_parameters;
+    if (pathParamCount(route.path) > 0 or injected_parameters.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "parameters");
+        try writeOperationParameterArray(writer, route.path, injected_parameters);
+    }
+
+    const explicit_dependencies = route.options.dependencies;
+    const injected_dependencies = route.options.injected_dependencies;
+    const injected_request_bodies = route.options.injected_request_bodies;
+    if (explicit_dependencies.len + injected_dependencies.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "x-zigmund-dependencies");
+        try writeDependenciesArray(writer, explicit_dependencies, injected_dependencies);
+
+        if (countRouteSecurityRequirements(
+            explicit_dependencies,
+            injected_dependencies,
+            security_schemes,
+        ) > 0) {
+            try writer.writeAll(",");
+            try writeFieldName(writer, "security");
+            try writeRouteSecurity(
+                writer,
+                explicit_dependencies,
+                injected_dependencies,
+                security_schemes,
+            );
+        }
+    }
+
+    if (injected_request_bodies.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "requestBody");
+        try writeInjectedRequestBody(
+            writer,
+            injected_request_bodies,
+            route.options.openapi_request_examples,
+        );
+    }
+
+    if (route.options.response_model_name) |model_name| {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "x-zigmund-response-model");
+        try writeJsonString(writer, model_name);
+    }
+
+    if (route.options.openapi_callbacks.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "callbacks");
+        try writeOperationCallbacks(writer, allocator, route.options.openapi_callbacks);
+    }
+
+    try writer.writeAll(",");
+    try writeFieldName(writer, "responses");
+    const response_component_name = responseComponentName(route.options, response_components);
+    try writeResponsesObject(writer, allocator, route.options, response_component_name);
+
+    try writeOpenApiExtensions(writer, allocator, route.options.openapi_extensions);
+    try writer.writeAll("}");
+}
+
+fn writeWebSocketOperation(
+    writer: anytype,
+    allocator: std.mem.Allocator,
+    route: router_mod.WebSocketRoute,
+) !void {
+    try writeFieldName(writer, "x-zigmund-websocket");
+    try writer.writeAll("{");
+    var owned_ws_operation_id: ?[]u8 = null;
+    defer {
+        if (owned_ws_operation_id) |op_id| allocator.free(op_id);
+    }
+
+    const operation_id = route.options.operation_id orelse route.options.name orelse blk: {
+        const generated = try buildDefaultWebSocketOperationId(allocator, route.path);
+        owned_ws_operation_id = generated;
+        break :blk generated;
+    };
+    try writeFieldName(writer, "operationId");
+    try writeJsonString(writer, operation_id);
+    if (route.options.allowed_origins.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "allowedOrigins");
+        try writeStringArray(writer, route.options.allowed_origins);
+    }
+    if (route.options.subprotocols.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "subprotocols");
+        try writeStringArray(writer, route.options.subprotocols);
+    }
+    if (route.options.require_subprotocol) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "requireSubprotocol");
+        try writer.writeAll("true");
+    }
+    if (route.options.ping_interval_ms) |ping_interval_ms| {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "pingIntervalMs");
+        try writer.print("{d}", .{ping_interval_ms});
+    }
+    if (route.options.pong_timeout_ms) |pong_timeout_ms| {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "pongTimeoutMs");
+        try writer.print("{d}", .{pong_timeout_ms});
+    }
+    if (route.options.max_message_bytes) |max_message_bytes| {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "maxMessageBytes");
+        try writer.print("{d}", .{max_message_bytes});
+    }
+    if (route.options.max_pending_messages) |max_pending_messages| {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "maxPendingMessages");
+        try writer.print("{d}", .{max_pending_messages});
+    }
+    if (route.options.send_timeout_ms) |send_timeout_ms| {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "sendTimeoutMs");
+        try writer.print("{d}", .{send_timeout_ms});
+    }
+    if (route.options.idle_timeout_ms) |idle_timeout_ms| {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "idleTimeoutMs");
+        try writer.print("{d}", .{idle_timeout_ms});
+    }
+    if (!route.options.auto_pong) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "autoPong");
+        try writer.writeAll("false");
+    }
+
+    try writeOpenApiExtensions(writer, allocator, route.options.openapi_extensions);
+    try writer.writeAll("}");
+}
+
+fn writeOpenApiExtensions(
+    writer: anytype,
+    allocator: std.mem.Allocator,
+    extensions: []const types.OpenApiExtension,
+) !void {
+    for (extensions) |extension| {
+        if (!isValidOpenApiExtensionKey(extension.key)) return error.InvalidOpenApiExtensionKey;
+        const valid_json = try std.json.Scanner.validate(allocator, extension.value_json);
+        if (!valid_json) return error.InvalidOpenApiExtensionJson;
+
+        try writer.writeAll(",");
+        try writeJsonString(writer, extension.key);
+        try writer.writeAll(":");
+        try writer.writeAll(extension.value_json);
+    }
+}
+
+fn isValidOpenApiExtensionKey(key: []const u8) bool {
+    if (key.len < 3) return false;
+    return std.ascii.toLower(key[0]) == 'x' and key[1] == '-';
 }
 
 fn appendUniquePath(allocator: std.mem.Allocator, list: *std.ArrayList([]const u8), path: []const u8) !void {

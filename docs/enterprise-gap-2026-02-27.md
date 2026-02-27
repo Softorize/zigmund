@@ -86,6 +86,14 @@
   - response-model schemas are deduplicated under `components.schemas`,
   - route responses now use `$ref` to component schemas,
   - default operation IDs are now stable (`<method>_<normalized_path>`, websocket equivalent).
+  - deterministic OpenAPI generation mode is now available via `AppConfig.openapi_deterministic`:
+    - sorted `paths`,
+    - sorted response-model `components.schemas`,
+    - stable HTTP method emission order per path.
+  - OpenAPI extension hooks now support custom `x-*` JSON fields at app and route levels:
+    - app-level: `AppConfig.openapi_extensions`,
+    - route-level: `RouteOptions.openapi_extensions`,
+    - websocket-route-level: `WebSocketRouteOptions.openapi_extensions`.
   - advanced OpenAPI objects now supported:
     - route-level `callbacks`,
     - top-level `webhooks` via `AppConfig.webhooks`,
@@ -195,6 +203,7 @@
   - dependency cleanup lifecycle,
   - unauthorized header behavior,
   - OpenAPI components + operation-id stability,
+  - OpenAPI deterministic ordering and extension-hook behavior (including invalid extension key/JSON rejection),
   - runtime body-limit + shutdown behavior,
   - runtime header-limit enforcement behavior,
   - runtime query-limit enforcement behavior,

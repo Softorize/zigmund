@@ -43,6 +43,8 @@ pub const AppConfig = struct {
     structured_trace_logs: bool = false,
     structured_metrics_logs: bool = false,
     structured_audit_logs: bool = false,
+    openapi_deterministic: bool = false,
+    openapi_extensions: []const OpenApiExtension = &.{},
     webhooks: []const OpenApiWebhook = &.{},
 };
 
@@ -158,6 +160,11 @@ pub const OpenApiExample = struct {
     value_json: []const u8,
 };
 
+pub const OpenApiExtension = struct {
+    key: []const u8,
+    value_json: []const u8,
+};
+
 pub const OpenApiResponseExamples = struct {
     status_code: std.http.Status,
     content_type: []const u8 = "application/json",
@@ -241,6 +248,7 @@ pub const RouteOptions = struct {
     openapi_request_examples: []const OpenApiExample = &.{},
     openapi_response_examples: []const OpenApiResponseExamples = &.{},
     openapi_callbacks: []const OpenApiCallback = &.{},
+    openapi_extensions: []const OpenApiExtension = &.{},
     strict_validation: ?bool = null,
     max_query_bytes: ?usize = null,
     max_body_bytes: ?usize = null,
@@ -262,6 +270,7 @@ pub const StoredRouteOptions = struct {
     openapi_request_examples: []const OpenApiExample = &.{},
     openapi_response_examples: []const OpenApiResponseExamples = &.{},
     openapi_callbacks: []const OpenApiCallback = &.{},
+    openapi_extensions: []const OpenApiExtension = &.{},
     response_model_field_rules: []const ResponseModelFieldRule = &.{},
     response_model_include: []const []const u8 = &.{},
     response_model_exclude: []const []const u8 = &.{},
@@ -295,6 +304,7 @@ pub fn storeRouteOptions(opts: RouteOptions) StoredRouteOptions {
         .openapi_request_examples = opts.openapi_request_examples,
         .openapi_response_examples = opts.openapi_response_examples,
         .openapi_callbacks = opts.openapi_callbacks,
+        .openapi_extensions = opts.openapi_extensions,
         .response_model_field_rules = if (opts.response_model) |T| deriveResponseModelFieldRules(T) else &.{},
         .response_model_include = opts.response_model_include,
         .response_model_exclude = opts.response_model_exclude,
@@ -332,6 +342,7 @@ pub const WebSocketRouteOptions = struct {
     dependencies: []const DependencySpec = &.{},
     deprecated: bool = false,
     operation_id: ?[]const u8 = null,
+    openapi_extensions: []const OpenApiExtension = &.{},
 };
 
 pub const IncludeRouterOptions = struct {

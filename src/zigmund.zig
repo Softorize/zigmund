@@ -31,6 +31,7 @@ pub const OpenApiSchema = core.OpenApiSchema;
 pub const OpenApiSchemaField = core.OpenApiSchemaField;
 pub const OpenApiDiscriminatorMapping = core.OpenApiDiscriminatorMapping;
 pub const OpenApiExample = core.OpenApiExample;
+pub const OpenApiExtension = core.OpenApiExtension;
 pub const OpenApiResponseExamples = core.OpenApiResponseExamples;
 pub const OpenApiCallback = core.OpenApiCallback;
 pub const OpenApiWebhook = core.OpenApiWebhook;

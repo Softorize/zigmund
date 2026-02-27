@@ -21,6 +21,7 @@ pub const OpenApiSchema = @import("types.zig").OpenApiSchema;
 pub const OpenApiSchemaField = @import("types.zig").OpenApiSchemaField;
 pub const OpenApiDiscriminatorMapping = @import("types.zig").OpenApiDiscriminatorMapping;
 pub const OpenApiExample = @import("types.zig").OpenApiExample;
+pub const OpenApiExtension = @import("types.zig").OpenApiExtension;
 pub const OpenApiResponseExamples = @import("types.zig").OpenApiResponseExamples;
 pub const OpenApiCallback = @import("types.zig").OpenApiCallback;
 pub const OpenApiWebhook = @import("types.zig").OpenApiWebhook;
