@@ -192,6 +192,54 @@ test "server enforces max_header_bytes with 431 response" {
     app.requestShutdown();
 }
 
+test "server enforces max_query_bytes with 414 response" {
+    const port = try reservePort();
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "runtime-query-limits",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    const cfg: zigmund.ServerConfig = .{
+        .host = "127.0.0.1",
+        .port = port,
+        .worker_count = 1,
+        .accept_poll_interval_ms = 10,
+        .idle_timeout_ms = 500,
+        .shutdown_grace_period_ms = 200,
+        .max_query_bytes = 8,
+    };
+
+    var serve_ctx: ServeThreadCtx = .{
+        .app = &app,
+        .cfg = cfg,
+    };
+
+    const thread = try std.Thread.spawn(.{}, serveThread, .{&serve_ctx});
+    defer thread.join();
+
+    const address = try std.net.Address.resolveIp("127.0.0.1", port);
+    var stream = try connectWithRetry(address);
+    defer stream.close();
+
+    const request =
+        "GET /search?term=abcdefghijk HTTP/1.1\r\n" ++
+        "Host: 127.0.0.1\r\n" ++
+        "\r\n";
+    try stream.writeAll(request);
+
+    const readable = try waitReadable(stream.handle, 2_000);
+    try std.testing.expect(readable);
+
+    var read_buf: [4096]u8 = undefined;
+    const n = try stream.read(&read_buf);
+    try std.testing.expect(n > 0);
+    try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "414") != null);
+
+    app.requestShutdown();
+}
+
 test "requestShutdown stops server loop gracefully" {
     const port = try reservePort();
 

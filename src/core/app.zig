@@ -457,6 +457,17 @@ pub const App = struct {
         peer_address: std.net.Address,
         socket_fd: std.posix.fd_t,
     ) !void {
+        const query_limit = if (self.active_server_cfg) |cfg| cfg.max_query_bytes else 16 * 1024;
+        if (query_limit != 0 and queryLengthFromTarget(raw_request.head.target) > query_limit) {
+            try raw_request.respond("query string too large", .{
+                .status = .uri_too_long,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "text/plain; charset=utf-8" },
+                },
+            });
+            return;
+        }
+
         const body_limit = if (self.active_server_cfg) |cfg| cfg.max_body_bytes else 8 * 1024 * 1024;
         var req = Request.initFromRawWithBodyLimitAndPeer(
             self.allocator,
@@ -594,6 +605,13 @@ pub const App = struct {
         defer response.deinit(self.allocator);
 
         try sendResponse(raw_request, self.allocator, &response);
+    }
+
+    fn queryLengthFromTarget(target: []const u8) usize {
+        const qmark_idx = std.mem.indexOfScalar(u8, target, '?') orelse return 0;
+        const rest = target[qmark_idx + 1 ..];
+        const fragment_idx = std.mem.indexOfScalar(u8, rest, '#') orelse return rest.len;
+        return rest[0..fragment_idx].len;
     }
 
     fn dispatchWithPipeline(self: *App, req: *Request) !Response {

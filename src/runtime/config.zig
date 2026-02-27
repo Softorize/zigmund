@@ -13,6 +13,7 @@ pub const ServerConfig = struct {
     recv_buffer_size: usize = 16 * 1024,
     send_buffer_size: usize = 16 * 1024,
     max_header_bytes: usize = 64 * 1024,
+    max_query_bytes: usize = 16 * 1024,
     max_body_bytes: usize = 8 * 1024 * 1024,
     max_connections: usize = 0,
     accept_poll_interval_ms: i32 = 250,
