@@ -109,6 +109,7 @@
   - OAuth2 password form helper added (`parseOAuth2PasswordRequestForm` / `OAuth2PasswordRequestForm.fromRequest`) with media-type and `grant_type=password` validation.
   - OAuth2 password form parity expanded with `client_id` and `client_secret` support in parser/form model.
   - OAuth2 helper coverage expanded with `OAuth2ClientCredentialsBearer` and `OAuth2ImplicitBearer` bearer-token resolvers.
+  - OpenID Connect helper resolver now supports bearer-token extraction with `auto_error` parity (`OpenIdConnect.resolve(...)`).
   - auth parsing helpers added for enterprise integrations:
     - `parseAuthorizationHeader(...)`,
     - `bearerTokenFromHeader(...)`,
@@ -207,6 +208,7 @@
   - security scope enforcement for both route dependencies and `Security(...)` marker providers,
   - OAuth2 password request form parsing and grant-type validation behavior,
   - OAuth2 password form client credentials fields and additional OAuth2 bearer helper resolver behavior,
+  - OpenID Connect bearer helper resolver behavior and OpenAPI `openIdConnect` scheme emission,
   - websocket handshake security behavior (`401`/`403`/`101`) with dependency + scope enforcement,
   - websocket audit-event coverage for auth/policy rejection paths (`websocket_unauthorized`, `websocket_insufficient_scope`, `origin_rejected`, `subprotocol_rejected`),
   - docs endpoint behavior for embedded Swagger UI/ReDoc assets and UI option wiring,

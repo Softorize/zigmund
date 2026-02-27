@@ -135,9 +135,13 @@ test "oauth2 client-credentials and implicit helpers resolve bearer token consis
         .authorization_url = "/authorize",
         .scopes = &.{"items:read"},
     };
+    const openid = zigmund.OpenIdConnect{
+        .openid_connect_url = "https://issuer.example/.well-known/openid-configuration",
+    };
 
     try std.testing.expectEqualStrings("tok-client-1", (try client_credentials.resolve(&req)).?);
     try std.testing.expectEqualStrings("tok-client-1", (try implicit.resolve(&req)).?);
+    try std.testing.expectEqualStrings("tok-client-1", (try openid.resolve(&req)).?);
 
     var missing_auth_req = try zigmund.Request.initSynthetic(std.testing.allocator, .GET, "/secure", "");
     defer missing_auth_req.deinit();
@@ -147,4 +151,10 @@ test "oauth2 client-credentials and implicit helpers resolve bearer token consis
         .auto_error = false,
     };
     try std.testing.expect((try no_auto_error.resolve(&missing_auth_req)) == null);
+
+    const openid_no_auto_error = zigmund.OpenIdConnect{
+        .openid_connect_url = "https://issuer.example/.well-known/openid-configuration",
+        .auto_error = false,
+    };
+    try std.testing.expect((try openid_no_auto_error.resolve(&missing_auth_req)) == null);
 }

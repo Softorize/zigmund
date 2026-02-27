@@ -229,6 +229,12 @@ pub const OAuth2AuthorizationCodeBearer = struct {
 
 pub const OpenIdConnect = struct {
     openid_connect_url: []const u8,
+    auto_error: bool = true,
+
+    pub fn resolve(self: OpenIdConnect, req: *const Request) ResolveError!?[]const u8 {
+        _ = self.openid_connect_url;
+        return resolveBearerToken(req, self.auto_error);
+    }
 };
 
 pub const OAuth2PasswordRequestForm = struct {
