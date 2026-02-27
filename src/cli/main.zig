@@ -22,8 +22,11 @@ pub fn main() !void {
     defer app.deinit();
 
     if (std.mem.eql(u8, command, "serve")) {
+        var owned_serve_flags: ServeFlagsOwned = .{};
+        defer owned_serve_flags.deinit(allocator);
+
         var cfg = zigmund.ServerConfig{};
-        try parseServeFlags(&args, &cfg);
+        try parseServeFlags(allocator, &args, &cfg, &owned_serve_flags);
 
         try app.serve(cfg);
         return;
@@ -141,7 +144,21 @@ fn wsEchoHandler(conn: *zigmund.runtime.websocket.Connection, allocator: std.mem
     }
 }
 
-fn parseServeFlags(args: anytype, cfg: *zigmund.ServerConfig) !void {
+const ServeFlagsOwned = struct {
+    trusted_proxy_cidrs: std.ArrayListUnmanaged([]const u8) = .empty,
+
+    fn deinit(self: *ServeFlagsOwned, allocator: std.mem.Allocator) void {
+        for (self.trusted_proxy_cidrs.items) |cidr| allocator.free(cidr);
+        self.trusted_proxy_cidrs.deinit(allocator);
+    }
+};
+
+fn parseServeFlags(
+    allocator: std.mem.Allocator,
+    args: anytype,
+    cfg: *zigmund.ServerConfig,
+    owned: *ServeFlagsOwned,
+) !void {
     var tls_cert: ?[]const u8 = null;
     var tls_key: ?[]const u8 = null;
 
@@ -218,6 +235,26 @@ fn parseServeFlags(args: anytype, cfg: *zigmund.ServerConfig) !void {
 
         if (std.mem.eql(u8, arg, "--no-trusted-proxy-headers")) {
             cfg.trusted_proxy_headers = false;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--trusted-proxy-cidrs")) {
+            const raw_value = args.next() orelse return error.MissingTrustedProxyCidrsValue;
+            var tokens = std.mem.splitScalar(u8, raw_value, ',');
+            var appended: usize = 0;
+
+            while (tokens.next()) |token_raw| {
+                const token = std.mem.trim(u8, token_raw, " \t");
+                if (token.len == 0) continue;
+
+                const owned_cidr = try allocator.dupe(u8, token);
+                errdefer allocator.free(owned_cidr);
+                try owned.trusted_proxy_cidrs.append(allocator, owned_cidr);
+                appended += 1;
+            }
+
+            if (appended == 0) return error.MissingTrustedProxyCidrsValue;
+            cfg.trusted_proxy_cidrs = owned.trusted_proxy_cidrs.items;
             continue;
         }
 
@@ -525,8 +562,8 @@ fn usage() !void {
     try writeStdout(
         "Usage: zigmund <command> [options]\n" ++
             "Commands:\n" ++
-            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
-            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
             "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
             "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>]\n" ++
@@ -929,6 +966,8 @@ test "parse openapi flags supports deterministic out and diff options" {
 
 test "parse serve flags supports header timeout option" {
     var cfg = zigmund.ServerConfig{};
+    var owned: ServeFlagsOwned = .{};
+    defer owned.deinit(std.testing.allocator);
 
     var iter = (try std.process.ArgIteratorGeneral(.{}).init(
         std.testing.allocator,
@@ -936,7 +975,7 @@ test "parse serve flags supports header timeout option" {
     ));
     defer iter.deinit();
 
-    try parseServeFlags(&iter, &cfg);
+    try parseServeFlags(std.testing.allocator, &iter, &cfg, &owned);
     try std.testing.expectEqual(@as(i32, 321), cfg.header_timeout_ms);
     try std.testing.expectEqual(@as(i32, 777), cfg.body_timeout_ms);
     try std.testing.expectEqual(@as(i32, 654), cfg.idle_timeout_ms);
@@ -944,24 +983,47 @@ test "parse serve flags supports header timeout option" {
 
 test "parse serve flags supports trusted proxy header toggles" {
     var enabled_cfg = zigmund.ServerConfig{};
+    var enabled_owned: ServeFlagsOwned = .{};
+    defer enabled_owned.deinit(std.testing.allocator);
     var enabled_iter = (try std.process.ArgIteratorGeneral(.{}).init(
         std.testing.allocator,
         "--trusted-proxy-headers",
     ));
     defer enabled_iter.deinit();
 
-    try parseServeFlags(&enabled_iter, &enabled_cfg);
+    try parseServeFlags(std.testing.allocator, &enabled_iter, &enabled_cfg, &enabled_owned);
     try std.testing.expect(enabled_cfg.trusted_proxy_headers);
 
     var disabled_cfg = zigmund.ServerConfig{ .trusted_proxy_headers = true };
+    var disabled_owned: ServeFlagsOwned = .{};
+    defer disabled_owned.deinit(std.testing.allocator);
     var disabled_iter = (try std.process.ArgIteratorGeneral(.{}).init(
         std.testing.allocator,
         "--no-trusted-proxy-headers",
     ));
     defer disabled_iter.deinit();
 
-    try parseServeFlags(&disabled_iter, &disabled_cfg);
+    try parseServeFlags(std.testing.allocator, &disabled_iter, &disabled_cfg, &disabled_owned);
     try std.testing.expect(!disabled_cfg.trusted_proxy_headers);
+}
+
+test "parse serve flags supports trusted proxy cidr allowlist values" {
+    var cfg = zigmund.ServerConfig{};
+    var owned: ServeFlagsOwned = .{};
+    defer owned.deinit(std.testing.allocator);
+
+    var iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--trusted-proxy-headers --trusted-proxy-cidrs 10.0.0.0/8,192.168.0.0/16 --trusted-proxy-cidrs 127.0.0.1/32",
+    ));
+    defer iter.deinit();
+
+    try parseServeFlags(std.testing.allocator, &iter, &cfg, &owned);
+    try std.testing.expect(cfg.trusted_proxy_headers);
+    try std.testing.expectEqual(@as(usize, 3), cfg.trusted_proxy_cidrs.len);
+    try std.testing.expectEqualStrings("10.0.0.0/8", cfg.trusted_proxy_cidrs[0]);
+    try std.testing.expectEqualStrings("192.168.0.0/16", cfg.trusted_proxy_cidrs[1]);
+    try std.testing.expectEqualStrings("127.0.0.1/32", cfg.trusted_proxy_cidrs[2]);
 }
 
 test "routes json renderer includes operation and dependency metadata" {
