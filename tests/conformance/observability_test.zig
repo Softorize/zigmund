@@ -6,11 +6,17 @@ var telemetry_last_status: ?std.http.Status = null;
 var telemetry_last_latency_us: u64 = 0;
 var telemetry_last_path: ?[]u8 = null;
 var telemetry_last_request_id: ?[]u8 = null;
+var telemetry_last_trace_id: ?[]u8 = null;
+var telemetry_last_span_id: ?[]u8 = null;
 var trace_event_count: usize = 0;
 var trace_last_trace_context: ?[]u8 = null;
 var trace_last_request_id: ?[]u8 = null;
+var trace_last_trace_id: ?[]u8 = null;
+var trace_last_span_id: ?[]u8 = null;
 var access_log_event_count: usize = 0;
 var access_log_last_trace_context: ?[]u8 = null;
+var access_log_last_trace_id: ?[]u8 = null;
+var access_log_last_span_id: ?[]u8 = null;
 var access_log_last_user_agent: ?[]u8 = null;
 var metrics_event_count: usize = 0;
 var metrics_last_name: ?[]u8 = null;
@@ -32,16 +38,28 @@ fn resetTelemetryState(allocator: std.mem.Allocator) void {
 
     if (telemetry_last_request_id) |request_id| allocator.free(request_id);
     telemetry_last_request_id = null;
+    if (telemetry_last_trace_id) |trace_id| allocator.free(trace_id);
+    telemetry_last_trace_id = null;
+    if (telemetry_last_span_id) |span_id| allocator.free(span_id);
+    telemetry_last_span_id = null;
 
     trace_event_count = 0;
     if (trace_last_trace_context) |trace_context| allocator.free(trace_context);
     trace_last_trace_context = null;
     if (trace_last_request_id) |request_id| allocator.free(request_id);
     trace_last_request_id = null;
+    if (trace_last_trace_id) |trace_id| allocator.free(trace_id);
+    trace_last_trace_id = null;
+    if (trace_last_span_id) |span_id| allocator.free(span_id);
+    trace_last_span_id = null;
 
     access_log_event_count = 0;
     if (access_log_last_trace_context) |trace_context| allocator.free(trace_context);
     access_log_last_trace_context = null;
+    if (access_log_last_trace_id) |trace_id| allocator.free(trace_id);
+    access_log_last_trace_id = null;
+    if (access_log_last_span_id) |span_id| allocator.free(span_id);
+    access_log_last_span_id = null;
     if (access_log_last_user_agent) |user_agent| allocator.free(user_agent);
     access_log_last_user_agent = null;
 
@@ -66,9 +84,13 @@ fn resetTelemetryState(allocator: std.mem.Allocator) void {
 fn telemetrySink(event: zigmund.App.TelemetryEvent, allocator: std.mem.Allocator) !void {
     if (telemetry_last_path) |path| allocator.free(path);
     if (telemetry_last_request_id) |request_id| allocator.free(request_id);
+    if (telemetry_last_trace_id) |trace_id| allocator.free(trace_id);
+    if (telemetry_last_span_id) |span_id| allocator.free(span_id);
 
     telemetry_last_path = try allocator.dupe(u8, event.path);
     telemetry_last_request_id = try allocator.dupe(u8, event.request_id);
+    telemetry_last_trace_id = try allocator.dupe(u8, event.trace_id);
+    telemetry_last_span_id = try allocator.dupe(u8, event.span_id);
     telemetry_last_status = event.status;
     telemetry_last_latency_us = event.latency_us;
     telemetry_event_count += 1;
@@ -77,17 +99,25 @@ fn telemetrySink(event: zigmund.App.TelemetryEvent, allocator: std.mem.Allocator
 fn traceSink(event: zigmund.App.TraceEvent, allocator: std.mem.Allocator) !void {
     if (trace_last_trace_context) |trace_context| allocator.free(trace_context);
     if (trace_last_request_id) |request_id| allocator.free(request_id);
+    if (trace_last_trace_id) |trace_id| allocator.free(trace_id);
+    if (trace_last_span_id) |span_id| allocator.free(span_id);
 
     trace_last_trace_context = try allocator.dupe(u8, event.trace_context);
     trace_last_request_id = try allocator.dupe(u8, event.request_id);
+    trace_last_trace_id = try allocator.dupe(u8, event.trace_id);
+    trace_last_span_id = try allocator.dupe(u8, event.span_id);
     trace_event_count += 1;
 }
 
 fn accessLogSink(event: zigmund.App.AccessLogEvent, allocator: std.mem.Allocator) !void {
     if (access_log_last_trace_context) |trace_context| allocator.free(trace_context);
+    if (access_log_last_trace_id) |trace_id| allocator.free(trace_id);
+    if (access_log_last_span_id) |span_id| allocator.free(span_id);
     if (access_log_last_user_agent) |user_agent| allocator.free(user_agent);
 
     access_log_last_trace_context = try allocator.dupe(u8, event.trace_context);
+    access_log_last_trace_id = try allocator.dupe(u8, event.trace_id);
+    access_log_last_span_id = try allocator.dupe(u8, event.span_id);
     access_log_last_user_agent = try allocator.dupe(u8, event.user_agent);
     access_log_event_count += 1;
 }
@@ -118,6 +148,8 @@ fn observabilityHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zi
     return zigmund.Response.json(allocator, .{
         .request_id = req.dependency("request_id") orelse "",
         .trace_context = req.dependency("trace_context") orelse "",
+        .trace_id = req.dependency("trace_id") orelse "",
+        .span_id = req.dependency("span_id") orelse "",
     });
 }
 
@@ -170,8 +202,14 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqual(@as(usize, 1), trace_event_count);
     try std.testing.expectEqualStrings("", trace_last_trace_context.?);
     try std.testing.expectEqualStrings(generated_request_id, trace_last_request_id.?);
+    try std.testing.expectEqualStrings("", trace_last_trace_id.?);
+    try std.testing.expectEqualStrings("", trace_last_span_id.?);
     try std.testing.expectEqual(@as(usize, 1), access_log_event_count);
     try std.testing.expectEqualStrings("", access_log_last_trace_context.?);
+    try std.testing.expectEqualStrings("", access_log_last_trace_id.?);
+    try std.testing.expectEqualStrings("", access_log_last_span_id.?);
+    try std.testing.expectEqualStrings("", telemetry_last_trace_id.?);
+    try std.testing.expectEqualStrings("", telemetry_last_span_id.?);
     try std.testing.expectEqual(@as(usize, 2), metrics_event_count);
     try std.testing.expect(std.mem.eql(u8, metrics_last_name.?, "zigmund_http_request_latency_us"));
     try std.testing.expect(metrics_last_value >= 0);
@@ -190,13 +228,53 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expect(std.mem.indexOf(u8, forwarded.body, "\"trace_context\":\"trace-123\"") != null);
     try std.testing.expectEqual(@as(usize, 2), telemetry_event_count);
     try std.testing.expectEqualStrings("external-request-id-1", telemetry_last_request_id.?);
+    try std.testing.expectEqualStrings("", telemetry_last_trace_id.?);
+    try std.testing.expectEqualStrings("", telemetry_last_span_id.?);
     try std.testing.expectEqual(@as(usize, 2), trace_event_count);
     try std.testing.expectEqualStrings("trace-123", trace_last_trace_context.?);
     try std.testing.expectEqualStrings("external-request-id-1", trace_last_request_id.?);
+    try std.testing.expectEqualStrings("", trace_last_trace_id.?);
+    try std.testing.expectEqualStrings("", trace_last_span_id.?);
     try std.testing.expectEqual(@as(usize, 2), access_log_event_count);
     try std.testing.expectEqualStrings("trace-123", access_log_last_trace_context.?);
+    try std.testing.expectEqualStrings("", access_log_last_trace_id.?);
+    try std.testing.expectEqualStrings("", access_log_last_span_id.?);
     try std.testing.expectEqualStrings("zigmund-test", access_log_last_user_agent.?);
     try std.testing.expectEqual(@as(usize, 4), metrics_event_count);
+}
+
+test "traceparent context populates trace id and span id in dependencies and sinks" {
+    resetTelemetryState(std.testing.allocator);
+    defer resetTelemetryState(std.testing.allocator);
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "observability-traceparent",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    app.setTelemetrySink(telemetrySink);
+    app.setTraceSink(traceSink);
+    app.setAccessLogSink(accessLogSink);
+    try app.get("/observe", observabilityHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    var res = try client.requestWithHeaders(.GET, "/observe", "", &.{
+        .{ .name = "traceparent", .value = traceparent },
+    });
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, res.status);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"trace_context\":\"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"span_id\":\"00f067aa0ba902b7\"") != null);
+    try std.testing.expectEqualStrings("4bf92f3577b34da6a3ce929d0e0e4736", telemetry_last_trace_id.?);
+    try std.testing.expectEqualStrings("00f067aa0ba902b7", telemetry_last_span_id.?);
+    try std.testing.expectEqualStrings("4bf92f3577b34da6a3ce929d0e0e4736", trace_last_trace_id.?);
+    try std.testing.expectEqualStrings("00f067aa0ba902b7", trace_last_span_id.?);
+    try std.testing.expectEqualStrings("4bf92f3577b34da6a3ce929d0e0e4736", access_log_last_trace_id.?);
+    try std.testing.expectEqualStrings("00f067aa0ba902b7", access_log_last_span_id.?);
 }
 
 test "audit sink receives auth failure events" {

@@ -47,6 +47,8 @@ pub const App = struct {
 
     pub const TelemetryEvent = struct {
         request_id: []const u8,
+        trace_id: []const u8,
+        span_id: []const u8,
         method: std.http.Method,
         path: []const u8,
         status: std.http.Status,
@@ -56,6 +58,8 @@ pub const App = struct {
     pub const TraceEvent = struct {
         request_id: []const u8,
         trace_context: []const u8,
+        trace_id: []const u8,
+        span_id: []const u8,
         method: std.http.Method,
         path: []const u8,
         status: std.http.Status,
@@ -65,6 +69,8 @@ pub const App = struct {
     pub const AccessLogEvent = struct {
         request_id: []const u8,
         trace_context: []const u8,
+        trace_id: []const u8,
+        span_id: []const u8,
         method: std.http.Method,
         path: []const u8,
         status: std.http.Status,
@@ -1029,6 +1035,72 @@ pub const App = struct {
         req.setDependencyValue("trace_context", trace_context) catch |err| {
             std.log.warn("failed to set trace_context dependency: {s}", .{@errorName(err)});
         };
+
+        if (parseTraceparent(trace_context)) |parsed| {
+            req.setDependencyValue("trace_id", parsed.trace_id) catch |err| {
+                std.log.warn("failed to set trace_id dependency: {s}", .{@errorName(err)});
+            };
+            req.setDependencyValue("span_id", parsed.span_id) catch |err| {
+                std.log.warn("failed to set span_id dependency: {s}", .{@errorName(err)});
+            };
+            req.setDependencyValue("trace_flags", parsed.trace_flags) catch |err| {
+                std.log.warn("failed to set trace_flags dependency: {s}", .{@errorName(err)});
+            };
+        }
+    }
+
+    const TraceIdentity = struct {
+        trace_context: []const u8,
+        trace_id: []const u8,
+        span_id: []const u8,
+    };
+
+    const ParsedTraceparent = struct {
+        trace_id: []const u8,
+        span_id: []const u8,
+        trace_flags: []const u8,
+    };
+
+    fn buildTraceIdentity(req: *const Request) TraceIdentity {
+        return .{
+            .trace_context = req.dependency("trace_context") orelse "",
+            .trace_id = req.dependency("trace_id") orelse "",
+            .span_id = req.dependency("span_id") orelse "",
+        };
+    }
+
+    fn parseTraceparent(raw_value: []const u8) ?ParsedTraceparent {
+        const value = std.mem.trim(u8, raw_value, " \t");
+        if (value.len != 55) return null;
+        if (value[2] != '-' or value[35] != '-' or value[52] != '-') return null;
+
+        const version = value[0..2];
+        const trace_id = value[3..35];
+        const span_id = value[36..52];
+        const trace_flags = value[53..55];
+
+        if (!allHex(version) or !allHex(trace_id) or !allHex(span_id) or !allHex(trace_flags)) return null;
+        if (allZeros(trace_id) or allZeros(span_id)) return null;
+
+        return .{
+            .trace_id = trace_id,
+            .span_id = span_id,
+            .trace_flags = trace_flags,
+        };
+    }
+
+    fn allHex(value: []const u8) bool {
+        for (value) |ch| {
+            if (!std.ascii.isHex(ch)) return false;
+        }
+        return true;
+    }
+
+    fn allZeros(value: []const u8) bool {
+        for (value) |ch| {
+            if (ch != '0') return false;
+        }
+        return true;
     }
 
     fn finalizeResponse(self: *App, req: *Request, response: *Response, start_ns: i128) void {
@@ -1049,8 +1121,11 @@ pub const App = struct {
     }
 
     fn emitTelemetry(self: *App, req: *const Request, status: std.http.Status, latency_us: u64) void {
+        const trace_identity = buildTraceIdentity(req);
         const event: TelemetryEvent = .{
             .request_id = req.requestId() orelse "",
+            .trace_id = trace_identity.trace_id,
+            .span_id = trace_identity.span_id,
             .method = req.method,
             .path = req.path,
             .status = status,
@@ -1072,9 +1147,12 @@ pub const App = struct {
     }
 
     fn emitTrace(self: *App, req: *const Request, status: std.http.Status, latency_us: u64) void {
+        const trace_identity = buildTraceIdentity(req);
         const event: TraceEvent = .{
             .request_id = req.requestId() orelse "",
-            .trace_context = req.dependency("trace_context") orelse "",
+            .trace_context = trace_identity.trace_context,
+            .trace_id = trace_identity.trace_id,
+            .span_id = trace_identity.span_id,
             .method = req.method,
             .path = req.path,
             .status = status,
@@ -1101,10 +1179,13 @@ pub const App = struct {
             std.fmt.bufPrint(&addr_buf, "{f}", .{peer}) catch ""
         else
             "";
+        const trace_identity = buildTraceIdentity(req);
 
         const event: AccessLogEvent = .{
             .request_id = req.requestId() orelse "",
-            .trace_context = req.dependency("trace_context") orelse "",
+            .trace_context = trace_identity.trace_context,
+            .trace_id = trace_identity.trace_id,
+            .span_id = trace_identity.span_id,
             .method = req.method,
             .path = req.path,
             .status = status,
@@ -2124,9 +2205,11 @@ fn writeJsonString(writer: anytype, value: []const u8) !void {
 fn jsonTelemetrySink(event: App.TelemetryEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
-        "{{\"event\":\"telemetry\",\"request_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
+        "{{\"event\":\"telemetry\",\"request_id\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
         .{
             std.json.fmt(event.request_id, .{}),
+            std.json.fmt(event.trace_id, .{}),
+            std.json.fmt(event.span_id, .{}),
             std.json.fmt(@tagName(event.method), .{}),
             std.json.fmt(event.path, .{}),
             @intFromEnum(event.status),
@@ -2140,10 +2223,12 @@ fn jsonTelemetrySink(event: App.TelemetryEvent, allocator: std.mem.Allocator) !v
 fn jsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
-        "{{\"event\":\"trace\",\"request_id\":{f},\"trace_context\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
+        "{{\"event\":\"trace\",\"request_id\":{f},\"trace_context\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
         .{
             std.json.fmt(event.request_id, .{}),
             std.json.fmt(event.trace_context, .{}),
+            std.json.fmt(event.trace_id, .{}),
+            std.json.fmt(event.span_id, .{}),
             std.json.fmt(@tagName(event.method), .{}),
             std.json.fmt(event.path, .{}),
             @intFromEnum(event.status),
@@ -2157,10 +2242,12 @@ fn jsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator) !void {
 fn jsonAccessLogSink(event: App.AccessLogEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
-        "{{\"event\":\"access_log\",\"request_id\":{f},\"trace_context\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d},\"remote_addr\":{f},\"user_agent\":{f}}}",
+        "{{\"event\":\"access_log\",\"request_id\":{f},\"trace_context\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d},\"remote_addr\":{f},\"user_agent\":{f}}}",
         .{
             std.json.fmt(event.request_id, .{}),
             std.json.fmt(event.trace_context, .{}),
+            std.json.fmt(event.trace_id, .{}),
+            std.json.fmt(event.span_id, .{}),
             std.json.fmt(@tagName(event.method), .{}),
             std.json.fmt(event.path, .{}),
             @intFromEnum(event.status),

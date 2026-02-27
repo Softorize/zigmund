@@ -63,6 +63,7 @@
   - trace sink API (`setTraceSink`) with request/trace context propagation fields.
   - metrics sink API (`setMetricsSink`) emitting request-count and latency events.
   - trace-context propagation hook (`setTraceContextHeader(...)`) with dependency exposure (`trace_context`).
+  - W3C `traceparent` parsing now derives structured trace identity in request context (`trace_id`, `span_id`, `trace_flags`) for OpenTelemetry-friendly propagation.
 - Observability hardening progress (M4 slice):
   - thread-safe in-process metrics registry added and wired into runtime request finalization.
   - optional Prometheus-compatible metrics endpoint added via `AppConfig.metrics_url` (e.g. `/metrics`) with request-count and latency aggregates.
@@ -218,6 +219,7 @@
   - advanced OpenAPI objects (callbacks/webhooks/examples/discriminator composition),
   - observability sinks + trace-context propagation behavior,
   - trace sink propagation behavior (`setTraceSink`) with request-id and trace-context coverage,
+  - traceparent parsing behavior and structured trace-id/span-id propagation in telemetry/trace/access events,
   - proxy extraction policy behavior (including CIDR allowlist),
   - deep response-model include/exclude path shaping,
   - `TestClient` cookie persistence/deletion behavior,
