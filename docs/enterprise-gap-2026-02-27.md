@@ -223,6 +223,9 @@
     - `PARITY_REQUIRED_IMPLEMENTED`,
     - `PARITY_MAX_STUB`,
     - `PARITY_MAX_MISSING`.
+  - release artifact baseline pipeline added:
+    - `tools/release/build_release_artifacts.sh` builds `ReleaseFast` binary, generates SBOM, and emits SHA-256 checksums,
+    - CI now uploads `dist/release/*` artifacts for reproducible release validation.
 - Routing/OpenAPI parity progress:
   - router matching now supports FastAPI-style catch-all path converters (`{file_path:path}`) for HTTP path params.
   - OpenAPI fallback path-parameter generation now strips converter suffixes (e.g. `{file_path:path}` -> parameter name `file_path`).

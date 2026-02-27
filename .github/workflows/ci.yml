@@ -28,8 +28,15 @@ jobs:
         run: zig build run -- sbom --out zigmund.sbom.json
       - name: Governance checks
         run: sh tools/release/check_governance.sh
+      - name: Build release artifacts
+        run: sh tools/release/build_release_artifacts.sh
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
           name: zigmund-sbom
           path: zigmund.sbom.json
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zigmund-release
+          path: dist/release/*

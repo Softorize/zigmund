@@ -2,3 +2,4 @@
 zig-out/
 zigmund.sbom.json
 tools/parity/parity-summary.json
+dist/release/
