@@ -96,6 +96,39 @@ fn tenantHandler(
     });
 }
 
+fn optionalSecurityProvider(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = allocator;
+    return req.queryParam("token");
+}
+
+fn optionalScopedSecurityProvider(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = allocator;
+    const token = req.queryParam("token") orelse return null;
+    if (std.mem.eql(u8, token, "secret")) {
+        try zigmund.security.setGrantedScopes(req, &.{"items:read"});
+        return "alice";
+    }
+    return null;
+}
+
+fn optionalSecurityHandler(
+    auth: zigmund.SecurityOptional(optionalSecurityProvider, &.{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .auth = auth.value orelse "none",
+    });
+}
+
+fn optionalScopedSecurityHandler(
+    auth: zigmund.SecurityNamedOptional(optionalScopedSecurityProvider, "auth_opt", &.{"items:read"}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .auth = auth.value orelse "none",
+    });
+}
+
 test "nested provider dependencies resolve for security marker" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "nested-provider",
@@ -189,4 +222,62 @@ test "app scoped cache works for named injected dependency when registered" {
     try std.testing.expect(std.mem.indexOf(u8, second.body, "\"tenant\":\"acme\"") != null);
 
     try std.testing.expectEqual(@as(usize, 1), tenant_calls);
+}
+
+test "optional security marker allows unauthenticated access when scopes are empty" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "optional-security",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/optional", optionalSecurityHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var no_auth = try client.get("/optional");
+    defer no_auth.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, no_auth.status);
+    try std.testing.expect(std.mem.indexOf(u8, no_auth.body, "\"auth\":\"none\"") != null);
+
+    var with_auth = try client.get("/optional?token=abc123");
+    defer with_auth.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, with_auth.status);
+    try std.testing.expect(std.mem.indexOf(u8, with_auth.body, "\"auth\":\"abc123\"") != null);
+}
+
+test "optional security marker still enforces auth when scopes are required" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "optional-security-scoped",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addSecurityScheme("auth_opt", .{
+        .oauth2 = .{
+            .flows = .{
+                .password = .{
+                    .token_url = "/token",
+                    .scopes = &.{.{ .name = "items:read" }},
+                },
+            },
+        },
+    });
+    try app.get("/optional-scoped", optionalScopedSecurityHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var missing = try client.get("/optional-scoped");
+    defer missing.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.unauthorized, missing.status);
+    try std.testing.expectEqualStrings("Bearer", missing.header("www-authenticate").?);
+
+    var bad = try client.get("/optional-scoped?token=bad");
+    defer bad.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.unauthorized, bad.status);
+
+    var ok = try client.get("/optional-scoped?token=secret");
+    defer ok.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, ok.status);
+    try std.testing.expect(std.mem.indexOf(u8, ok.body, "\"auth\":\"alice\"") != null);
 }

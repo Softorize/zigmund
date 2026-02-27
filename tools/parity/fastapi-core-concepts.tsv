@@ -23,6 +23,8 @@ File marker|File
 Depends marker|Depends
 Security marker|Security
 Named security marker|SecurityNamed
+Optional security marker|SecurityOptional
+Optional named security marker|SecurityNamedOptional
 Query options|QueryOptions
 Path options|PathOptions
 Header options|HeaderOptions

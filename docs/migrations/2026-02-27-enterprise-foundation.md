@@ -8,6 +8,9 @@
    - `strict`: enterprise thresholds for dedicated benchmark environments.
 3. `zigmund cloud` now supports provider-aware planning (`--provider`) and scaffold emission (`--emit-dir`) for deployment files.
 4. Release-channel automation has been introduced (`nightly|alpha|beta|rc|stable`) with channel-aware release metadata.
+5. Additive API extensions:
+   - `AppConfig.request_id_enabled` to disable request-id generation/propagation when desired.
+   - `SecurityOptional(...)` and `SecurityNamedOptional(...)` for optional auth marker behavior (best-effort auth without scope requirements).
 
 ## Migration Actions
 
@@ -18,6 +21,9 @@
 3. For cloud command consumers, adopt provider-specific outputs when integrating deployment automation:
    - `zigmund cloud --provider docker --emit-dir deploy`
    - `zigmund cloud --provider flyio --emit-dir deploy`
+4. Optional auth behavior can be migrated explicitly:
+   - keep `Security(...)` / `SecurityNamed(...)` for required-auth behavior,
+   - use `SecurityOptional(...)` / `SecurityNamedOptional(...)` for optional auth behavior when scopes are empty.
 
 ## Compatibility Notes
 

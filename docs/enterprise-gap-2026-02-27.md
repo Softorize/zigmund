@@ -130,6 +130,10 @@
   - unauthorized challenge now derives from configured HTTP security scheme (e.g. `Basic`, `Bearer`, `Digest`) when available.
 - Security parity hardening (M1/M2 bridge):
   - scope enforcement is now active for route dependency specs and `Security(...)` markers when required scopes are declared.
+  - optional security marker variants are now available for Zig-native parity when authentication should be best-effort:
+    - `SecurityOptional(...)`,
+    - `SecurityNamedOptional(...)`.
+    These allow unauthenticated access when no scopes are required, while still enforcing unauthorized behavior for scoped markers.
   - scope context plumbing is now available via request dependency keys:
     - `zigmund.security.required_scopes`,
     - `zigmund.security.scopes`,

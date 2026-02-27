@@ -175,14 +175,27 @@ pub fn Depends(comptime provider: anytype, opts: DependsOptions) type {
 }
 
 pub fn Security(comptime provider: anytype, scopes: []const []const u8) type {
-    return SecurityType(provider, scopes, null);
+    return SecurityType(provider, scopes, null, false);
 }
 
 pub fn SecurityNamed(comptime provider: anytype, name: []const u8, scopes: []const []const u8) type {
-    return SecurityType(provider, scopes, name);
+    return SecurityType(provider, scopes, name, false);
 }
 
-fn SecurityType(comptime provider: anytype, scopes: []const []const u8, dependency_name_opt: ?[]const u8) type {
+pub fn SecurityOptional(comptime provider: anytype, scopes: []const []const u8) type {
+    return SecurityType(provider, scopes, null, true);
+}
+
+pub fn SecurityNamedOptional(comptime provider: anytype, name: []const u8, scopes: []const []const u8) type {
+    return SecurityType(provider, scopes, name, true);
+}
+
+fn SecurityType(
+    comptime provider: anytype,
+    scopes: []const []const u8,
+    dependency_name_opt: ?[]const u8,
+    comptime optional_security: bool,
+) type {
     const RawReturn = ProviderRawReturnType(provider);
     const ValueType = StripOptional(RawReturn);
     const ProviderReturnsOptional = RawReturn != ValueType;
@@ -194,6 +207,7 @@ fn SecurityType(comptime provider: anytype, scopes: []const []const u8, dependen
         pub const provider_returns_optional = ProviderReturnsOptional;
         pub const required_scopes = scopes;
         pub const dependency_name = dependency_name_opt;
+        pub const optional_security_marker = optional_security;
 
         value: ?ValueType = null,
     };

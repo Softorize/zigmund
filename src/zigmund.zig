@@ -112,3 +112,5 @@ pub const File = params.File;
 pub const Depends = params.Depends;
 pub const Security = params.Security;
 pub const SecurityNamed = params.SecurityNamed;
+pub const SecurityOptional = params.SecurityOptional;
+pub const SecurityNamedOptional = params.SecurityNamedOptional;

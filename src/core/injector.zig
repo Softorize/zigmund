@@ -568,6 +568,7 @@ fn resolveProviderMarker(
 ) anyerror!Marker {
     const use_cache = markerUsesCache(Marker);
     const cache_key = markerRuntimeCacheKey(Marker);
+    const optional_security = markerOptionalSecurity(Marker);
 
     if (use_cache and cache_key != null) {
         if (try loadCachedMarkerValue(Marker, req, context, cache_key.?)) |cached| {
@@ -596,6 +597,12 @@ fn resolveProviderMarker(
     const value_opt: ?Marker.ProviderValueType = provider_result;
 
     if (Marker.marker_kind == params.MarkerKind.security and value_opt == null) {
+        if (optional_security and
+            (!@hasDecl(Marker, "required_scopes") or Marker.required_scopes.len == 0))
+        {
+            out.value = null;
+            return out;
+        }
         return error.Unauthorized;
     }
 
@@ -666,6 +673,12 @@ fn markerUsesCache(comptime Marker: type) bool {
         return Marker.options.use_cache;
     }
     return true;
+}
+
+fn markerOptionalSecurity(comptime Marker: type) bool {
+    if (Marker.marker_kind != .security) return false;
+    if (@hasDecl(Marker, "optional_security_marker")) return Marker.optional_security_marker;
+    return false;
 }
 
 fn loadCachedMarkerValue(
@@ -752,6 +765,10 @@ fn buildProviderSpecs(comptime HandlerType: type) [countProviderMarkers(HandlerT
 
 fn providerSpecForMarker(comptime Marker: type, comptime param_index: usize) types.DependencySpec {
     const marker_kind = Marker.marker_kind;
+    const optional_security = markerOptionalSecurity(Marker);
+    const has_required_scopes = marker_kind == .security and
+        @hasDecl(Marker, "required_scopes") and
+        Marker.required_scopes.len > 0;
 
     const name = blk: {
         if (@hasDecl(Marker, "dependency_name")) {
@@ -761,7 +778,7 @@ fn providerSpecForMarker(comptime Marker: type, comptime param_index: usize) typ
     };
 
     const required = if (marker_kind == .security)
-        true
+        (!optional_security or has_required_scopes)
     else if (@hasDecl(Marker, "provider_returns_optional"))
         !Marker.provider_returns_optional
     else
