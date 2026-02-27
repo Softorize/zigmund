@@ -68,7 +68,7 @@
   - request ID generation/forwarding (`x-request-id`),
   - request-id availability in request dependency state,
   - telemetry sink API (`setTelemetrySink`) with method/path/status/latency events.
-  - structured access-log sink API (`setAccessLogSink`) with trace context, remote address, user-agent, and latency fields.
+  - structured access-log sink API (`setAccessLogSink`) with trace context, scheme/host, remote address, user-agent, and latency fields.
   - trace sink API (`setTraceSink`) with request/trace context propagation fields.
   - metrics sink API (`setMetricsSink`) emitting request-count and latency events.
   - trace-context propagation hook (`setTraceContextHeader(...)`) with dependency exposure (`trace_context`).
@@ -321,6 +321,7 @@
   - observability sinks + trace-context propagation behavior,
   - trace sink propagation behavior (`setTraceSink`) with request-id and trace-context coverage,
   - traceparent parsing behavior and structured trace-id/span-id propagation in telemetry/trace/access events,
+  - access-log scheme/host enrichment behavior (proxy-context + host-header fallback),
   - proxy extraction policy behavior (including CIDR allowlist),
   - deep response-model include/exclude path shaping,
   - `TestClient` cookie persistence/deletion behavior,

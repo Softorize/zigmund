@@ -45,6 +45,10 @@
 16. Runtime CLI/config parity improvement:
    - `zigmund serve` and `zigmund dev` now support `--max-query-bytes <n>` to configure query-size guardrails from CLI.
    - lifecycle startup audit payloads now include `max_query_bytes` for runtime-policy observability.
+17. Access-log schema extension:
+   - `App.AccessLogEvent` now includes `scheme` and `host`.
+   - JSON structured access logs now emit `scheme` and `host` fields.
+   - access-log emission now resolves `scheme`/`host` from trusted proxy dependency context first (`zigmund.proxy.proto` / `zigmund.proxy.host`), with host fallback to request `Host` header.
 
 ## Migration Actions
 
@@ -71,6 +75,7 @@
    - `req.dependency("client_ip")` / `req.dependency("scheme")` / `req.dependency("host")`,
    - or namespaced equivalents under `zigmund.proxy.*`.
 10. If you manage runtime limits from CLI wrappers/scripts, add `--max-query-bytes` alongside existing `--max-header-bytes`/`--max-body-bytes` controls for explicit query guardrails.
+11. If you consume `AccessLogEvent` programmatically, update sink handlers/schemas to accept the additive `scheme` and `host` fields.
 
 ## Compatibility Notes
 

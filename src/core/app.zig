@@ -75,6 +75,8 @@ pub const App = struct {
         span_id: []const u8,
         method: std.http.Method,
         path: []const u8,
+        scheme: []const u8,
+        host: []const u8,
         status: std.http.Status,
         latency_us: u64,
         remote_addr: []const u8,
@@ -1316,6 +1318,12 @@ pub const App = struct {
                 std.fmt.bufPrint(&addr_buf, "{f}", .{peer}) catch ""
             else
                 "");
+        const scheme = req.dependency("zigmund.proxy.proto") orelse
+            (if (self.active_server_cfg) |cfg|
+                if (cfg.tls != null) "https" else "http"
+            else
+                "");
+        const host = req.dependency("zigmund.proxy.host") orelse req.header("host") orelse "";
         const trace_identity = buildTraceIdentity(req);
         const path = observabilityPath(req);
 
@@ -1327,6 +1335,8 @@ pub const App = struct {
             .span_id = trace_identity.span_id,
             .method = req.method,
             .path = path,
+            .scheme = scheme,
+            .host = host,
             .status = status,
             .latency_us = latency_us,
             .remote_addr = remote_addr,
@@ -2404,7 +2414,7 @@ fn jsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator) !void {
 fn jsonAccessLogSink(event: App.AccessLogEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
-        "{{\"event\":\"access_log\",\"request_id\":{f},\"trace_context\":{f},\"tracestate\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d},\"remote_addr\":{f},\"user_agent\":{f}}}",
+        "{{\"event\":\"access_log\",\"request_id\":{f},\"trace_context\":{f},\"tracestate\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"scheme\":{f},\"host\":{f},\"status\":{d},\"latency_us\":{d},\"remote_addr\":{f},\"user_agent\":{f}}}",
         .{
             std.json.fmt(event.request_id, .{}),
             std.json.fmt(event.trace_context, .{}),
@@ -2413,6 +2423,8 @@ fn jsonAccessLogSink(event: App.AccessLogEvent, allocator: std.mem.Allocator) !v
             std.json.fmt(event.span_id, .{}),
             std.json.fmt(@tagName(event.method), .{}),
             std.json.fmt(event.path, .{}),
+            std.json.fmt(event.scheme, .{}),
+            std.json.fmt(event.host, .{}),
             @intFromEnum(event.status),
             event.latency_us,
             std.json.fmt(event.remote_addr, .{}),
@@ -2521,15 +2533,23 @@ test "proxy context seeds request dependencies from trusted headers" {
 test "access log remote address prefers trusted proxy client ip dependency" {
     const Capture = struct {
         var remote_addr: ?[]u8 = null;
+        var scheme: ?[]u8 = null;
+        var host: ?[]u8 = null;
 
         fn reset(allocator: std.mem.Allocator) void {
             if (remote_addr) |value| allocator.free(value);
             remote_addr = null;
+            if (scheme) |value| allocator.free(value);
+            scheme = null;
+            if (host) |value| allocator.free(value);
+            host = null;
         }
 
         fn sink(event: App.AccessLogEvent, allocator: std.mem.Allocator) !void {
             reset(allocator);
             remote_addr = try allocator.dupe(u8, event.remote_addr);
+            scheme = try allocator.dupe(u8, event.scheme);
+            host = try allocator.dupe(u8, event.host);
         }
     };
 
@@ -2545,7 +2565,11 @@ test "access log remote address prefers trusted proxy client ip dependency" {
     defer req.deinit();
     req.setPeerAddress(std.net.Address.initIp4(.{ 198, 51, 100, 44 }, 8080));
     try req.setDependencyValueBorrowed("zigmund.proxy.client_ip", "203.0.113.9");
+    try req.setDependencyValueBorrowed("zigmund.proxy.proto", "https");
+    try req.setDependencyValueBorrowed("zigmund.proxy.host", "api.example.com");
 
     app.emitAccessLog(&req, .ok, 12);
     try std.testing.expectEqualStrings("203.0.113.9", Capture.remote_addr.?);
+    try std.testing.expectEqualStrings("https", Capture.scheme.?);
+    try std.testing.expectEqualStrings("api.example.com", Capture.host.?);
 }

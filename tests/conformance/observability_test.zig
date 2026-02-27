@@ -20,6 +20,8 @@ var access_log_last_tracestate: ?[]u8 = null;
 var access_log_last_trace_id: ?[]u8 = null;
 var access_log_last_span_id: ?[]u8 = null;
 var access_log_last_user_agent: ?[]u8 = null;
+var access_log_last_scheme: ?[]u8 = null;
+var access_log_last_host: ?[]u8 = null;
 var metrics_event_count: usize = 0;
 var metrics_last_name: ?[]u8 = null;
 var metrics_last_path: ?[]u8 = null;
@@ -69,6 +71,10 @@ fn resetTelemetryState(allocator: std.mem.Allocator) void {
     access_log_last_span_id = null;
     if (access_log_last_user_agent) |user_agent| allocator.free(user_agent);
     access_log_last_user_agent = null;
+    if (access_log_last_scheme) |scheme| allocator.free(scheme);
+    access_log_last_scheme = null;
+    if (access_log_last_host) |host| allocator.free(host);
+    access_log_last_host = null;
 
     metrics_event_count = 0;
     if (metrics_last_name) |name| allocator.free(name);
@@ -126,12 +132,16 @@ fn accessLogSink(event: zigmund.App.AccessLogEvent, allocator: std.mem.Allocator
     if (access_log_last_trace_id) |trace_id| allocator.free(trace_id);
     if (access_log_last_span_id) |span_id| allocator.free(span_id);
     if (access_log_last_user_agent) |user_agent| allocator.free(user_agent);
+    if (access_log_last_scheme) |scheme| allocator.free(scheme);
+    if (access_log_last_host) |host| allocator.free(host);
 
     access_log_last_trace_context = try allocator.dupe(u8, event.trace_context);
     access_log_last_tracestate = try allocator.dupe(u8, event.tracestate);
     access_log_last_trace_id = try allocator.dupe(u8, event.trace_id);
     access_log_last_span_id = try allocator.dupe(u8, event.span_id);
     access_log_last_user_agent = try allocator.dupe(u8, event.user_agent);
+    access_log_last_scheme = try allocator.dupe(u8, event.scheme);
+    access_log_last_host = try allocator.dupe(u8, event.host);
     access_log_event_count += 1;
 }
 
@@ -226,6 +236,8 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqualStrings("", access_log_last_tracestate.?);
     try std.testing.expectEqualStrings("", access_log_last_trace_id.?);
     try std.testing.expectEqualStrings("", access_log_last_span_id.?);
+    try std.testing.expectEqualStrings("", access_log_last_scheme.?);
+    try std.testing.expectEqualStrings("", access_log_last_host.?);
     try std.testing.expectEqualStrings("", telemetry_last_trace_id.?);
     try std.testing.expectEqualStrings("", telemetry_last_span_id.?);
     try std.testing.expectEqual(@as(usize, 2), metrics_event_count);
@@ -237,6 +249,7 @@ test "request id trace context telemetry access logs and metrics are propagated"
         .{ .name = "x-request-id", .value = "external-request-id-1" },
         .{ .name = "x-trace-id", .value = "trace-123" },
         .{ .name = "user-agent", .value = "zigmund-test" },
+        .{ .name = "host", .value = "api.internal.test" },
     };
     var forwarded = try client.requestWithHeaders(.GET, "/observe", "", &headers);
     defer forwarded.deinit(std.testing.allocator);
@@ -261,6 +274,8 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqualStrings("", access_log_last_trace_id.?);
     try std.testing.expectEqualStrings("", access_log_last_span_id.?);
     try std.testing.expectEqualStrings("zigmund-test", access_log_last_user_agent.?);
+    try std.testing.expectEqualStrings("", access_log_last_scheme.?);
+    try std.testing.expectEqualStrings("api.internal.test", access_log_last_host.?);
     try std.testing.expectEqual(@as(usize, 4), metrics_event_count);
     try std.testing.expectEqualStrings("/observe", metrics_last_path.?);
 }
