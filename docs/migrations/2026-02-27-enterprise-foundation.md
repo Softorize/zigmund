@@ -36,6 +36,12 @@
    - CLI flags are now available to configure these independently:
      - `--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header`,
      - `--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers`.
+15. Proxy context propagation behavior:
+   - proxy extraction now includes forwarded host metadata (`host` from RFC `Forwarded` and fallback `X-Forwarded-Host`).
+   - trusted proxy metadata is now seeded into request dependency context for runtime requests:
+     - `client_ip`, `scheme`, `host`,
+     - `zigmund.proxy.client_ip`, `zigmund.proxy.proto`, `zigmund.proxy.host`.
+   - structured access logs now prefer trusted proxy client IP context (`zigmund.proxy.client_ip`) over raw peer socket address.
 
 ## Migration Actions
 
@@ -58,6 +64,9 @@
 8. If you rely on proxy metadata, set explicit trust policy for header families based on your edge topology:
    - disable RFC `Forwarded` trust when only legacy `X-Forwarded-*` is expected,
    - disable `X-Forwarded-*` trust when your edge emits only RFC `Forwarded`.
+9. If downstream handlers or telemetry consumers need edge client metadata, migrate to dependency keys populated from trusted proxy context:
+   - `req.dependency("client_ip")` / `req.dependency("scheme")` / `req.dependency("host")`,
+   - or namespaced equivalents under `zigmund.proxy.*`.
 
 ## Compatibility Notes
 

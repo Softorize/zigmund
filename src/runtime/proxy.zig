@@ -5,6 +5,7 @@ const Request = @import("../http/request.zig").Request;
 pub const ProxyInfo = struct {
     client_ip: ?[]const u8 = null,
     proto: ?[]const u8 = null,
+    host: ?[]const u8 = null,
 };
 
 const ProxyHeaderTrust = struct {
@@ -31,11 +32,13 @@ fn extractProxyInfoWithTrust(req: *const Request, trust: ProxyHeaderTrust) Proxy
         const forwarded = parseForwardedHeader(req.header("forwarded"));
         out.client_ip = forwarded.client_ip;
         out.proto = forwarded.proto;
+        out.host = forwarded.host;
     }
 
     if (trust.x_forwarded) {
         if (out.client_ip == null) out.client_ip = firstValue(req.header("x-forwarded-for"));
         if (out.proto == null) out.proto = firstValue(req.header("x-forwarded-proto"));
+        if (out.host == null) out.host = firstValue(req.header("x-forwarded-host"));
     }
 
     return out;
@@ -136,6 +139,8 @@ fn parseForwardedHeader(raw: ?[]const u8) ProxyInfo {
             out.client_ip = normalizeForwardedFor(parsed_value);
         } else if (std.ascii.eqlIgnoreCase(key, "proto")) {
             out.proto = parsed_value;
+        } else if (std.ascii.eqlIgnoreCase(key, "host")) {
+            out.host = parsed_value;
         }
     }
 
@@ -195,9 +200,10 @@ test "extract first forwarded value" {
 
 test "forwarded header extraction supports for/proto and precedence over x-forwarded headers" {
     const headers = [_]std.http.Header{
-        .{ .name = "forwarded", .value = "for=203.0.113.43;proto=https, for=198.51.100.17;proto=http" },
+        .{ .name = "forwarded", .value = "for=203.0.113.43;proto=https;host=api.example.com, for=198.51.100.17;proto=http" },
         .{ .name = "x-forwarded-for", .value = "198.51.100.10" },
         .{ .name = "x-forwarded-proto", .value = "http" },
+        .{ .name = "x-forwarded-host", .value = "edge.example.net" },
     };
 
     var req = try Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/", "", &headers);
@@ -206,13 +212,15 @@ test "forwarded header extraction supports for/proto and precedence over x-forwa
     const info = extractProxyInfo(&req);
     try std.testing.expectEqualStrings("203.0.113.43", info.client_ip.?);
     try std.testing.expectEqualStrings("https", info.proto.?);
+    try std.testing.expectEqualStrings("api.example.com", info.host.?);
 }
 
 test "proxy extraction supports independent trust toggles for forwarded and x-forwarded header families" {
     const headers = [_]std.http.Header{
-        .{ .name = "forwarded", .value = "for=203.0.113.43;proto=https" },
+        .{ .name = "forwarded", .value = "for=203.0.113.43;proto=https;host=api.example.com" },
         .{ .name = "x-forwarded-for", .value = "198.51.100.10" },
         .{ .name = "x-forwarded-proto", .value = "http" },
+        .{ .name = "x-forwarded-host", .value = "edge.example.net" },
     };
 
     var req = try Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/", "", &headers);
@@ -225,6 +233,7 @@ test "proxy extraction supports independent trust toggles for forwarded and x-fo
     });
     try std.testing.expectEqualStrings("198.51.100.10", forwarded_disabled.client_ip.?);
     try std.testing.expectEqualStrings("http", forwarded_disabled.proto.?);
+    try std.testing.expectEqualStrings("edge.example.net", forwarded_disabled.host.?);
 
     const x_forwarded_disabled = extractProxyInfoWithConfig(&req, .{
         .trusted_proxy_headers = true,
@@ -233,6 +242,7 @@ test "proxy extraction supports independent trust toggles for forwarded and x-fo
     });
     try std.testing.expectEqualStrings("203.0.113.43", x_forwarded_disabled.client_ip.?);
     try std.testing.expectEqualStrings("https", x_forwarded_disabled.proto.?);
+    try std.testing.expectEqualStrings("api.example.com", x_forwarded_disabled.host.?);
 
     const all_disabled = extractProxyInfoWithConfig(&req, .{
         .trusted_proxy_headers = true,
@@ -241,6 +251,7 @@ test "proxy extraction supports independent trust toggles for forwarded and x-fo
     });
     try std.testing.expect(all_disabled.client_ip == null);
     try std.testing.expect(all_disabled.proto == null);
+    try std.testing.expect(all_disabled.host == null);
 }
 
 test "forwarded header extraction handles quoted bracketed ipv6 and port" {

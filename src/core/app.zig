@@ -558,6 +558,7 @@ pub const App = struct {
         defer req.runBackgroundTasks() catch |err| {
             std.log.warn("background task failed: {s}", .{@errorName(err)});
         };
+        self.seedProxyContext(&req);
 
         if (raw_request.upgradeRequested() == .websocket) {
             if (try self.router.findWebSocket(req.path, &req)) |ws_route| {
@@ -870,6 +871,38 @@ pub const App = struct {
         req.setDependencyValueBorrowed("zigmund.validation.strict", if (strict_enabled) "true" else "false") catch |err| {
             std.log.warn("failed to set validation strict mode dependency: {s}", .{@errorName(err)});
         };
+    }
+
+    fn seedProxyContext(self: *const App, req: *Request) void {
+        const cfg = self.active_server_cfg orelse return;
+        const info = runtime.extractProxyInfoWithConfig(req, cfg);
+
+        if (info.client_ip) |client_ip| {
+            req.setDependencyValueBorrowed("client_ip", client_ip) catch |err| {
+                std.log.warn("failed to set client_ip dependency: {s}", .{@errorName(err)});
+            };
+            req.setDependencyValueBorrowed("zigmund.proxy.client_ip", client_ip) catch |err| {
+                std.log.warn("failed to set zigmund.proxy.client_ip dependency: {s}", .{@errorName(err)});
+            };
+        }
+
+        if (info.proto) |proto| {
+            req.setDependencyValueBorrowed("scheme", proto) catch |err| {
+                std.log.warn("failed to set scheme dependency: {s}", .{@errorName(err)});
+            };
+            req.setDependencyValueBorrowed("zigmund.proxy.proto", proto) catch |err| {
+                std.log.warn("failed to set zigmund.proxy.proto dependency: {s}", .{@errorName(err)});
+            };
+        }
+
+        if (info.host) |host| {
+            req.setDependencyValueBorrowed("host", host) catch |err| {
+                std.log.warn("failed to set host dependency: {s}", .{@errorName(err)});
+            };
+            req.setDependencyValueBorrowed("zigmund.proxy.host", host) catch |err| {
+                std.log.warn("failed to set zigmund.proxy.host dependency: {s}", .{@errorName(err)});
+            };
+        }
     }
 
     fn mergeIncludedTags(
@@ -1278,10 +1311,11 @@ pub const App = struct {
         if (self.access_log_sink == null and !self.cfg.structured_access_logs) return;
 
         var addr_buf: [128]u8 = undefined;
-        const remote_addr = if (req.peerAddress()) |peer|
-            std.fmt.bufPrint(&addr_buf, "{f}", .{peer}) catch ""
-        else
-            "";
+        const remote_addr = req.dependency("zigmund.proxy.client_ip") orelse
+            (if (req.peerAddress()) |peer|
+                std.fmt.bufPrint(&addr_buf, "{f}", .{peer}) catch ""
+            else
+                "");
         const trace_identity = buildTraceIdentity(req);
         const path = observabilityPath(req);
 
@@ -2448,4 +2482,69 @@ test "openapi endpoint works in synthetic dispatch" {
 
     try std.testing.expectEqual(.ok, res.status);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "\"/health\"") != null);
+}
+
+test "proxy context seeds request dependencies from trusted headers" {
+    var app = try App.init(std.testing.allocator, .{
+        .title = "proxy-context",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    app.active_server_cfg = .{
+        .trusted_proxy_headers = true,
+        .trusted_proxy_forwarded_header = false,
+        .trusted_proxy_x_forwarded_headers = true,
+    };
+    defer app.active_server_cfg = null;
+
+    const headers = [_]std.http.Header{
+        .{ .name = "forwarded", .value = "for=203.0.113.43;proto=https;host=api.example.com" },
+        .{ .name = "x-forwarded-for", .value = "198.51.100.10" },
+        .{ .name = "x-forwarded-proto", .value = "http" },
+        .{ .name = "x-forwarded-host", .value = "edge.example.net" },
+    };
+    var req = try Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/proxy", "", &headers);
+    defer req.deinit();
+
+    app.seedProxyContext(&req);
+
+    try std.testing.expectEqualStrings("198.51.100.10", req.dependency("client_ip").?);
+    try std.testing.expectEqualStrings("http", req.dependency("scheme").?);
+    try std.testing.expectEqualStrings("edge.example.net", req.dependency("host").?);
+    try std.testing.expectEqualStrings("198.51.100.10", req.dependency("zigmund.proxy.client_ip").?);
+    try std.testing.expectEqualStrings("http", req.dependency("zigmund.proxy.proto").?);
+    try std.testing.expectEqualStrings("edge.example.net", req.dependency("zigmund.proxy.host").?);
+}
+
+test "access log remote address prefers trusted proxy client ip dependency" {
+    const Capture = struct {
+        var remote_addr: ?[]u8 = null;
+
+        fn reset(allocator: std.mem.Allocator) void {
+            if (remote_addr) |value| allocator.free(value);
+            remote_addr = null;
+        }
+
+        fn sink(event: App.AccessLogEvent, allocator: std.mem.Allocator) !void {
+            reset(allocator);
+            remote_addr = try allocator.dupe(u8, event.remote_addr);
+        }
+    };
+
+    var app = try App.init(std.testing.allocator, .{
+        .title = "proxy-access-log",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+    defer Capture.reset(std.testing.allocator);
+    app.setAccessLogSink(Capture.sink);
+
+    var req = try Request.initSynthetic(std.testing.allocator, .GET, "/logs", "");
+    defer req.deinit();
+    req.setPeerAddress(std.net.Address.initIp4(.{ 198, 51, 100, 44 }, 8080));
+    try req.setDependencyValueBorrowed("zigmund.proxy.client_ip", "203.0.113.9");
+
+    app.emitAccessLog(&req, .ok, 12);
+    try std.testing.expectEqualStrings("203.0.113.9", Capture.remote_addr.?);
 }

@@ -84,7 +84,7 @@ test "proxy extraction supports ipv6 trusted proxy cidr allowlist" {
 
 test "proxy extraction supports RFC forwarded header fields" {
     const headers = [_]std.http.Header{
-        .{ .name = "forwarded", .value = "for=203.0.113.9;proto=https, for=198.51.100.44;proto=http" },
+        .{ .name = "forwarded", .value = "for=203.0.113.9;proto=https;host=api.example.com, for=198.51.100.44;proto=http" },
     };
 
     var req = try zigmund.Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/", "", &headers);
@@ -93,13 +93,15 @@ test "proxy extraction supports RFC forwarded header fields" {
     const info = zigmund.runtime.extractProxyInfo(&req);
     try std.testing.expectEqualStrings("203.0.113.9", info.client_ip.?);
     try std.testing.expectEqualStrings("https", info.proto.?);
+    try std.testing.expectEqualStrings("api.example.com", info.host.?);
 }
 
 test "proxy extraction supports independent forwarded and x-forwarded trust policy" {
     const headers = [_]std.http.Header{
-        .{ .name = "forwarded", .value = "for=203.0.113.9;proto=https" },
+        .{ .name = "forwarded", .value = "for=203.0.113.9;proto=https;host=api.example.com" },
         .{ .name = "x-forwarded-for", .value = "198.51.100.44" },
         .{ .name = "x-forwarded-proto", .value = "http" },
+        .{ .name = "x-forwarded-host", .value = "edge.example.net" },
     };
 
     var req = try zigmund.Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/", "", &headers);
@@ -112,6 +114,7 @@ test "proxy extraction supports independent forwarded and x-forwarded trust poli
     });
     try std.testing.expectEqualStrings("198.51.100.44", trust_x_only.client_ip.?);
     try std.testing.expectEqualStrings("http", trust_x_only.proto.?);
+    try std.testing.expectEqualStrings("edge.example.net", trust_x_only.host.?);
 
     const trust_forwarded_only = zigmund.runtime.extractProxyInfoWithConfig(&req, .{
         .trusted_proxy_headers = true,
@@ -120,6 +123,7 @@ test "proxy extraction supports independent forwarded and x-forwarded trust poli
     });
     try std.testing.expectEqualStrings("203.0.113.9", trust_forwarded_only.client_ip.?);
     try std.testing.expectEqualStrings("https", trust_forwarded_only.proto.?);
+    try std.testing.expectEqualStrings("api.example.com", trust_forwarded_only.host.?);
 }
 
 test "proxy extraction applies trust policy to forwarded headers" {
