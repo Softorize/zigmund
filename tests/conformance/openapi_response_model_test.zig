@@ -20,6 +20,16 @@ fn itemHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Res
     });
 }
 
+fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
+    var count: usize = 0;
+    var idx: usize = 0;
+    while (std.mem.indexOfPos(u8, haystack, idx, needle)) |pos| {
+        count += 1;
+        idx = pos + needle.len;
+    }
+    return count;
+}
+
 test "openapi emits response schema for response_model" {
     var app = try zigmund.App.init(std.testing.allocator, .{
         .title = "openapi-response-model",
@@ -38,15 +48,18 @@ test "openapi emits response schema for response_model" {
 
     const doc = try app.openapi();
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"/items/{item_id}\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, doc, "\"201\":{\"description\":\"Successful Response\",\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"201\":{\"$ref\":\"#/components/responses/response_201_get_items_item_id\"}") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"schemas\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"responses\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"id\":{\"type\":\"integer\",\"format\":\"int32\"}") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"name\":{\"type\":\"string\"}") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"meta\":{\"type\":\"object\",\"properties\":{\"active\":{\"type\":\"boolean\"}},\"required\":[\"active\"]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"required\":[\"id\",\"name\"]") != null);
 
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"/items\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, doc, "\"200\":{\"description\":\"Successful Response\",\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"200\":{\"$ref\":\"#/components/responses/response_200_get_items\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"response_201_get_items_item_id\":{\"description\":\"Successful Response\",\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"response_200_get_items\":{\"description\":\"Successful Response\",\"content\":{\"application/json\":{\"schema\":{\"$ref\":\"#/components/schemas/") != null);
 }
 
 test "default_response_class influences openapi default response content type" {
@@ -81,4 +94,33 @@ test "default_response_class influences openapi default response content type" {
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"text/event-stream; charset=utf-8\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"/unknown\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"application/json\"") != null);
+}
+
+test "openapi deduplicates identical response entries into components" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "openapi-response-dedupe",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    const H = struct {
+        fn run(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+            _ = req;
+            _ = allocator;
+            return zigmund.Response.text("ok");
+        }
+    };
+
+    try app.get("/one", H.run, .{});
+    try app.get("/two", H.run, .{});
+
+    const doc = try app.openapi();
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        countOccurrences(doc, "\"$ref\":\"#/components/responses/response_200_get_one\""),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        countOccurrences(doc, "\"response_200_get_one\":{\"description\":\"Successful Response\"}"),
+    );
 }

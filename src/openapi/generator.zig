@@ -18,6 +18,20 @@ const RequestBodyComponent = struct {
     body_json: []const u8,
 };
 
+const ResponseEntryComponent = struct {
+    name: []const u8,
+    response_json: []const u8,
+};
+
+const GeneratedResponseEntry = struct {
+    status_code: std.http.Status,
+    description: []const u8,
+    content_type: ?[]const u8,
+    schema_opt: ?types.OpenApiSchema,
+    schema_component_name: ?[]const u8,
+    examples: []const types.OpenApiExample,
+};
+
 const OperationIdRegistry = struct {
     allocator: std.mem.Allocator,
     used: std.StringHashMapUnmanaged(void) = .empty,
@@ -126,6 +140,24 @@ pub fn generate(
         http_routes,
     );
 
+    var response_entry_components: std.ArrayList(ResponseEntryComponent) = .empty;
+    defer response_entry_components.deinit(allocator);
+    var owned_response_entry_component_names: std.ArrayList([]u8) = .empty;
+    defer {
+        for (owned_response_entry_component_names.items) |name| allocator.free(name);
+        owned_response_entry_component_names.deinit(allocator);
+    }
+    defer {
+        for (response_entry_components.items) |entry| allocator.free(entry.response_json);
+    }
+    try collectResponseEntryComponents(
+        allocator,
+        &response_entry_components,
+        &owned_response_entry_component_names,
+        http_routes,
+        response_components.items,
+    );
+
     var operation_ids = OperationIdRegistry.init(allocator);
     defer operation_ids.deinit();
 
@@ -134,6 +166,7 @@ pub fn generate(
         std.mem.sort(ComponentSchema, response_components.items, {}, lessThanComponentSchema);
         std.mem.sort(ParameterComponent, parameter_components.items, {}, lessThanParameterComponent);
         std.mem.sort(RequestBodyComponent, request_body_components.items, {}, lessThanRequestBodyComponent);
+        std.mem.sort(ResponseEntryComponent, response_entry_components.items, {}, lessThanResponseEntryComponent);
     }
 
     var out: std.ArrayList(u8) = .empty;
@@ -165,7 +198,7 @@ pub fn generate(
     }
     try writer.writeAll("]");
 
-    if (security_schemes.len > 0 or response_components.items.len > 0 or parameter_components.items.len > 0 or request_body_components.items.len > 0) {
+    if (security_schemes.len > 0 or response_components.items.len > 0 or parameter_components.items.len > 0 or request_body_components.items.len > 0 or response_entry_components.items.len > 0) {
         try writer.writeAll(",");
         try writeFieldName(&writer, "components");
         try writeComponents(
@@ -174,6 +207,7 @@ pub fn generate(
             response_components.items,
             parameter_components.items,
             request_body_components.items,
+            response_entry_components.items,
         );
     }
 
@@ -205,6 +239,7 @@ pub fn generate(
                         response_components.items,
                         parameter_components.items,
                         request_body_components.items,
+                        response_entry_components.items,
                         &operation_ids,
                     );
                 }
@@ -223,6 +258,7 @@ pub fn generate(
                     response_components.items,
                     parameter_components.items,
                     request_body_components.items,
+                    response_entry_components.items,
                     &operation_ids,
                 );
             }
@@ -267,6 +303,10 @@ fn lessThanRequestBodyComponent(_: void, lhs: RequestBodyComponent, rhs: Request
     return std.mem.order(u8, lhs.name, rhs.name) == .lt;
 }
 
+fn lessThanResponseEntryComponent(_: void, lhs: ResponseEntryComponent, rhs: ResponseEntryComponent) bool {
+    return std.mem.order(u8, lhs.name, rhs.name) == .lt;
+}
+
 fn writeHttpOperation(
     writer: anytype,
     allocator: std.mem.Allocator,
@@ -275,6 +315,7 @@ fn writeHttpOperation(
     response_components: []const ComponentSchema,
     parameter_components: []const ParameterComponent,
     request_body_components: []const RequestBodyComponent,
+    response_entry_components: []const ResponseEntryComponent,
     operation_ids: *OperationIdRegistry,
 ) !void {
     try writeJsonString(writer, route.method.asString());
@@ -380,7 +421,13 @@ fn writeHttpOperation(
     try writer.writeAll(",");
     try writeFieldName(writer, "responses");
     const response_component_name = responseComponentName(route.options, response_components);
-    try writeResponsesObject(writer, allocator, route.options, response_component_name);
+    try writeResponsesObject(
+        writer,
+        allocator,
+        route.options,
+        response_component_name,
+        response_entry_components,
+    );
 
     try writeOpenApiExtensions(writer, allocator, route.options.openapi_extensions);
     try writer.writeAll("}");
@@ -771,6 +818,138 @@ fn requestBodyComponentNameByJson(
     return null;
 }
 
+fn collectResponseEntryComponents(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(ResponseEntryComponent),
+    owned_names: *std.ArrayList([]u8),
+    routes: []const router_mod.HttpRoute,
+    response_schema_components: []const ComponentSchema,
+) !void {
+    for (routes) |route| {
+        if (!route.options.include_in_schema) continue;
+        const schema_component_name = responseComponentName(route.options, response_schema_components);
+
+        var entries: std.ArrayList(GeneratedResponseEntry) = .empty;
+        defer entries.deinit(allocator);
+        try appendGeneratedResponseEntries(
+            allocator,
+            &entries,
+            route.options,
+            schema_component_name,
+        );
+
+        for (entries.items) |entry| {
+            const response_json = try renderResponseEntryValueJson(allocator, entry);
+            errdefer allocator.free(response_json);
+
+            if (responseEntryComponentNameByJson(response_json, list.items) != null) {
+                allocator.free(response_json);
+                continue;
+            }
+
+            const name = try uniqueResponseEntryComponentName(
+                allocator,
+                list.items,
+                route.method,
+                route.path,
+                entry.status_code,
+            );
+            errdefer allocator.free(name);
+
+            try owned_names.append(allocator, name);
+            try list.append(allocator, .{
+                .name = name,
+                .response_json = response_json,
+            });
+        }
+    }
+}
+
+fn uniqueResponseEntryComponentName(
+    allocator: std.mem.Allocator,
+    components: []const ResponseEntryComponent,
+    method: types.RouteMethod,
+    path: []const u8,
+    status_code: std.http.Status,
+) ![]u8 {
+    const base_name = try buildResponseEntryComponentBaseName(allocator, method, path, status_code);
+    errdefer allocator.free(base_name);
+
+    if (!hasResponseEntryComponentName(components, base_name)) {
+        return base_name;
+    }
+
+    var suffix: usize = 2;
+    while (true) : (suffix += 1) {
+        const candidate = try std.fmt.allocPrint(allocator, "{s}_{d}", .{ base_name, suffix });
+        errdefer allocator.free(candidate);
+        if (hasResponseEntryComponentName(components, candidate)) {
+            allocator.free(candidate);
+            continue;
+        }
+        allocator.free(base_name);
+        return candidate;
+    }
+}
+
+fn buildResponseEntryComponentBaseName(
+    allocator: std.mem.Allocator,
+    method: types.RouteMethod,
+    path: []const u8,
+    status_code: std.http.Status,
+) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    try appendNormalizedIdentifierPart(&out, allocator, "response");
+    if (out.items.len > 0 and out.items[out.items.len - 1] != '_') try out.append(allocator, '_');
+
+    var status_buf: [3]u8 = undefined;
+    const status_str = try std.fmt.bufPrint(&status_buf, "{d}", .{@intFromEnum(status_code)});
+    try appendNormalizedIdentifierPart(&out, allocator, status_str);
+    if (out.items.len > 0 and out.items[out.items.len - 1] != '_') try out.append(allocator, '_');
+
+    try appendNormalizedIdentifierPart(&out, allocator, method.asString());
+    if (out.items.len > 0 and out.items[out.items.len - 1] != '_') try out.append(allocator, '_');
+
+    try appendNormalizedIdentifierPart(&out, allocator, path);
+
+    if (out.items.len == 0) {
+        try out.appendSlice(allocator, "response");
+    }
+    while (out.items.len > 0 and out.items[out.items.len - 1] == '_') {
+        _ = out.pop();
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+fn hasResponseEntryComponentName(components: []const ResponseEntryComponent, name: []const u8) bool {
+    for (components) |component| {
+        if (std.mem.eql(u8, component.name, name)) return true;
+    }
+    return false;
+}
+
+fn responseEntryComponentNameByJson(
+    response_json: []const u8,
+    components: []const ResponseEntryComponent,
+) ?[]const u8 {
+    for (components) |component| {
+        if (std.mem.eql(u8, component.response_json, response_json)) return component.name;
+    }
+    return null;
+}
+
+fn responseEntryComponentName(
+    allocator: std.mem.Allocator,
+    entry: GeneratedResponseEntry,
+    components: []const ResponseEntryComponent,
+) !?[]const u8 {
+    const response_json = try renderResponseEntryValueJson(allocator, entry);
+    defer allocator.free(response_json);
+    return responseEntryComponentNameByJson(response_json, components);
+}
+
 fn buildDefaultHttpOperationId(
     allocator: std.mem.Allocator,
     method: types.RouteMethod,
@@ -985,6 +1164,14 @@ fn writeComponentRequestBodyRef(writer: anytype, component_name: []const u8) !vo
     try writer.writeAll("{");
     try writeFieldName(writer, "$ref");
     try writer.writeAll("\"#/components/requestBodies/");
+    try writer.writeAll(component_name);
+    try writer.writeAll("\"}");
+}
+
+fn writeComponentResponseRef(writer: anytype, component_name: []const u8) !void {
+    try writer.writeAll("{");
+    try writeFieldName(writer, "$ref");
+    try writer.writeAll("\"#/components/responses/");
     try writer.writeAll(component_name);
     try writer.writeAll("\"}");
 }
@@ -1683,132 +1870,129 @@ fn writeResponsesObject(
     allocator: std.mem.Allocator,
     options: types.StoredRouteOptions,
     response_component_name: ?[]const u8,
+    response_entry_components: []const ResponseEntryComponent,
+) !void {
+    var entries: std.ArrayList(GeneratedResponseEntry) = .empty;
+    defer entries.deinit(allocator);
+    try appendGeneratedResponseEntries(allocator, &entries, options, response_component_name);
+
+    try writer.writeAll("{");
+    for (entries.items, 0..) |entry, idx| {
+        if (idx != 0) try writer.writeAll(",");
+        var status_buf: [3]u8 = undefined;
+        const status_str = try std.fmt.bufPrint(&status_buf, "{d}", .{@intFromEnum(entry.status_code)});
+        try writeJsonString(writer, status_str);
+        try writer.writeAll(":");
+        if (try responseEntryComponentName(allocator, entry, response_entry_components)) |component_name| {
+            try writeComponentResponseRef(writer, component_name);
+        } else {
+            try writeResponseEntryValue(writer, allocator, entry);
+        }
+    }
+    try writer.writeAll("}");
+}
+
+fn appendGeneratedResponseEntries(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList(GeneratedResponseEntry),
+    options: types.StoredRouteOptions,
+    response_component_name: ?[]const u8,
 ) !void {
     const default_status = options.status_code orelse .ok;
     const response_model_schema = options.response_model_schema;
     const default_content_type = defaultResponseContentType(options);
     var has_default = false;
 
-    try writer.writeAll("{");
-    var wrote: usize = 0;
-
     for (options.responses) |spec| {
-        if (wrote != 0) try writer.writeAll(",");
-        wrote += 1;
-
         if (spec.status_code == default_status) has_default = true;
+        const applies_model_schema = response_model_schema != null and spec.status_code == default_status;
+        const content_type = if (spec.content_type) |ct|
+            ct
+        else if (applies_model_schema or options.default_response_class != null)
+            default_content_type
+        else
+            null;
 
-        var status_buf: [3]u8 = undefined;
-        const status_str = try std.fmt.bufPrint(&status_buf, "{d}", .{@intFromEnum(spec.status_code)});
-        try writeJsonString(writer, status_str);
-        try writer.writeAll(":{");
-        try writeFieldName(writer, "description");
-        try writeJsonString(writer, spec.description orelse "Response");
-
-        const response_examples = responseExamplesForStatusAndContentType(
+        const examples = responseExamplesForStatusAndContentType(
             options.openapi_response_examples,
             spec.status_code,
-            spec.content_type orelse default_content_type,
+            content_type orelse default_content_type,
         );
 
-        const applies_model_schema = response_model_schema != null and spec.status_code == default_status;
-        if (spec.content_type) |ct| {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "content");
-            if (applies_model_schema and response_component_name != null) {
-                try writeResponseContentRef(
-                    writer,
-                    allocator,
-                    ct,
-                    response_component_name.?,
-                    response_examples,
-                );
-            } else {
-                try writeResponseContent(
-                    writer,
-                    ct,
-                    if (applies_model_schema) response_model_schema else null,
-                    response_examples,
-                );
-            }
-        } else if (applies_model_schema) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "content");
-            if (response_component_name) |component_name| {
-                try writeResponseContentRef(
-                    writer,
-                    allocator,
-                    default_content_type,
-                    component_name,
-                    response_examples,
-                );
-            } else {
-                try writeResponseContent(
-                    writer,
-                    default_content_type,
-                    response_model_schema,
-                    response_examples,
-                );
-            }
-        } else if (options.default_response_class != null) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "content");
-            try writeResponseContent(
-                writer,
-                default_content_type,
-                null,
-                response_examples,
-            );
-        }
-
-        try writer.writeAll("}");
+        try list.append(allocator, .{
+            .status_code = spec.status_code,
+            .description = spec.description orelse "Response",
+            .content_type = content_type,
+            .schema_opt = if (applies_model_schema and response_component_name == null) response_model_schema else null,
+            .schema_component_name = if (applies_model_schema) response_component_name else null,
+            .examples = examples,
+        });
     }
 
     if (!has_default) {
-        if (wrote != 0) try writer.writeAll(",");
-        var status_buf: [3]u8 = undefined;
-        const status_str = try std.fmt.bufPrint(&status_buf, "{d}", .{@intFromEnum(default_status)});
-        try writeJsonString(writer, status_str);
-        try writer.writeAll(":{");
-        try writeFieldName(writer, "description");
-        try writeJsonString(writer, "Successful Response");
         const default_examples = responseExamplesForStatusAndContentType(
             options.openapi_response_examples,
             default_status,
             default_content_type,
         );
-        if (response_model_schema != null) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "content");
-            if (response_component_name) |component_name| {
-                try writeResponseContentRef(
-                    writer,
-                    allocator,
-                    default_content_type,
-                    component_name,
-                    default_examples,
-                );
-            } else {
-                try writeResponseContent(
-                    writer,
-                    default_content_type,
-                    response_model_schema,
-                    default_examples,
-                );
-            }
-        } else if (default_examples.len > 0) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "content");
-            try writeResponseContent(writer, default_content_type, null, default_examples);
-        } else if (options.default_response_class != null) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "content");
-            try writeResponseContent(writer, default_content_type, null, &.{});
+        const default_content: ?[]const u8 = if (response_model_schema != null or default_examples.len > 0 or options.default_response_class != null)
+            default_content_type
+        else
+            null;
+
+        try list.append(allocator, .{
+            .status_code = default_status,
+            .description = "Successful Response",
+            .content_type = default_content,
+            .schema_opt = if (response_model_schema != null and response_component_name == null) response_model_schema else null,
+            .schema_component_name = if (response_model_schema != null) response_component_name else null,
+            .examples = default_examples,
+        });
+    }
+}
+
+fn writeResponseEntryValue(
+    writer: anytype,
+    allocator: std.mem.Allocator,
+    entry: GeneratedResponseEntry,
+) !void {
+    try writer.writeAll("{");
+    try writeFieldName(writer, "description");
+    try writeJsonString(writer, entry.description);
+
+    if (entry.content_type) |content_type| {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "content");
+        if (entry.schema_component_name) |schema_component_name| {
+            try writeResponseContentRef(
+                writer,
+                allocator,
+                content_type,
+                schema_component_name,
+                entry.examples,
+            );
+        } else {
+            try writeResponseContent(
+                writer,
+                content_type,
+                entry.schema_opt,
+                entry.examples,
+            );
         }
-        try writer.writeAll("}");
     }
 
     try writer.writeAll("}");
+}
+
+fn renderResponseEntryValueJson(
+    allocator: std.mem.Allocator,
+    entry: GeneratedResponseEntry,
+) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    var writer = out.writer(allocator);
+    try writeResponseEntryValue(&writer, allocator, entry);
+    return out.toOwnedSlice(allocator);
 }
 
 fn defaultResponseContentType(options: types.StoredRouteOptions) []const u8 {
@@ -1972,6 +2156,7 @@ fn writeComponents(
     response_components: []const ComponentSchema,
     parameter_components: []const ParameterComponent,
     request_body_components: []const RequestBodyComponent,
+    response_entry_components: []const ResponseEntryComponent,
 ) !void {
     try writer.writeAll("{");
 
@@ -2020,6 +2205,7 @@ fn writeComponents(
 
     if (request_body_components.len > 0) {
         if (wrote != 0) try writer.writeAll(",");
+        wrote += 1;
         try writeFieldName(writer, "requestBodies");
         try writer.writeAll("{");
         for (request_body_components, 0..) |entry, idx| {
@@ -2027,6 +2213,19 @@ fn writeComponents(
             try writeJsonString(writer, entry.name);
             try writer.writeAll(":");
             try writer.writeAll(entry.body_json);
+        }
+        try writer.writeAll("}");
+    }
+
+    if (response_entry_components.len > 0) {
+        if (wrote != 0) try writer.writeAll(",");
+        try writeFieldName(writer, "responses");
+        try writer.writeAll("{");
+        for (response_entry_components, 0..) |entry, idx| {
+            if (idx != 0) try writer.writeAll(",");
+            try writeJsonString(writer, entry.name);
+            try writer.writeAll(":");
+            try writer.writeAll(entry.response_json);
         }
         try writer.writeAll("}");
     }
