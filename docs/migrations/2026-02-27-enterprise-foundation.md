@@ -77,6 +77,12 @@
      - `cache_scope`,
      - `depends_on`,
      - `scopes`.
+21. Runtime socket/tcp policy CLI extension:
+   - `zigmund serve` and `zigmund dev` now support:
+     - `--recv-buffer-bytes <n>`,
+     - `--send-buffer-bytes <n>`,
+     - `--reuse-address|--no-reuse-address`.
+   - lifecycle startup audit payloads now include `reuse_address` for runtime-policy visibility.
 
 ## Migration Actions
 
@@ -107,6 +113,7 @@
 12. If you parse `zigmund routes --json` output, update consumers to tolerate/additionally consume the new policy metadata fields on HTTP and websocket route objects.
 13. If you consume trace/access sink payloads programmatically, update schemas/handlers to include the additive `baggage` field.
 14. If your CI/ops tooling parses route inventory JSON, migrate from count-only dependency fields to the new detailed dependency arrays when richer policy/governance checks are needed.
+15. If you operate runtime policy through CLI wrappers, include new socket/tcp knobs (`recv/send buffer`, `reuse_address`) where explicit transport tuning is required.
 
 ## Compatibility Notes
 

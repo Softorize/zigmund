@@ -238,6 +238,10 @@
 - CLI and operational DX progress:
   - `zigmund dev` now runs a live reload loop (workspace fingerprint watch + `serve` child process restart on file change) with configurable watch interval via `--watch-ms`.
   - `zigmund serve` / `zigmund dev` now support query-size guardrail flag `--max-query-bytes <n>`.
+  - `zigmund serve` / `zigmund dev` now support transport-tuning flags:
+    - `--recv-buffer-bytes <n>`,
+    - `--send-buffer-bytes <n>`,
+    - `--reuse-address|--no-reuse-address`.
   - `zigmund routes` now supports machine-readable output via `--json`, including route policy metadata (HTTP strict/limit knobs and websocket runtime controls) plus detailed dependency metadata arrays for HTTP/websocket routes.
   - `zigmund openapi` now supports file export via `--out <path>` / `--output <path>`.
   - `zigmund openapi` now supports deterministic generation mode via `--deterministic` (stable path/method/component ordering for CI snapshots).

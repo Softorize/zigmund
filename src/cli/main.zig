@@ -180,6 +180,18 @@ fn parseServeFlags(
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--recv-buffer-bytes")) {
+            const value = args.next() orelse return error.MissingRecvBufferBytesValue;
+            cfg.recv_buffer_size = try std.fmt.parseInt(usize, value, 10);
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--send-buffer-bytes")) {
+            const value = args.next() orelse return error.MissingSendBufferBytesValue;
+            cfg.send_buffer_size = try std.fmt.parseInt(usize, value, 10);
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--max-body-bytes")) {
             const value = args.next() orelse return error.MissingMaxBodyBytesValue;
             cfg.max_body_bytes = try std.fmt.parseInt(usize, value, 10);
@@ -231,6 +243,16 @@ fn parseServeFlags(
         if (std.mem.eql(u8, arg, "--shutdown-grace-ms")) {
             const value = args.next() orelse return error.MissingShutdownGraceValue;
             cfg.shutdown_grace_period_ms = try std.fmt.parseInt(u64, value, 10);
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--reuse-address")) {
+            cfg.reuse_address = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--no-reuse-address")) {
+            cfg.reuse_address = false;
             continue;
         }
 
@@ -689,8 +711,8 @@ fn usage() !void {
     try writeStdout(
         "Usage: zigmund <command> [options]\n" ++
             "Commands:\n" ++
-            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
-            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  serve [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
             "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
             "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>]\n" ++
@@ -1130,6 +1152,35 @@ test "parse serve flags supports max query bytes option" {
 
     try parseServeFlags(std.testing.allocator, &iter, &cfg, &owned);
     try std.testing.expectEqual(@as(usize, 4096), cfg.max_query_bytes);
+}
+
+test "parse serve flags supports socket buffer and reuse-address options" {
+    var cfg = zigmund.ServerConfig{};
+    var owned: ServeFlagsOwned = .{};
+    defer owned.deinit(std.testing.allocator);
+
+    var iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--recv-buffer-bytes 32768 --send-buffer-bytes 65536 --no-reuse-address",
+    ));
+    defer iter.deinit();
+
+    try parseServeFlags(std.testing.allocator, &iter, &cfg, &owned);
+    try std.testing.expectEqual(@as(usize, 32768), cfg.recv_buffer_size);
+    try std.testing.expectEqual(@as(usize, 65536), cfg.send_buffer_size);
+    try std.testing.expect(!cfg.reuse_address);
+
+    var cfg_second = zigmund.ServerConfig{ .reuse_address = false };
+    var owned_second: ServeFlagsOwned = .{};
+    defer owned_second.deinit(std.testing.allocator);
+    var iter_second = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--reuse-address",
+    ));
+    defer iter_second.deinit();
+
+    try parseServeFlags(std.testing.allocator, &iter_second, &cfg_second, &owned_second);
+    try std.testing.expect(cfg_second.reuse_address);
 }
 
 test "parse serve flags supports trusted proxy header toggles" {
