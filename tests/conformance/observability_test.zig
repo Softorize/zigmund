@@ -243,6 +243,31 @@ test "request id trace context telemetry access logs and metrics are propagated"
     try std.testing.expectEqual(@as(usize, 4), metrics_event_count);
 }
 
+test "request id propagation can be disabled via app config" {
+    resetTelemetryState(std.testing.allocator);
+    defer resetTelemetryState(std.testing.allocator);
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "observability-request-id-disabled",
+        .version = "0.0.1",
+        .request_id_enabled = false,
+    });
+    defer app.deinit();
+
+    app.setTelemetrySink(telemetrySink);
+    try app.get("/observe", observabilityHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    var res = try client.get("/observe");
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, res.status);
+    try std.testing.expect(res.header("x-request-id") == null);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"request_id\":\"\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), telemetry_event_count);
+    try std.testing.expectEqualStrings("", telemetry_last_request_id.?);
+}
+
 test "traceparent context populates trace id and span id in dependencies and sinks" {
     resetTelemetryState(std.testing.allocator);
     defer resetTelemetryState(std.testing.allocator);
