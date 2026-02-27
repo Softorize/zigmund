@@ -99,6 +99,7 @@ mountStaticFiles
 openapi
 params
 parseAuthorizationHeader
+parseScopesRawAlloc
 runtime
 schema
 security

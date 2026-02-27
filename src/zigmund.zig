@@ -86,6 +86,7 @@ pub const OAuth2PasswordRequestForm = security.OAuth2PasswordRequestForm;
 pub const parseAuthorizationHeader = security.parseAuthorizationHeader;
 pub const bearerTokenFromHeader = security.bearerTokenFromHeader;
 pub const decodeBasicCredentials = security.decodeBasicCredentials;
+pub const parseScopesRawAlloc = security.parseScopesRawAlloc;
 pub const ApiKeyIn = security.ApiKeyIn;
 pub const Scope = security.Scope;
 pub const OAuthFlow = security.OAuthFlow;

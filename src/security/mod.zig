@@ -250,6 +250,17 @@ pub const OAuth2PasswordRequestForm = struct {
     pub fn fromRequest(req: *Request) anyerror!OAuth2PasswordRequestForm {
         return parseOAuth2PasswordRequestForm(req);
     }
+
+    pub fn applyGrantedScopes(self: OAuth2PasswordRequestForm, req: *Request) !void {
+        try setGrantedScopesRaw(req, self.scope);
+    }
+
+    pub fn parsedScopesAlloc(
+        self: OAuth2PasswordRequestForm,
+        allocator: std.mem.Allocator,
+    ) ![][]const u8 {
+        return parseScopesRawAlloc(allocator, self.scope);
+    }
 };
 
 pub fn parseAuthorizationHeader(raw: ?[]const u8) ?HTTPAuthorizationCredentials {
@@ -335,6 +346,26 @@ pub fn hasScopesRaw(granted_raw: []const u8, required_scopes: []const []const u8
         if (!scopeSetContains(granted_raw, required_scope)) return false;
     }
     return true;
+}
+
+pub fn parseScopesRawAlloc(allocator: std.mem.Allocator, raw_scopes: []const u8) ![][]const u8 {
+    const trimmed = std.mem.trim(u8, raw_scopes, " \t");
+
+    var count: usize = 0;
+    var count_it = std.mem.tokenizeAny(u8, trimmed, ", ");
+    while (count_it.next()) |_| count += 1;
+
+    if (count == 0) {
+        return allocator.alloc([]const u8, 0);
+    }
+
+    const scopes = try allocator.alloc([]const u8, count);
+    var fill_it = std.mem.tokenizeAny(u8, trimmed, ", ");
+    var idx: usize = 0;
+    while (fill_it.next()) |token| : (idx += 1) {
+        scopes[idx] = token;
+    }
+    return scopes;
 }
 
 pub fn parseOAuth2PasswordRequestForm(req: *Request) anyerror!OAuth2PasswordRequestForm {

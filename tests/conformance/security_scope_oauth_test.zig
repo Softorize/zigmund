@@ -94,6 +94,17 @@ test "oauth2 password request form helper parses valid form and rejects invalid 
     try std.testing.expectEqualStrings("spa-client", form.client_id.?);
     try std.testing.expectEqualStrings("topsecret", form.client_secret.?);
 
+    const form_scopes = try form.parsedScopesAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(form_scopes);
+    try std.testing.expectEqual(@as(usize, 2), form_scopes.len);
+    try std.testing.expectEqualStrings("items:read", form_scopes[0]);
+    try std.testing.expectEqualStrings("profile:read", form_scopes[1]);
+
+    try form.applyGrantedScopes(&good_req);
+    try std.testing.expect(
+        zigmund.security.hasRequiredScopes(&good_req, &.{ "items:read", "profile:read" }),
+    );
+
     var bad_req = try zigmund.Request.initSyntheticWithHeaders(
         std.testing.allocator,
         .POST,
@@ -206,4 +217,14 @@ test "api key helpers resolve query header and cookie credentials with auto_erro
     try std.testing.expect((try query_no_error.resolve(&missing_req)) == null);
     try std.testing.expect((try header_no_error.resolve(&missing_req)) == null);
     try std.testing.expect((try cookie_no_error.resolve(&missing_req)) == null);
+}
+
+test "scope parser helper tokenizes comma and space-delimited scope sets" {
+    const scopes = try zigmund.parseScopesRawAlloc(std.testing.allocator, "items:read,items:write profile:read");
+    defer std.testing.allocator.free(scopes);
+
+    try std.testing.expectEqual(@as(usize, 3), scopes.len);
+    try std.testing.expectEqualStrings("items:read", scopes[0]);
+    try std.testing.expectEqualStrings("items:write", scopes[1]);
+    try std.testing.expectEqualStrings("profile:read", scopes[2]);
 }

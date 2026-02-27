@@ -127,6 +127,12 @@
    - `zigmund openapi` now supports:
      - `--json-schema-dialect <uri>` to override emitted `jsonSchemaDialect`,
      - `--no-json-schema-dialect` to suppress `jsonSchemaDialect` emission in CLI-generated output.
+32. OAuth2 scope utility extension:
+   - `OAuth2PasswordRequestForm` now exposes scope helpers:
+     - `parsedScopesAlloc(...)` for tokenized scope-list extraction,
+     - `applyGrantedScopes(...)` for request dependency-context scope seeding.
+   - new public utility export added:
+     - `parseScopesRawAlloc(...)` for comma/space-delimited scope set parsing.
 
 ## Migration Actions
 
@@ -168,6 +174,7 @@
 23. If response payload invariants were previously validated ad hoc in handlers/middleware, migrate them into model-local `zigmund_response_validate(...)` hooks for deterministic post-shaping validation.
 24. If your OpenAPI consumers require explicit JSON Schema dialect pinning, adopt `AppConfig.json_schema_dialect`; set to `null` only when external tooling enforces/infers dialect out-of-band.
 25. If OpenAPI artifact generation runs via CLI in CI/CD, migrate CLI invocations to use `--json-schema-dialect` / `--no-json-schema-dialect` where dialect policy differs by environment.
+26. If OAuth2 password-flow handlers currently tokenize `scope` manually, migrate to `OAuth2PasswordRequestForm.parsedScopesAlloc(...)` and/or `applyGrantedScopes(...)` for consistent scope parsing and dependency-state integration.
 
 ## Compatibility Notes
 

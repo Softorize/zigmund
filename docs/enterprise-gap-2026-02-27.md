@@ -151,6 +151,10 @@
   - insufficient-scope failures now return deterministic `403` with `WWW-Authenticate` challenge details (`Bearer error=\"insufficient_scope\"`) and required scope list when available.
   - OAuth2 password form helper added (`parseOAuth2PasswordRequestForm` / `OAuth2PasswordRequestForm.fromRequest`) with media-type and `grant_type=password` validation.
   - OAuth2 password form parity expanded with `client_id` and `client_secret` support in parser/form model.
+  - OAuth2 password form utilities now include scope parsing/application helpers:
+    - `OAuth2PasswordRequestForm.parsedScopesAlloc(...)`,
+    - `OAuth2PasswordRequestForm.applyGrantedScopes(...)`,
+    - `parseScopesRawAlloc(...)` export for reusable scope-token parsing.
   - API key helper conformance coverage now includes query/header/cookie resolver behavior and `auto_error` parity.
   - OAuth2 helper coverage expanded with `OAuth2ClientCredentialsBearer` and `OAuth2ImplicitBearer` bearer-token resolvers.
   - OAuth2 helper coverage expanded with `OAuth2AuthorizationCodeBearer` scope parity and resolver conformance behavior.
