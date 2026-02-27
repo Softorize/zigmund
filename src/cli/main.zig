@@ -40,10 +40,13 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, command, "openapi")) {
         const doc = try app.openapi();
-        const out_path = try parseOpenApiFlags(&args);
-        if (out_path) |path| {
+        const opts = try parseOpenApiFlags(&args);
+        if (opts.diff_path) |path| {
+            try assertOpenApiSnapshotFile(allocator, doc, path);
+        }
+        if (opts.out_path) |path| {
             try writeFile(path, doc);
-        } else {
+        } else if (opts.diff_path == null) {
             try writeStdout(doc);
             try writeStdout("\n");
         }
@@ -210,18 +213,27 @@ fn parseRoutesFlags(args: *std.process.ArgIterator) !bool {
     return json_output;
 }
 
-fn parseOpenApiFlags(args: *std.process.ArgIterator) !?[]const u8 {
-    var out_path: ?[]const u8 = null;
+const OpenApiCommandOptions = struct {
+    out_path: ?[]const u8 = null,
+    diff_path: ?[]const u8 = null,
+};
+
+fn parseOpenApiFlags(args: *std.process.ArgIterator) !OpenApiCommandOptions {
+    var opts: OpenApiCommandOptions = .{};
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--out") or std.mem.eql(u8, arg, "--output")) {
-            out_path = args.next() orelse return error.MissingOutputPath;
+            opts.out_path = args.next() orelse return error.MissingOutputPath;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--diff")) {
+            opts.diff_path = args.next() orelse return error.MissingDiffPath;
             continue;
         }
         return error.UnknownFlag;
     }
 
-    return out_path;
+    return opts;
 }
 
 fn parseCloudFlags(args: *std.process.ArgIterator) !?[]const u8 {
@@ -318,7 +330,7 @@ fn usage() !void {
             "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
-            "  openapi [--out <path>]\n" ++
+            "  openapi [--out <path>] [--diff <path>]\n" ++
             "  cloud [--out <path>]\n",
     );
 }
@@ -497,6 +509,53 @@ fn writeFile(path: []const u8, bytes: []const u8) !void {
     });
 }
 
+fn assertOpenApiSnapshotFile(
+    allocator: std.mem.Allocator,
+    actual: []const u8,
+    snapshot_path: []const u8,
+) !void {
+    const expected = std.fs.cwd().readFileAlloc(
+        allocator,
+        snapshot_path,
+        32 * 1024 * 1024,
+    ) catch |err| switch (err) {
+        error.FileNotFound => return error.OpenApiSnapshotMissing,
+        else => return err,
+    };
+    defer allocator.free(expected);
+
+    assertOpenApiSnapshot(expected, actual) catch |err| switch (err) {
+        error.OpenApiSnapshotMismatch => {
+            const first_diff = firstDiffIndex(expected, actual) orelse @min(expected.len, actual.len);
+            std.log.err(
+                "openapi snapshot mismatch: path={s} expected_len={d} actual_len={d} first_diff={d}",
+                .{ snapshot_path, expected.len, actual.len, first_diff },
+            );
+            return err;
+        },
+        else => return err,
+    };
+}
+
+fn assertOpenApiSnapshot(
+    expected: []const u8,
+    actual: []const u8,
+) !void {
+    if (std.mem.eql(u8, expected, actual)) return;
+    return error.OpenApiSnapshotMismatch;
+}
+
+fn firstDiffIndex(expected: []const u8, actual: []const u8) ?usize {
+    const min_len = @min(expected.len, actual.len);
+    var idx: usize = 0;
+    while (idx < min_len) : (idx += 1) {
+        if (expected[idx] != actual[idx]) return idx;
+    }
+
+    if (expected.len == actual.len) return null;
+    return min_len;
+}
+
 test "default app wires base routes" {
     var app = try buildDefaultApp(std.testing.allocator);
     defer app.deinit();
@@ -529,4 +588,16 @@ test "cloud plan renderer outputs route counts and openapi size" {
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"http_routes\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"websocket_routes\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, plan, "\"openapi_bytes\":") != null);
+}
+
+test "openapi snapshot assertion passes when docs match" {
+    try assertOpenApiSnapshot("{}", "{}");
+}
+
+test "openapi snapshot assertion fails when docs differ" {
+    try std.testing.expectError(
+        error.OpenApiSnapshotMismatch,
+        assertOpenApiSnapshot("{\"a\":1}", "{\"a\":2}"),
+    );
+    try std.testing.expectEqual(@as(?usize, 5), firstDiffIndex("{\"a\":1}", "{\"a\":2}"));
 }

@@ -193,6 +193,7 @@
   - `zigmund dev` now runs a live reload loop (workspace fingerprint watch + `serve` child process restart on file change) with configurable watch interval via `--watch-ms`.
   - `zigmund routes` now supports machine-readable output via `--json`.
   - `zigmund openapi` now supports file export via `--out <path>` / `--output <path>`.
+  - `zigmund openapi` now supports snapshot diff gating via `--diff <path>` with deterministic mismatch failure (`OpenApiSnapshotMismatch`) for CI regression checks.
   - `zigmund cloud` now emits a functional deployment-plan JSON (framework/app metadata, route counts, OpenAPI size) and supports writing it via `--out <path>`.
 - Routing/OpenAPI parity progress:
   - router matching now supports FastAPI-style catch-all path converters (`{file_path:path}`) for HTTP path params.
@@ -233,7 +234,8 @@
   - integration conformance for settings/templates/static-files/graphql/sql provider lifecycle,
   - path-converter OpenAPI fallback naming behavior,
   - metrics endpoint conformance (Prometheus output shape, enable/disable behavior, App JSON sink adapter wiring),
-  - CLI renderer coverage for routes JSON and cloud-plan output shape.
+  - CLI renderer coverage for routes JSON and cloud-plan output shape,
+  - CLI OpenAPI snapshot assertion behavior (match + mismatch paths).
 
 ## Recommended Next Enterprise Sprints
 1. Observability expansion: structured access logging, metrics adapters, trace context propagation.
