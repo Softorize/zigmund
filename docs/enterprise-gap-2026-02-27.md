@@ -250,6 +250,10 @@
     - `PARITY_REQUIRED_IMPLEMENTED`,
     - `PARITY_MAX_STUB`,
     - `PARITY_MAX_MISSING`.
+  - parity gate now also enforces example contract structure (`tools/parity/check_examples_contract.sh`):
+    - each mapped parity example must expose `buildExample(app: *zigmund.App) !void`,
+    - each mapped example must wire at least one route/mount/include call,
+    - no parity stub markers allowed.
   - release artifact baseline pipeline added:
     - `tools/release/build_release_artifacts.sh` builds `ReleaseFast` binary, generates SBOM, and emits SHA-256 checksums,
     - CI now uploads `dist/release/*` artifacts for reproducible release validation.

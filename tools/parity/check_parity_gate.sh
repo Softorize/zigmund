@@ -45,4 +45,9 @@ if [ "$missing" -gt "$max_missing" ]; then
   exit 1
 fi
 
+enforce_contract="${PARITY_ENFORCE_CONTRACT:-1}"
+if [ "$enforce_contract" = "1" ]; then
+  sh "$ROOT_DIR/tools/parity/check_examples_contract.sh"
+fi
+
 echo "parity gate passed: implemented=$implemented/$total stub=$stub missing=$missing"

@@ -6,6 +6,13 @@ fn root(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
     return zigmund.Response.json(allocator, .{ .message = "Hello World" });
 }
 
+pub fn buildExample(app: *zigmund.App) !void {
+    try app.get("/", root, .{
+        .summary = "First Steps",
+        .tags = &.{ "parity", "tutorial" },
+    });
+}
+
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     defer _ = gpa.deinit();
@@ -16,9 +23,7 @@ pub fn main() !void {
     });
     defer app.deinit();
 
-    try app.get("/", root, .{
-        .summary = "First Steps",
-    });
+    try buildExample(&app);
 
     try app.serve(.{});
 }
