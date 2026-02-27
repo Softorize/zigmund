@@ -192,30 +192,19 @@ fn serveFromRelativePath(
     const last_modified = try buildLastModified(allocator, stat);
     defer allocator.free(last_modified);
 
-    if (req.header("if-none-match")) |if_none_match| {
-        if (std.mem.eql(u8, std.mem.trim(u8, if_none_match, " \t"), etag)) {
-            response.deinit(allocator);
-            var not_modified = Response.text("").withStatus(.not_modified);
-            try not_modified.setEtag(allocator, etag);
-            try not_modified.setLastModified(allocator, last_modified);
-            if (options.cache_control) |cache_control| {
-                try not_modified.setHeader(allocator, "cache-control", cache_control);
-            }
-            return not_modified;
+    if (try Response.conditionalNotModified(
+        allocator,
+        etag,
+        last_modified,
+        req.header("if-none-match"),
+        req.header("if-modified-since"),
+    )) |not_modified| {
+        response.deinit(allocator);
+        var conditional = not_modified;
+        if (options.cache_control) |cache_control| {
+            try conditional.setHeader(allocator, "cache-control", cache_control);
         }
-    }
-
-    if (req.header("if-modified-since")) |if_modified_since| {
-        if (std.mem.eql(u8, std.mem.trim(u8, if_modified_since, " \t"), last_modified)) {
-            response.deinit(allocator);
-            var not_modified = Response.text("").withStatus(.not_modified);
-            try not_modified.setEtag(allocator, etag);
-            try not_modified.setLastModified(allocator, last_modified);
-            if (options.cache_control) |cache_control| {
-                try not_modified.setHeader(allocator, "cache-control", cache_control);
-            }
-            return not_modified;
-        }
+        return conditional;
     }
 
     try response.setEtag(allocator, etag);

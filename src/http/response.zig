@@ -64,6 +64,10 @@ pub const Response = struct {
         };
     }
 
+    pub fn notModified() Response {
+        return Response.text("").withStatus(.not_modified);
+    }
+
     pub fn redirect(allocator: std.mem.Allocator, location: []const u8, status: std.http.Status) !Response {
         var response = Response.text("").withStatus(status);
         try response.setHeader(allocator, "location", location);
@@ -194,6 +198,38 @@ pub const Response = struct {
         try self.setHeader(allocator, "last-modified", value);
     }
 
+    pub fn conditionalNotModified(
+        allocator: std.mem.Allocator,
+        etag: ?[]const u8,
+        last_modified: ?[]const u8,
+        if_none_match: ?[]const u8,
+        if_modified_since: ?[]const u8,
+    ) !?Response {
+        if (etag) |etag_value| {
+            if (if_none_match) |if_none_match_value| {
+                if (std.mem.eql(u8, std.mem.trim(u8, if_none_match_value, " \t"), etag_value)) {
+                    var response = Response.notModified();
+                    try response.setEtag(allocator, etag_value);
+                    if (last_modified) |lm| try response.setLastModified(allocator, lm);
+                    return response;
+                }
+            }
+        }
+
+        if (last_modified) |last_modified_value| {
+            if (if_modified_since) |if_modified_since_value| {
+                if (std.mem.eql(u8, std.mem.trim(u8, if_modified_since_value, " \t"), last_modified_value)) {
+                    var response = Response.notModified();
+                    if (etag) |etag_value| try response.setEtag(allocator, etag_value);
+                    try response.setLastModified(allocator, last_modified_value);
+                    return response;
+                }
+            }
+        }
+
+        return null;
+    }
+
     pub fn header(self: *const Response, name: []const u8) ?[]const u8 {
         for (self.headers.items) |hdr| {
             if (std.ascii.eqlIgnoreCase(hdr.name, name)) {
@@ -304,4 +340,36 @@ test "event stream response formats events and headers" {
     try std.testing.expect(std.mem.indexOf(u8, res.body, "event: message\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "retry: 1500\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "data: hello\ndata: world\n\n") != null);
+}
+
+test "conditionalNotModified returns 304 with cache validators" {
+    var by_etag = (try Response.conditionalNotModified(
+        std.testing.allocator,
+        "\"v1\"",
+        "Mon, 11 Mar 2024 10:00:00 GMT",
+        "\"v1\"",
+        null,
+    )).?;
+    defer by_etag.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.not_modified, by_etag.status);
+    try std.testing.expectEqualStrings("\"v1\"", by_etag.header("etag").?);
+
+    var by_last_modified = (try Response.conditionalNotModified(
+        std.testing.allocator,
+        "\"v2\"",
+        "Tue, 12 Mar 2024 10:00:00 GMT",
+        null,
+        "Tue, 12 Mar 2024 10:00:00 GMT",
+    )).?;
+    defer by_last_modified.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.not_modified, by_last_modified.status);
+    try std.testing.expectEqualStrings("Tue, 12 Mar 2024 10:00:00 GMT", by_last_modified.header("last-modified").?);
+
+    try std.testing.expect((try Response.conditionalNotModified(
+        std.testing.allocator,
+        "\"v3\"",
+        "Wed, 13 Mar 2024 10:00:00 GMT",
+        "\"other\"",
+        "Wed, 12 Mar 2024 10:00:00 GMT",
+    )) == null);
 }
