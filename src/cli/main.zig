@@ -39,8 +39,12 @@ pub fn main() !void {
     }
 
     if (std.mem.eql(u8, command, "openapi")) {
-        const doc = try app.openapi();
         const opts = try parseOpenApiFlags(&args);
+        if (opts.deterministic) {
+            app.cfg.openapi_deterministic = true;
+        }
+
+        const doc = try app.openapi();
         if (opts.diff_path) |path| {
             try assertOpenApiSnapshotFile(allocator, doc, path);
         }
@@ -216,9 +220,10 @@ fn parseRoutesFlags(args: *std.process.ArgIterator) !bool {
 const OpenApiCommandOptions = struct {
     out_path: ?[]const u8 = null,
     diff_path: ?[]const u8 = null,
+    deterministic: bool = false,
 };
 
-fn parseOpenApiFlags(args: *std.process.ArgIterator) !OpenApiCommandOptions {
+fn parseOpenApiFlags(args: anytype) !OpenApiCommandOptions {
     var opts: OpenApiCommandOptions = .{};
 
     while (args.next()) |arg| {
@@ -228,6 +233,10 @@ fn parseOpenApiFlags(args: *std.process.ArgIterator) !OpenApiCommandOptions {
         }
         if (std.mem.eql(u8, arg, "--diff")) {
             opts.diff_path = args.next() orelse return error.MissingDiffPath;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--deterministic")) {
+            opts.deterministic = true;
             continue;
         }
         return error.UnknownFlag;
@@ -330,7 +339,7 @@ fn usage() !void {
             "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--shutdown-grace-ms <n>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
-            "  openapi [--out <path>] [--diff <path>]\n" ++
+            "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
             "  cloud [--out <path>]\n",
     );
 }
@@ -600,4 +609,17 @@ test "openapi snapshot assertion fails when docs differ" {
         assertOpenApiSnapshot("{\"a\":1}", "{\"a\":2}"),
     );
     try std.testing.expectEqual(@as(?usize, 5), firstDiffIndex("{\"a\":1}", "{\"a\":2}"));
+}
+
+test "parse openapi flags supports deterministic out and diff options" {
+    var iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--deterministic --out openapi.json --diff baseline.json",
+    ));
+    defer iter.deinit();
+
+    const opts = try parseOpenApiFlags(&iter);
+    try std.testing.expect(opts.deterministic);
+    try std.testing.expectEqualStrings("openapi.json", opts.out_path.?);
+    try std.testing.expectEqualStrings("baseline.json", opts.diff_path.?);
 }
