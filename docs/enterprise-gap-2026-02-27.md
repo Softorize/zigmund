@@ -180,6 +180,12 @@
   - docs pages now render from deterministic local assets and are no longer dependent on external CDNs.
 - Proxy trust controls:
   - `extractProxyInfoWithConfig(...)` now honors `trusted_proxy_headers` policy.
+  - independent forwarded-header family trust controls are now available:
+    - `trusted_proxy_forwarded_header` (RFC `Forwarded`),
+    - `trusted_proxy_x_forwarded_headers` (`X-Forwarded-*`).
+  - CLI flags now expose these policy controls for `serve`/`dev`:
+    - `--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header`,
+    - `--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers`.
   - CIDR allowlist enforcement is now active via `trusted_proxy_cidrs` (forwarded headers are ignored unless peer IP matches configured ranges).
   - Runtime dispatch now propagates peer socket address into `Request` (`req.peerAddress()`), enabling policy decisions based on real client/proxy source IP.
   - proxy extraction now supports RFC `Forwarded` header parsing (`for`/`proto`) with precedence over legacy `X-Forwarded-*` values, while still respecting trust/CIDR policy gates.
@@ -266,7 +272,7 @@
     - validates generated SBOM shape/license markers.
   - CI now generates and uploads `zigmund.sbom.json` artifact and runs governance checks.
   - API concept parity summary artifact added at `tools/parity/api-parity-summary.json`:
-    - current gate status is explicit (`implemented=64`, `missing=0`) against FastAPI-core concept mapping.
+    - current gate status is explicit (`implemented=66`, `missing=0`) against FastAPI-core concept mapping.
   - parity governance gate added via `tools/parity/check_parity_gate.sh` with progressive threshold env knobs:
     - `PARITY_REQUIRED_IMPLEMENTED`,
     - `PARITY_MAX_STUB`,

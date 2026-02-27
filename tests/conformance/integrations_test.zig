@@ -185,12 +185,16 @@ test "sql session provider dependency lifecycle is deterministic" {
 test "compatibility adapters apply proxy trust policy to server config" {
     var cfg: zigmund.ServerConfig = .{
         .trusted_proxy_headers = true,
+        .trusted_proxy_forwarded_header = true,
+        .trusted_proxy_x_forwarded_headers = true,
         .trusted_proxy_cidrs = &.{"127.0.0.1/32"},
     };
 
     const proxy_mode = zigmund.CompatibilityAdapters{
         .enable_proxy_mode = true,
         .trusted_proxy_headers = true,
+        .trusted_proxy_forwarded_header = true,
+        .trusted_proxy_x_forwarded_headers = false,
         .trusted_proxy_cidrs = &.{
             "10.0.0.0/8",
             "192.168.0.0/16",
@@ -199,6 +203,8 @@ test "compatibility adapters apply proxy trust policy to server config" {
     proxy_mode.applyToServerConfig(&cfg);
 
     try std.testing.expect(cfg.trusted_proxy_headers);
+    try std.testing.expect(cfg.trusted_proxy_forwarded_header);
+    try std.testing.expect(!cfg.trusted_proxy_x_forwarded_headers);
     try std.testing.expectEqual(@as(usize, 2), cfg.trusted_proxy_cidrs.len);
     try std.testing.expectEqualStrings("10.0.0.0/8", cfg.trusted_proxy_cidrs[0]);
 
@@ -208,5 +214,7 @@ test "compatibility adapters apply proxy trust policy to server config" {
     direct_mode.applyToServerConfig(&cfg);
 
     try std.testing.expect(!cfg.trusted_proxy_headers);
+    try std.testing.expect(!cfg.trusted_proxy_forwarded_header);
+    try std.testing.expect(!cfg.trusted_proxy_x_forwarded_headers);
     try std.testing.expectEqual(@as(usize, 0), cfg.trusted_proxy_cidrs.len);
 }

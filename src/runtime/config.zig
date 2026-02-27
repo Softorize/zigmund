@@ -23,6 +23,8 @@ pub const ServerConfig = struct {
     shutdown_grace_period_ms: u64 = 30_000,
     reuse_address: bool = true,
     trusted_proxy_headers: bool = true,
+    trusted_proxy_forwarded_header: bool = true,
+    trusted_proxy_x_forwarded_headers: bool = true,
     trusted_proxy_cidrs: []const []const u8 = &.{},
     tls: ?TlsConfig = null,
 

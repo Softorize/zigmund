@@ -29,6 +29,13 @@
    - `tracestate` headers are now captured into request dependency state and propagated through trace/access-log sink payloads.
 13. Proxy header extraction behavior:
    - proxy metadata extraction now parses RFC `Forwarded` header values (`for`/`proto`) with precedence over `X-Forwarded-For`/`X-Forwarded-Proto`.
+14. Proxy trust policy controls:
+   - `ServerConfig` now exposes independent trust toggles for forwarded header families:
+     - `trusted_proxy_forwarded_header` (RFC `Forwarded`),
+     - `trusted_proxy_x_forwarded_headers` (`X-Forwarded-*`).
+   - CLI flags are now available to configure these independently:
+     - `--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header`,
+     - `--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers`.
 
 ## Migration Actions
 
@@ -48,6 +55,9 @@
 6. Existing websocket handlers can remain unchanged.
    - Optionally migrate to request-aware signatures when path/header/query state is needed inside websocket handlers.
 7. For lifecycle-sensitive integration tests, use `TestClient.start()` / `TestClient.close()` when you need explicit hook boundaries; otherwise lazy startup + `deinit` shutdown remains automatic.
+8. If you rely on proxy metadata, set explicit trust policy for header families based on your edge topology:
+   - disable RFC `Forwarded` trust when only legacy `X-Forwarded-*` is expected,
+   - disable `X-Forwarded-*` trust when your edge emits only RFC `Forwarded`.
 
 ## Compatibility Notes
 

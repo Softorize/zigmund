@@ -7,17 +7,38 @@ pub const ProxyInfo = struct {
     proto: ?[]const u8 = null,
 };
 
+const ProxyHeaderTrust = struct {
+    forwarded: bool = true,
+    x_forwarded: bool = true,
+};
+
 pub fn extractProxyInfo(req: *const Request) ProxyInfo {
-    const forwarded = parseForwardedHeader(req.header("forwarded"));
-    return .{
-        .client_ip = forwarded.client_ip orelse firstValue(req.header("x-forwarded-for")),
-        .proto = forwarded.proto orelse firstValue(req.header("x-forwarded-proto")),
-    };
+    return extractProxyInfoWithTrust(req, .{});
 }
 
 pub fn extractProxyInfoWithConfig(req: *const Request, cfg: ServerConfig) ProxyInfo {
     if (!shouldTrustProxyHeaders(req, cfg)) return .{};
-    return extractProxyInfo(req);
+    return extractProxyInfoWithTrust(req, .{
+        .forwarded = cfg.trusted_proxy_forwarded_header,
+        .x_forwarded = cfg.trusted_proxy_x_forwarded_headers,
+    });
+}
+
+fn extractProxyInfoWithTrust(req: *const Request, trust: ProxyHeaderTrust) ProxyInfo {
+    var out: ProxyInfo = .{};
+
+    if (trust.forwarded) {
+        const forwarded = parseForwardedHeader(req.header("forwarded"));
+        out.client_ip = forwarded.client_ip;
+        out.proto = forwarded.proto;
+    }
+
+    if (trust.x_forwarded) {
+        if (out.client_ip == null) out.client_ip = firstValue(req.header("x-forwarded-for"));
+        if (out.proto == null) out.proto = firstValue(req.header("x-forwarded-proto"));
+    }
+
+    return out;
 }
 
 fn shouldTrustProxyHeaders(req: *const Request, cfg: ServerConfig) bool {
@@ -185,6 +206,41 @@ test "forwarded header extraction supports for/proto and precedence over x-forwa
     const info = extractProxyInfo(&req);
     try std.testing.expectEqualStrings("203.0.113.43", info.client_ip.?);
     try std.testing.expectEqualStrings("https", info.proto.?);
+}
+
+test "proxy extraction supports independent trust toggles for forwarded and x-forwarded header families" {
+    const headers = [_]std.http.Header{
+        .{ .name = "forwarded", .value = "for=203.0.113.43;proto=https" },
+        .{ .name = "x-forwarded-for", .value = "198.51.100.10" },
+        .{ .name = "x-forwarded-proto", .value = "http" },
+    };
+
+    var req = try Request.initSyntheticWithHeaders(std.testing.allocator, .GET, "/", "", &headers);
+    defer req.deinit();
+
+    const forwarded_disabled = extractProxyInfoWithConfig(&req, .{
+        .trusted_proxy_headers = true,
+        .trusted_proxy_forwarded_header = false,
+        .trusted_proxy_x_forwarded_headers = true,
+    });
+    try std.testing.expectEqualStrings("198.51.100.10", forwarded_disabled.client_ip.?);
+    try std.testing.expectEqualStrings("http", forwarded_disabled.proto.?);
+
+    const x_forwarded_disabled = extractProxyInfoWithConfig(&req, .{
+        .trusted_proxy_headers = true,
+        .trusted_proxy_forwarded_header = true,
+        .trusted_proxy_x_forwarded_headers = false,
+    });
+    try std.testing.expectEqualStrings("203.0.113.43", x_forwarded_disabled.client_ip.?);
+    try std.testing.expectEqualStrings("https", x_forwarded_disabled.proto.?);
+
+    const all_disabled = extractProxyInfoWithConfig(&req, .{
+        .trusted_proxy_headers = true,
+        .trusted_proxy_forwarded_header = false,
+        .trusted_proxy_x_forwarded_headers = false,
+    });
+    try std.testing.expect(all_disabled.client_ip == null);
+    try std.testing.expect(all_disabled.proto == null);
 }
 
 test "forwarded header extraction handles quoted bracketed ipv6 and port" {

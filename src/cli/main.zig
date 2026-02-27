@@ -238,6 +238,26 @@ fn parseServeFlags(
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--trusted-proxy-forwarded-header")) {
+            cfg.trusted_proxy_forwarded_header = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--no-trusted-proxy-forwarded-header")) {
+            cfg.trusted_proxy_forwarded_header = false;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--trusted-proxy-x-forwarded-headers")) {
+            cfg.trusted_proxy_x_forwarded_headers = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--no-trusted-proxy-x-forwarded-headers")) {
+            cfg.trusted_proxy_x_forwarded_headers = false;
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--trusted-proxy-cidrs")) {
             const raw_value = args.next() orelse return error.MissingTrustedProxyCidrsValue;
             var tokens = std.mem.splitScalar(u8, raw_value, ',');
@@ -563,8 +583,8 @@ fn usage() !void {
     try writeStdout(
         "Usage: zigmund <command> [options]\n" ++
             "Commands:\n" ++
-            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
-            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  serve [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
             "  openapi [--deterministic] [--out <path>] [--diff <path>]\n" ++
             "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>]\n" ++
@@ -1006,6 +1026,34 @@ test "parse serve flags supports trusted proxy header toggles" {
 
     try parseServeFlags(std.testing.allocator, &disabled_iter, &disabled_cfg, &disabled_owned);
     try std.testing.expect(!disabled_cfg.trusted_proxy_headers);
+}
+
+test "parse serve flags supports independent forwarded and x-forwarded header toggles" {
+    var cfg = zigmund.ServerConfig{};
+    var owned: ServeFlagsOwned = .{};
+    defer owned.deinit(std.testing.allocator);
+    var iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--no-trusted-proxy-forwarded-header --trusted-proxy-x-forwarded-headers",
+    ));
+    defer iter.deinit();
+
+    try parseServeFlags(std.testing.allocator, &iter, &cfg, &owned);
+    try std.testing.expect(!cfg.trusted_proxy_forwarded_header);
+    try std.testing.expect(cfg.trusted_proxy_x_forwarded_headers);
+
+    var cfg_second = zigmund.ServerConfig{};
+    var owned_second: ServeFlagsOwned = .{};
+    defer owned_second.deinit(std.testing.allocator);
+    var iter_second = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--trusted-proxy-forwarded-header --no-trusted-proxy-x-forwarded-headers",
+    ));
+    defer iter_second.deinit();
+
+    try parseServeFlags(std.testing.allocator, &iter_second, &cfg_second, &owned_second);
+    try std.testing.expect(cfg_second.trusted_proxy_forwarded_header);
+    try std.testing.expect(!cfg_second.trusted_proxy_x_forwarded_headers);
 }
 
 test "parse serve flags supports trusted proxy cidr allowlist values" {
