@@ -87,6 +87,9 @@
    - `OAuth2AuthorizationCodeBearer` now includes `scopes` for parity with other OAuth2 bearer helper types.
    - conformance now validates authorization-code bearer resolver behavior (`auto_error` + bearer extraction).
    - OpenAPI conformance now validates full OAuth2 flow object emission (`implicit`, `password`, `clientCredentials`, `authorizationCode`).
+23. API-key auth failure semantics hardening:
+   - when a route/websocket dependency maps to an API-key security scheme, unauthorized outcomes now return `403 Forbidden` (instead of fallback bearer `401` semantics).
+   - API-key auth failures no longer emit `WWW-Authenticate: Bearer` fallback headers.
 
 ## Migration Actions
 
@@ -119,6 +122,7 @@
 14. If your CI/ops tooling parses route inventory JSON, migrate from count-only dependency fields to the new detailed dependency arrays when richer policy/governance checks are needed.
 15. If you operate runtime policy through CLI wrappers, include new socket/tcp knobs (`recv/send buffer`, `reuse_address`) where explicit transport tuning is required.
 16. For OAuth2 helper usage, you can now configure `scopes` on `OAuth2AuthorizationCodeBearer` in the same pattern as other OAuth2 bearer helper types.
+17. If downstream consumers depended on bearer challenge headers for API-key protected routes, update expectations: API-key failures now return `403` without `WWW-Authenticate`.
 
 ## Compatibility Notes
 

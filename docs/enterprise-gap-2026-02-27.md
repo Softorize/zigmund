@@ -93,6 +93,7 @@
     - startup runtime policy snapshot emission (`startup_config`) with structured server config details (`max_query_bytes` and proxy trust controls included) and `serve_failed` capture.
 - Security failure-mode hardening:
   - unauthorized responses now include `WWW-Authenticate: Bearer`.
+  - API-key secured dependency failures now return `403 Forbidden` without bearer challenge fallback headers.
   - HTTP auth challenges now emit richer scheme-specific `WWW-Authenticate` details:
     - Basic: `Basic realm="zigmund"`,
     - Digest: `Digest realm="zigmund", qop="auth", algorithm=SHA-256`.
@@ -309,6 +310,7 @@
   - observability request-id/telemetry behavior,
   - dependency cleanup lifecycle,
   - unauthorized header behavior,
+  - API-key auth failure semantics (`403` + no bearer challenge fallback),
   - scheme-specific auth challenge behavior for Basic/Digest unauthorized and insufficient-scope responses,
   - OpenAPI components + operation-id stability,
   - OpenAPI deterministic ordering and extension-hook behavior (including invalid extension key/JSON rejection),

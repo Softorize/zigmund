@@ -136,3 +136,48 @@ test "digest unauthorized and insufficient-scope challenges include digest auth 
     try std.testing.expect(std.mem.startsWith(u8, insufficient_challenge, "Digest"));
     try std.testing.expect(std.mem.indexOf(u8, insufficient_challenge, "insufficient_scope") == null);
 }
+
+test "api key auth failures return forbidden without bearer challenge headers" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "unauthorized-api-key",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addDependency("api_key_auth", authDependency);
+    try app.addSecurityScheme("api_key_auth", .{
+        .api_key = .{
+            .name = "x-api-key",
+            .in = .header,
+        },
+    });
+    try app.get("/api-key-protected", protected, .{
+        .dependencies = &.{.{ .name = "api_key_auth" }},
+    });
+
+    try app.addDependency("api_key_scope", scopeFailDependency);
+    try app.addSecurityScheme("api_key_scope", .{
+        .api_key = .{
+            .name = "api_key",
+            .in = .query,
+        },
+    });
+    try app.get("/api-key-scope", protected, .{
+        .dependencies = &.{.{
+            .name = "api_key_scope",
+            .scopes = &.{"admin"},
+        }},
+    });
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var unauthorized = try client.get("/api-key-protected");
+    defer unauthorized.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.forbidden, unauthorized.status);
+    try std.testing.expect(unauthorized.header("www-authenticate") == null);
+
+    var insufficient = try client.get("/api-key-scope");
+    defer insufficient.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.forbidden, insufficient.status);
+    try std.testing.expect(insufficient.header("www-authenticate") == null);
+}

@@ -1540,25 +1540,38 @@ pub const App = struct {
     }
 
     fn unauthorizedResponseForRoute(self: *const App, route_options: types.StoredRouteOptions) Response {
-        var challenge: []const u8 = "Bearer";
-        if (self.routeSecurityChallenge(route_options)) |route_challenge| {
-            challenge = route_challenge;
-        }
+        const auth_style = self.routeSecurityStyle(route_options);
+        const status: std.http.Status = if (auth_style == .api_key) .forbidden else .unauthorized;
+        var response = Response.text(if (status == .forbidden) "forbidden" else "unauthorized").withStatus(status);
 
-        var response = Response.text("unauthorized").withStatus(.unauthorized);
-        response.setHeader(self.allocator, "www-authenticate", challenge) catch {};
+        if (self.routeSecurityChallenge(route_options)) |challenge| {
+            response.setHeader(self.allocator, "www-authenticate", challenge) catch {};
+        } else if (auth_style != .api_key) {
+            response.setHeader(self.allocator, "www-authenticate", "Bearer") catch {};
+        }
         return response;
     }
 
     fn unauthorizedResponseForWebSocket(self: *const App, route_options: types.WebSocketRouteOptions) Response {
-        const challenge = self.dependenciesSecurityChallenge(route_options.dependencies) orelse "Bearer";
-        var response = Response.text("unauthorized").withStatus(.unauthorized);
-        response.setHeader(self.allocator, "www-authenticate", challenge) catch {};
+        const auth_style = self.dependenciesSecurityStyle(route_options.dependencies);
+        const status: std.http.Status = if (auth_style == .api_key) .forbidden else .unauthorized;
+        var response = Response.text(if (status == .forbidden) "forbidden" else "unauthorized").withStatus(status);
+
+        if (self.dependenciesSecurityChallenge(route_options.dependencies)) |challenge| {
+            response.setHeader(self.allocator, "www-authenticate", challenge) catch {};
+        } else if (auth_style != .api_key) {
+            response.setHeader(self.allocator, "www-authenticate", "Bearer") catch {};
+        }
         return response;
     }
 
     fn insufficientScopeResponseForRoute(self: *const App, route_options: types.StoredRouteOptions) Response {
-        const challenge_base = self.routeSecurityChallenge(route_options) orelse "Bearer";
+        const challenge_base_opt = self.routeSecurityChallenge(route_options);
+        const auth_style = self.routeSecurityStyle(route_options);
+        if (challenge_base_opt == null and auth_style == .api_key) {
+            return Response.text("forbidden").withStatus(.forbidden);
+        }
+        const challenge_base = challenge_base_opt orelse "Bearer";
         const required_scopes = self.routeRequiredScopes(route_options);
 
         var response = Response.text("forbidden").withStatus(.forbidden);
@@ -1607,7 +1620,12 @@ pub const App = struct {
         self: *const App,
         route_options: types.WebSocketRouteOptions,
     ) Response {
-        const challenge_base = self.dependenciesSecurityChallenge(route_options.dependencies) orelse "Bearer";
+        const challenge_base_opt = self.dependenciesSecurityChallenge(route_options.dependencies);
+        const auth_style = self.dependenciesSecurityStyle(route_options.dependencies);
+        if (challenge_base_opt == null and auth_style == .api_key) {
+            return Response.text("forbidden").withStatus(.forbidden);
+        }
+        const challenge_base = challenge_base_opt orelse "Bearer";
         const required_scopes = self.dependenciesRequiredScopes(route_options.dependencies) orelse &.{};
 
         var response = Response.text("forbidden").withStatus(.forbidden);
@@ -1657,6 +1675,18 @@ pub const App = struct {
         return null;
     }
 
+    const SecurityAuthStyle = enum {
+        unknown,
+        api_key,
+        challenge,
+    };
+
+    fn routeSecurityStyle(self: *const App, route_options: types.StoredRouteOptions) SecurityAuthStyle {
+        const route_style = self.dependenciesSecurityStyle(route_options.dependencies);
+        if (route_style != .unknown) return route_style;
+        return self.dependenciesSecurityStyle(route_options.injected_dependencies);
+    }
+
     fn routeRequiredScopes(self: *const App, route_options: types.StoredRouteOptions) []const []const u8 {
         if (self.dependenciesRequiredScopes(route_options.dependencies)) |scopes| return scopes;
         if (self.dependenciesRequiredScopes(route_options.injected_dependencies)) |scopes| return scopes;
@@ -1672,6 +1702,20 @@ pub const App = struct {
             if (challengeForSecurityScheme(scheme.scheme)) |challenge| return challenge;
         }
         return null;
+    }
+
+    fn dependenciesSecurityStyle(
+        self: *const App,
+        dependencies: []const types.DependencySpec,
+    ) SecurityAuthStyle {
+        for (dependencies) |dep| {
+            const scheme = self.lookupSecurityScheme(dep.name) orelse continue;
+            return switch (scheme.scheme) {
+                .api_key => .api_key,
+                else => .challenge,
+            };
+        }
+        return .unknown;
     }
 
     fn dependenciesRequiredScopes(
