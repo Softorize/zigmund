@@ -88,6 +88,21 @@ fn waitReadable(fd: std.posix.fd_t, timeout_ms: i32) !bool {
     return (pfd[0].revents & std.posix.POLL.IN) != 0;
 }
 
+fn statusCodeFromResponse(response: []const u8) ?u16 {
+    const line_end = std.mem.indexOf(u8, response, "\r\n") orelse return null;
+    const line = response[0..line_end];
+
+    var parts = std.mem.tokenizeScalar(u8, line, ' ');
+    _ = parts.next() orelse return null;
+    const code_text = parts.next() orelse return null;
+    return std.fmt.parseInt(u16, code_text, 10) catch null;
+}
+
+fn guardrailOkHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    _ = req;
+    return zigmund.Response.json(allocator, .{ .ok = true });
+}
+
 test "server enforces max_body_bytes with 413 response" {
     const port = try reservePort();
 
@@ -241,6 +256,128 @@ test "server enforces max_query_bytes with 414 response" {
     const n = try stream.read(&read_buf);
     try std.testing.expect(n > 0);
     try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "414") != null);
+}
+
+test "route guardrails can override global body and query limits" {
+    const port = try reservePort();
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "runtime-route-guardrails",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.post("/strict", guardrailOkHandler, .{});
+    try app.post("/relaxed", guardrailOkHandler, .{
+        .max_query_bytes = 64,
+        .max_body_bytes = 64,
+    });
+
+    const cfg: zigmund.ServerConfig = .{
+        .host = "127.0.0.1",
+        .port = port,
+        .worker_count = 1,
+        .accept_poll_interval_ms = 10,
+        .idle_timeout_ms = 500,
+        .shutdown_grace_period_ms = 200,
+        .max_query_bytes = 8,
+        .max_body_bytes = 8,
+    };
+
+    var serve_ctx: ServeThreadCtx = .{
+        .app = &app,
+        .cfg = cfg,
+    };
+
+    const thread = try std.Thread.spawn(.{}, serveThread, .{&serve_ctx});
+    defer {
+        app.requestShutdown();
+        thread.join();
+    }
+
+    const address = try std.net.Address.resolveIp("127.0.0.1", port);
+    const long_query = "term=abcdefghijklmnopqrstuvwxyz";
+    const medium_body = "abcdefghijklmnopqrstuvwxyz";
+
+    // Strict route should use global query limit (8 bytes) and fail.
+    {
+        var stream = try connectWithRetry(address);
+        defer stream.close();
+
+        const request = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "POST /strict?{s} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n\r\n",
+            .{long_query},
+        );
+        defer std.testing.allocator.free(request);
+        try stream.writeAll(request);
+
+        try std.testing.expect(try waitReadable(stream.handle, 2_000));
+        var read_buf: [4096]u8 = undefined;
+        const n = try stream.read(&read_buf);
+        try std.testing.expect(n > 0);
+        try std.testing.expectEqual(@as(?u16, 414), statusCodeFromResponse(read_buf[0..n]));
+    }
+
+    // Relaxed route should override query limit and pass.
+    {
+        var stream = try connectWithRetry(address);
+        defer stream.close();
+
+        const request = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "POST /relaxed?{s} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n\r\n",
+            .{long_query},
+        );
+        defer std.testing.allocator.free(request);
+        try stream.writeAll(request);
+
+        try std.testing.expect(try waitReadable(stream.handle, 2_000));
+        var read_buf: [4096]u8 = undefined;
+        const n = try stream.read(&read_buf);
+        try std.testing.expect(n > 0);
+        try std.testing.expectEqual(@as(?u16, 200), statusCodeFromResponse(read_buf[0..n]));
+    }
+
+    // Strict route should use global body limit (8 bytes) and fail.
+    {
+        var stream = try connectWithRetry(address);
+        defer stream.close();
+
+        const request = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "POST /strict HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {d}\r\n\r\n{s}",
+            .{ medium_body.len, medium_body },
+        );
+        defer std.testing.allocator.free(request);
+        try stream.writeAll(request);
+
+        try std.testing.expect(try waitReadable(stream.handle, 2_000));
+        var read_buf: [4096]u8 = undefined;
+        const n = try stream.read(&read_buf);
+        try std.testing.expect(n > 0);
+        try std.testing.expectEqual(@as(?u16, 413), statusCodeFromResponse(read_buf[0..n]));
+    }
+
+    // Relaxed route should override body limit and pass.
+    {
+        var stream = try connectWithRetry(address);
+        defer stream.close();
+
+        const request = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "POST /relaxed HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {d}\r\n\r\n{s}",
+            .{ medium_body.len, medium_body },
+        );
+        defer std.testing.allocator.free(request);
+        try stream.writeAll(request);
+
+        try std.testing.expect(try waitReadable(stream.handle, 2_000));
+        var read_buf: [4096]u8 = undefined;
+        const n = try stream.read(&read_buf);
+        try std.testing.expect(n > 0);
+        try std.testing.expectEqual(@as(?u16, 200), statusCodeFromResponse(read_buf[0..n]));
+    }
 }
 
 test "requestShutdown stops server loop gracefully" {

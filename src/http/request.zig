@@ -108,6 +108,7 @@ pub const Request = struct {
         };
         errdefer req.deinit();
 
+        try req.storeRawHeaders(raw);
         try req.parseQueryParams();
         try req.readBodyFromRaw(max_body_bytes);
         return req;
@@ -184,15 +185,6 @@ pub const Request = struct {
     }
 
     pub fn header(self: *const Request, name: []const u8) ?[]const u8 {
-        if (self.raw) |raw| {
-            var it = raw.iterateHeaders();
-            while (it.next()) |hdr| {
-                if (std.ascii.eqlIgnoreCase(hdr.name, name)) {
-                    return hdr.value;
-                }
-            }
-        }
-
         for (self.synthetic_headers.items) |hdr| {
             if (std.ascii.eqlIgnoreCase(hdr.name, name)) return hdr.value;
         }
@@ -663,6 +655,20 @@ pub const Request = struct {
 
     fn storeSyntheticHeaders(self: *Request, headers: []const std.http.Header) !void {
         for (headers) |hdr| {
+            const name = try self.allocator.dupe(u8, hdr.name);
+            errdefer self.allocator.free(name);
+            const value = try self.allocator.dupe(u8, hdr.value);
+            errdefer self.allocator.free(value);
+            try self.synthetic_headers.append(self.allocator, .{
+                .name = name,
+                .value = value,
+            });
+        }
+    }
+
+    fn storeRawHeaders(self: *Request, raw: *std.http.Server.Request) !void {
+        var it = raw.iterateHeaders();
+        while (it.next()) |hdr| {
             const name = try self.allocator.dupe(u8, hdr.name);
             errdefer self.allocator.free(name);
             const value = try self.allocator.dupe(u8, hdr.value);

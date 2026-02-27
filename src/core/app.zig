@@ -476,7 +476,10 @@ pub const App = struct {
         peer_address: std.net.Address,
         socket_fd: std.posix.fd_t,
     ) !void {
-        const query_limit = if (self.active_server_cfg) |cfg| cfg.max_query_bytes else 16 * 1024;
+        const route_guardrails = self.resolveHttpRouteGuardrails(raw_request.head.method, raw_request.head.target);
+
+        const query_limit = route_guardrails.max_query_bytes orelse
+            (if (self.active_server_cfg) |cfg| cfg.max_query_bytes else 16 * 1024);
         if (query_limit != 0 and queryLengthFromTarget(raw_request.head.target) > query_limit) {
             try raw_request.respond("query string too large", .{
                 .status = .uri_too_long,
@@ -487,7 +490,8 @@ pub const App = struct {
             return;
         }
 
-        const body_limit = if (self.active_server_cfg) |cfg| cfg.max_body_bytes else 8 * 1024 * 1024;
+        const body_limit = route_guardrails.max_body_bytes orelse
+            (if (self.active_server_cfg) |cfg| cfg.max_body_bytes else 8 * 1024 * 1024);
         var req = Request.initFromRawWithBodyLimitAndPeer(
             self.allocator,
             raw_request,
@@ -631,6 +635,25 @@ pub const App = struct {
         const rest = target[qmark_idx + 1 ..];
         const fragment_idx = std.mem.indexOfScalar(u8, rest, '#') orelse return rest.len;
         return rest[0..fragment_idx].len;
+    }
+
+    const RouteGuardrails = struct {
+        max_query_bytes: ?usize = null,
+        max_body_bytes: ?usize = null,
+    };
+
+    fn resolveHttpRouteGuardrails(self: *App, method: std.http.Method, target: []const u8) RouteGuardrails {
+        var probe = Request.initSynthetic(self.allocator, method, target, "") catch return .{};
+        defer probe.deinit();
+
+        const route = self.router.findHttp(&probe) catch return .{};
+        if (route) |matched| {
+            return .{
+                .max_query_bytes = matched.options.max_query_bytes,
+                .max_body_bytes = matched.options.max_body_bytes,
+            };
+        }
+        return .{};
     }
 
     fn dispatchWithPipeline(self: *App, req: *Request) !Response {
