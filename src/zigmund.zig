@@ -10,6 +10,7 @@ pub const openapi = @import("openapi/mod.zig");
 pub const security = @import("security/mod.zig");
 pub const integrations = @import("integrations/mod.zig");
 pub const testing = @import("testing/mod.zig");
+pub const mw = @import("middleware/mod.zig");
 
 pub const App = core.App;
 pub const Middleware = core.Middleware;
@@ -71,6 +72,24 @@ pub const loadSettings = integrations.loadSettings;
 pub const loadSettingsFromEnvMap = integrations.loadSettingsFromEnvMap;
 pub const mountStaticFiles = integrations.mountStaticFiles;
 pub const mountGraphQl = integrations.mountGraphQl;
+
+pub const template = integrations.jinja;
+pub const JinjaEngine = integrations.JinjaEngine;
+pub const JinjaValue = integrations.JinjaValue;
+pub const renderJinjaString = integrations.renderJinjaString;
+
+pub const CorsOptions = mw.CorsOptions;
+pub const RateLimitOptions = mw.RateLimitOptions;
+pub const CsrfOptions = mw.CsrfOptions;
+pub const CompressionOptions = mw.CompressionOptions;
+pub const SessionOptions = mw.SessionOptions;
+pub const SessionStore = mw.SessionStore;
+pub const InMemoryStore = mw.InMemoryStore;
+pub const corsMw = mw.cors.middleware;
+pub const rateLimitMw = mw.rate_limit.middleware;
+pub const csrfMw = mw.csrf.middleware;
+pub const compressionMw = mw.compression.middleware;
+pub const sessionMw = mw.session.middleware;
 
 pub const APIKeyQuery = security.APIKeyQuery;
 pub const APIKeyHeader = security.APIKeyHeader;
