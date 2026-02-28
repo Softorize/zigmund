@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const openssl_prefix = b.option([]const u8, "openssl-prefix", "Custom OpenSSL installation prefix");
 
     const zigmund_mod = b.addModule("zigmund", .{
         .root_source_file = b.path("src/zigmund.zig"),
@@ -23,7 +24,7 @@ pub fn build(b: *std.Build) void {
         .name = "zigmund",
         .root_module = cli_mod,
     });
-    applyNativeTlsLinks(exe);
+    applyNativeTlsLinks(exe, openssl_prefix);
     b.installArtifact(exe);
 
     const run_step = b.step("run", "Run Zigmund CLI");
@@ -41,12 +42,12 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run library and integration tests");
 
     const lib_tests = b.addTest(.{ .root_module = zigmund_mod });
-    applyNativeTlsLinks(lib_tests);
+    applyNativeTlsLinks(lib_tests, openssl_prefix);
     const run_lib_tests = b.addRunArtifact(lib_tests);
     test_step.dependOn(&run_lib_tests.step);
 
     const cli_tests = b.addTest(.{ .root_module = cli_mod });
-    applyNativeTlsLinks(cli_tests);
+    applyNativeTlsLinks(cli_tests, openssl_prefix);
     const run_cli_tests = b.addRunArtifact(cli_tests);
     test_step.dependOn(&run_cli_tests.step);
 
@@ -110,7 +111,7 @@ pub fn build(b: *std.Build) void {
             },
         });
         const test_exe = b.addTest(.{ .root_module = mod });
-        applyNativeTlsLinks(test_exe);
+        applyNativeTlsLinks(test_exe, openssl_prefix);
         const run_test_exe = b.addRunArtifact(test_exe);
         test_step.dependOn(&run_test_exe.step);
     }
@@ -140,19 +141,50 @@ pub fn build(b: *std.Build) void {
             },
         });
         const perf_exe = b.addTest(.{ .root_module = perf_mod });
-        applyNativeTlsLinks(perf_exe);
+        applyNativeTlsLinks(perf_exe, openssl_prefix);
         const run_perf_exe = b.addRunArtifact(perf_exe);
         perf_step.dependOn(&run_perf_exe.step);
     }
 
+    const soak_step = b.step("soak", "Run runtime soak and deployment validation test subset");
+    const soak_files = [_][]const u8{
+        "tests/conformance/runtime_server_limits_test.zig",
+        "tests/conformance/runtime_tls_config_test.zig",
+        "tests/reliability/runtime_reliability_test.zig",
+        "tests/interop/proxy_headers_test.zig",
+    };
+    for (soak_files) |path| {
+        const soak_mod = b.createModule(.{
+            .root_source_file = b.path(path),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "zigmund", .module = zigmund_mod },
+            },
+        });
+        const soak_exe = b.addTest(.{ .root_module = soak_mod });
+        applyNativeTlsLinks(soak_exe, openssl_prefix);
+        const run_soak_exe = b.addRunArtifact(soak_exe);
+        soak_step.dependOn(&run_soak_exe.step);
+    }
+
     const check_step = b.step("check", "Compile Zigmund without running");
     check_step.dependOn(&exe.step);
+    check_step.dependOn(&lib_tests.step);
 }
 
-fn applyNativeTlsLinks(step: *std.Build.Step.Compile) void {
+fn applyNativeTlsLinks(step: *std.Build.Step.Compile, openssl_prefix: ?[]const u8) void {
     step.linkLibC();
     step.linkSystemLibrary("ssl");
     step.linkSystemLibrary("crypto");
+
+    if (openssl_prefix) |prefix| {
+        const include_path = std.fmt.allocPrint(step.step.owner.allocator, "{s}/include", .{prefix}) catch return;
+        const lib_path = std.fmt.allocPrint(step.step.owner.allocator, "{s}/lib", .{prefix}) catch return;
+        step.addIncludePath(.{ .cwd_relative = include_path });
+        step.addLibraryPath(.{ .cwd_relative = lib_path });
+        return;
+    }
 
     if (pathExists("/opt/homebrew/include")) {
         step.addIncludePath(.{ .cwd_relative = "/opt/homebrew/include" });
