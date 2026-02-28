@@ -115,6 +115,9 @@ pub const Connection = struct {
         }
     }
 
+    // Fix #7: removed duplicated .raw/.synthetic branches; replaced
+    // heap allocation with a stack buffer (RFC 6455 caps close reason
+    // at 123 bytes).
     pub fn closeWithCode(self: *Connection, code: u16, reason: []const u8) !void {
         var payload: [2]u8 = .{
             @intCast((code >> 8) & 0xff),
@@ -122,37 +125,32 @@ pub const Connection = struct {
         };
         self.last_close_code = code;
 
-        switch (self.mode) {
-            .raw => {
-                if (reason.len == 0) {
-                    try self.sendMessage(&payload, .connection_close);
-                    return;
-                }
-
-                const joined = try std.heap.c_allocator.alloc(u8, payload.len + reason.len);
-                defer std.heap.c_allocator.free(joined);
-                @memcpy(joined[0..2], &payload);
-                @memcpy(joined[2..], reason);
-                try self.sendMessage(joined, .connection_close);
-            },
-            .synthetic => {
-                if (reason.len == 0) {
-                    try self.sendMessage(&payload, .connection_close);
-                    return;
-                }
-
-                const joined = try std.heap.c_allocator.alloc(u8, payload.len + reason.len);
-                defer std.heap.c_allocator.free(joined);
-                @memcpy(joined[0..2], &payload);
-                @memcpy(joined[2..], reason);
-                try self.sendMessage(joined, .connection_close);
-            },
+        if (reason.len == 0) {
+            try self.sendMessage(&payload, .connection_close);
+            return;
         }
+
+        // RFC 6455 limits close reason to 123 bytes (125 - 2 byte code).
+        // Use a stack buffer instead of heap allocation.
+        var buf: [2 + 123]u8 = undefined;
+        const reason_len = @min(reason.len, 123);
+        @memcpy(buf[0..2], &payload);
+        @memcpy(buf[2..][0..reason_len], reason[0..reason_len]);
+        try self.sendMessage(buf[0 .. 2 + reason_len], .connection_close);
     }
 
+    /// Intentionally empty: the Connection wrapper does not own its
+    /// underlying resources. The raw WebSocket and test endpoint are
+    /// owned by the transport layer (std.http.Server or TestDuplex)
+    /// and are freed there. This method exists so callers can follow
+    /// a uniform init/deinit pattern without special-casing.
     pub fn deinit(self: *Connection, allocator: std.mem.Allocator) void {
-        _ = self;
         _ = allocator;
+        if (std.debug.runtime_safety) {
+            self.raw = null;
+            self.test_endpoint = null;
+            self.raw_socket_fd = null;
+        }
     }
 
     fn sendMessage(self: *Connection, payload: []const u8, opcode: Opcode) !void {
@@ -324,7 +322,11 @@ fn parseCloseCode(payload: []const u8) ?u16 {
     return (@as(u16, payload[0]) << 8) | payload[1];
 }
 
-fn pollReadable(fd: std.posix.fd_t, timeout_ms: i32) !bool {
+// Fix #44: PollError/ConnectionClosed returned instead of treating
+// ERR/HUP as readable/writable.
+const PollError = error{ PollError, ConnectionClosed };
+
+fn pollReadable(fd: std.posix.fd_t, timeout_ms: i32) (PollError || std.posix.PollError)!bool {
     var pfd = [1]std.posix.pollfd{.{
         .fd = fd,
         .events = std.posix.POLL.IN,
@@ -335,13 +337,13 @@ fn pollReadable(fd: std.posix.fd_t, timeout_ms: i32) !bool {
     if (ready_count == 0) return false;
 
     const revents = pfd[0].revents;
+    if (revents & std.posix.POLL.ERR != 0) return error.PollError;
+    if (revents & std.posix.POLL.HUP != 0) return error.ConnectionClosed;
     if (revents & std.posix.POLL.IN != 0) return true;
-    if (revents & std.posix.POLL.HUP != 0) return true;
-    if (revents & std.posix.POLL.ERR != 0) return true;
     return false;
 }
 
-fn pollWritable(fd: std.posix.fd_t, timeout_ms: i32) !bool {
+fn pollWritable(fd: std.posix.fd_t, timeout_ms: i32) (PollError || std.posix.PollError)!bool {
     var pfd = [1]std.posix.pollfd{.{
         .fd = fd,
         .events = std.posix.POLL.OUT,
@@ -352,9 +354,9 @@ fn pollWritable(fd: std.posix.fd_t, timeout_ms: i32) !bool {
     if (ready_count == 0) return false;
 
     const revents = pfd[0].revents;
+    if (revents & std.posix.POLL.ERR != 0) return error.PollError;
+    if (revents & std.posix.POLL.HUP != 0) return error.ConnectionClosed;
     if (revents & std.posix.POLL.OUT != 0) return true;
-    if (revents & std.posix.POLL.HUP != 0) return true;
-    if (revents & std.posix.POLL.ERR != 0) return true;
     return false;
 }
 
@@ -432,6 +434,8 @@ pub const TestEndpoint = struct {
     }
 };
 
+// Fix #8: MessageQueue now compacts consumed messages in pop/popTimed
+// when read_index > items.len / 2 to prevent unbounded growth.
 const MessageQueue = struct {
     const OwnedMessage = struct {
         opcode: Connection.Opcode,
@@ -520,6 +524,7 @@ const MessageQueue = struct {
 
         const msg = self.messages.items[self.read_index];
         self.read_index += 1;
+        self.compactLocked();
         self.cond.signal();
         if (msg.opcode == .connection_close) {
             self.closed = true;
@@ -554,6 +559,7 @@ const MessageQueue = struct {
 
         const msg = self.messages.items[self.read_index];
         self.read_index += 1;
+        self.compactLocked();
         self.cond.signal();
         if (msg.opcode == .connection_close) {
             self.closed = true;
@@ -563,6 +569,36 @@ const MessageQueue = struct {
             .opcode = msg.opcode,
             .data = msg.data,
         };
+    }
+
+    /// Compact consumed messages when more than half the slots have
+    /// been read. Frees data of old consumed entries (before the most
+    /// recently popped one) and shifts the remainder down. The most
+    /// recently popped entry is preserved so its data stays valid for
+    /// the caller and can be freed by deinit.
+    fn compactLocked(self: *MessageQueue) void {
+        if (self.read_index > self.messages.items.len / 2 and self.read_index >= 2) {
+            // Free data of entries consumed in *previous* pops
+            // (0..read_index-1). The entry at read_index-1 is the one
+            // just popped -- its data pointer is still live with the
+            // caller so we must keep it.
+            for (self.messages.items[0 .. self.read_index - 1]) |old| {
+                self.allocator.free(old.data);
+            }
+            // Shift the just-popped entry + unread entries to front.
+            const keep_start = self.read_index - 1;
+            const keep_count = self.messages.items.len - keep_start;
+            if (keep_count > 0) {
+                std.mem.copyForwards(
+                    OwnedMessage,
+                    self.messages.items[0..keep_count],
+                    self.messages.items[keep_start..self.messages.items.len],
+                );
+            }
+            self.messages.items.len = keep_count;
+            // read_index now points past the preserved just-popped entry.
+            self.read_index = 1;
+        }
     }
 
     fn close(self: *MessageQueue) void {
