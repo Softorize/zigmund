@@ -89,7 +89,9 @@ pub const TestClient = struct {
         pub fn close(self: *WebSocketSession) void {
             if (self.state.closed) return;
             self.state.closed = true;
-            _ = self.state.client_conn.closeWithCode(1000, "") catch {};
+            _ = self.state.client_conn.closeWithCode(1000, "") catch |err| {
+                std.log.debug("WebSocket close failed: {s}", .{@errorName(err)});
+            };
             self.state.duplex.close();
         }
 
