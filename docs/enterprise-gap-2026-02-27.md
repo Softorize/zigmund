@@ -270,6 +270,7 @@
     - `--json-schema-dialect <uri>` to override emitted top-level `jsonSchemaDialect`,
     - `--no-json-schema-dialect` to suppress dialect emission for tooling-specific compatibility requirements.
   - `zigmund openapi` now supports snapshot diff gating via `--diff <path>` with deterministic mismatch failure (`OpenApiSnapshotMismatch`) for CI regression checks.
+  - `zigmund openapi` now supports semantic snapshot comparison via `--diff-semantic` (JSON structural equality, object-key-order agnostic) for robust CI gating across equivalent serialization order changes.
   - `zigmund cloud` now supports provider-aware deployment planning:
     - `--provider <generic|docker|flyio>` for provider-specific deploy command/artifact metadata,
     - `--emit-dir <dir>` scaffold emission for concrete deployment files (`Dockerfile`, `fly.toml`).

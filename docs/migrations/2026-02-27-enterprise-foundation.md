@@ -163,6 +163,8 @@
      - `--no-overload-retry-after` (sets overload retry header policy to disabled/`0`).
 39. Graceful-drain response hardening:
    - new incoming connections during shutdown/drain now receive explicit `503 Service Unavailable` responses with `server shutting down` payload (instead of silent close), reusing configured overload retry policy.
+40. OpenAPI semantic snapshot diff extension:
+   - `zigmund openapi` now supports `--diff-semantic` for JSON-structural snapshot comparison (object-key-order agnostic) when used with `--diff <path>`.
 
 ## Migration Actions
 
@@ -212,6 +214,7 @@
 31. If edge/gateway policy requires a non-default request correlation header, migrate `AppConfig.request_id_header` to your organization-standard header name and update tests/clients accordingly.
 32. If your traffic-management policy relies on explicit retry hints during overload, migrate runtime wrappers to set `--overload-retry-after-seconds`; use `--no-overload-retry-after` when `Retry-After` must be suppressed.
 33. If health-check or client logic previously interpreted immediate connection close as shutdown signal, migrate to handle explicit `503` shutdown responses during drain windows.
+34. If OpenAPI CI snapshot checks currently fail on equivalent object-key reordering, migrate `zigmund openapi` invocations to include `--diff-semantic`.
 
 ## Compatibility Notes
 

@@ -55,7 +55,11 @@ pub fn main() !void {
 
         const doc = try app.openapi();
         if (opts.diff_path) |path| {
-            try assertOpenApiSnapshotFile(allocator, doc, path);
+            if (opts.diff_semantic) {
+                try assertOpenApiSnapshotFileSemantic(allocator, doc, path);
+            } else {
+                try assertOpenApiSnapshotFile(allocator, doc, path);
+            }
         }
         if (opts.out_path) |path| {
             try writeFile(path, doc);
@@ -376,6 +380,7 @@ const OpenApiCommandOptions = struct {
 
     out_path: ?[]const u8 = null,
     diff_path: ?[]const u8 = null,
+    diff_semantic: bool = false,
     deterministic: bool = false,
     json_schema_dialect: JsonSchemaDialectOverride = .none,
 };
@@ -413,6 +418,10 @@ fn parseOpenApiFlags(args: anytype) !OpenApiCommandOptions {
         }
         if (std.mem.eql(u8, arg, "--diff")) {
             opts.diff_path = args.next() orelse return error.MissingDiffPath;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--diff-semantic")) {
+            opts.diff_semantic = true;
             continue;
         }
         if (std.mem.eql(u8, arg, "--deterministic")) {
@@ -856,7 +865,7 @@ fn usage() !void {
             "  serve [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--overload-retry-after-seconds <n>|--no-overload-retry-after] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--write-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--overload-retry-after-seconds <n>|--no-overload-retry-after] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--write-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
-            "  openapi [--deterministic] [--json-schema-dialect <uri>|--no-json-schema-dialect] [--out <path>] [--diff <path>]\n" ++
+            "  openapi [--deterministic] [--json-schema-dialect <uri>|--no-json-schema-dialect] [--out <path>] [--diff <path>] [--diff-semantic]\n" ++
             "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>] [--image <tag>] [--execute] [--dry-run]\n" ++
             "  sbom [--out <path>]\n",
     );
@@ -1076,12 +1085,107 @@ fn assertOpenApiSnapshotFile(
     };
 }
 
+fn assertOpenApiSnapshotFileSemantic(
+    allocator: std.mem.Allocator,
+    actual: []const u8,
+    snapshot_path: []const u8,
+) !void {
+    const expected = std.fs.cwd().readFileAlloc(
+        allocator,
+        snapshot_path,
+        32 * 1024 * 1024,
+    ) catch |err| switch (err) {
+        error.FileNotFound => return error.OpenApiSnapshotMissing,
+        else => return err,
+    };
+    defer allocator.free(expected);
+
+    assertOpenApiSnapshotSemantic(allocator, expected, actual) catch |err| switch (err) {
+        error.OpenApiSnapshotMismatch => {
+            std.log.err(
+                "openapi semantic snapshot mismatch: path={s}",
+                .{snapshot_path},
+            );
+            return err;
+        },
+        else => return err,
+    };
+}
+
 fn assertOpenApiSnapshot(
     expected: []const u8,
     actual: []const u8,
 ) !void {
     if (std.mem.eql(u8, expected, actual)) return;
     return error.OpenApiSnapshotMismatch;
+}
+
+fn assertOpenApiSnapshotSemantic(
+    allocator: std.mem.Allocator,
+    expected: []const u8,
+    actual: []const u8,
+) !void {
+    const parsed_expected = try std.json.parseFromSlice(std.json.Value, allocator, expected, .{});
+    defer parsed_expected.deinit();
+
+    const parsed_actual = try std.json.parseFromSlice(std.json.Value, allocator, actual, .{});
+    defer parsed_actual.deinit();
+
+    if (jsonValuesEqual(parsed_expected.value, parsed_actual.value)) return;
+    return error.OpenApiSnapshotMismatch;
+}
+
+fn jsonNumericValue(value: std.json.Value) ?f64 {
+    return switch (value) {
+        .integer => |v| @as(f64, @floatFromInt(v)),
+        .float => |v| v,
+        .number_string => |v| std.fmt.parseFloat(f64, v) catch null,
+        else => null,
+    };
+}
+
+fn jsonValuesEqual(lhs: std.json.Value, rhs: std.json.Value) bool {
+    if (jsonNumericValue(lhs)) |lhs_num| {
+        if (jsonNumericValue(rhs)) |rhs_num| return lhs_num == rhs_num;
+        return false;
+    } else if (jsonNumericValue(rhs) != null) {
+        return false;
+    }
+
+    return switch (lhs) {
+        .null => rhs == .null,
+        .bool => |lhs_value| switch (rhs) {
+            .bool => |rhs_value| lhs_value == rhs_value,
+            else => false,
+        },
+        .string => |lhs_value| switch (rhs) {
+            .string => |rhs_value| std.mem.eql(u8, lhs_value, rhs_value),
+            else => false,
+        },
+        .array => |lhs_value| switch (rhs) {
+            .array => |rhs_value| blk: {
+                if (lhs_value.items.len != rhs_value.items.len) break :blk false;
+                for (lhs_value.items, rhs_value.items) |lhs_item, rhs_item| {
+                    if (!jsonValuesEqual(lhs_item, rhs_item)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        },
+        .object => |lhs_value| switch (rhs) {
+            .object => |rhs_value| blk: {
+                if (lhs_value.count() != rhs_value.count()) break :blk false;
+                var it = lhs_value.iterator();
+                while (it.next()) |entry| {
+                    const rhs_item = rhs_value.get(entry.key_ptr.*) orelse break :blk false;
+                    if (!jsonValuesEqual(entry.value_ptr.*, rhs_item)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        },
+        .integer, .float, .number_string => unreachable,
+    };
 }
 
 fn firstDiffIndex(expected: []const u8, actual: []const u8) ?usize {
@@ -1316,6 +1420,25 @@ test "openapi snapshot assertion fails when docs differ" {
     try std.testing.expectEqual(@as(?usize, 5), firstDiffIndex("{\"a\":1}", "{\"a\":2}"));
 }
 
+test "openapi semantic snapshot assertion ignores object key ordering" {
+    try assertOpenApiSnapshotSemantic(
+        std.testing.allocator,
+        "{\"a\":1,\"b\":{\"x\":true,\"y\":2}}",
+        "{\"b\":{\"y\":2,\"x\":true},\"a\":1}",
+    );
+}
+
+test "openapi semantic snapshot assertion fails on semantic mismatch" {
+    try std.testing.expectError(
+        error.OpenApiSnapshotMismatch,
+        assertOpenApiSnapshotSemantic(
+            std.testing.allocator,
+            "{\"a\":1,\"b\":2}",
+            "{\"a\":1,\"b\":3}",
+        ),
+    );
+}
+
 test "parse openapi flags supports deterministic out diff and json-schema dialect options" {
     var iter = (try std.process.ArgIteratorGeneral(.{}).init(
         std.testing.allocator,
@@ -1340,6 +1463,15 @@ test "parse openapi flags supports deterministic out diff and json-schema dialec
 
     const disable_opts = try parseOpenApiFlags(&disable_iter);
     try std.testing.expect(disable_opts.json_schema_dialect == .disabled);
+
+    var semantic_iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--diff baseline.json --diff-semantic",
+    ));
+    defer semantic_iter.deinit();
+    const semantic_opts = try parseOpenApiFlags(&semantic_iter);
+    try std.testing.expect(semantic_opts.diff_semantic);
+    try std.testing.expectEqualStrings("baseline.json", semantic_opts.diff_path.?);
 }
 
 test "parse serve flags supports header timeout option" {
