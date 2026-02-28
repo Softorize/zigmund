@@ -1312,7 +1312,7 @@ pub const App = struct {
         };
     }
 
-    fn emitTelemetry(self: *App, req: *const Request, status: std.http.Status, latency_us: u64) void {
+    fn emitTelemetry(self: *const App, req: *const Request, status: std.http.Status, latency_us: u64) void {
         if (self.telemetry_sink == null and !self.cfg.structured_telemetry_logs) return;
 
         const trace_identity = buildTraceIdentity(req);
@@ -1341,7 +1341,7 @@ pub const App = struct {
         }
     }
 
-    fn emitTrace(self: *App, req: *const Request, status: std.http.Status, latency_us: u64) void {
+    fn emitTrace(self: *const App, req: *const Request, status: std.http.Status, latency_us: u64) void {
         if (self.trace_sink == null and !self.cfg.structured_trace_logs) return;
 
         const trace_identity = buildTraceIdentity(req);
@@ -1373,7 +1373,7 @@ pub const App = struct {
         }
     }
 
-    fn emitAccessLog(self: *App, req: *const Request, status: std.http.Status, latency_us: u64) void {
+    fn emitAccessLog(self: *const App, req: *const Request, status: std.http.Status, latency_us: u64) void {
         if (self.access_log_sink == null and !self.cfg.structured_access_logs) return;
 
         var addr_buf: [128]u8 = undefined;
@@ -1475,7 +1475,7 @@ pub const App = struct {
         }
     }
 
-    fn emitAudit(self: *App, event: AuditEvent) void {
+    fn emitAudit(self: *const App, event: AuditEvent) void {
         if (self.audit_sink) |sink| {
             sink(event, self.allocator) catch |err| {
                 std.log.warn("audit sink failed: {s}", .{@errorName(err)});
@@ -1605,23 +1605,12 @@ pub const App = struct {
         req: *const Request,
         route_options: types.StoredRouteOptions,
     ) Response {
-        if (self.unauthorized_handler) |handler| {
-            return handler(req, self.allocator) catch |err| {
-                std.log.warn("unauthorized handler failed: {s}", .{@errorName(err)});
-                return Response.text("internal server error").withStatus(.internal_server_error);
-            };
-        }
-
-        const auth_style = self.routeSecurityStyle(route_options);
-        const status: std.http.Status = if (auth_style == .api_key) .forbidden else .unauthorized;
-        var response = Response.text(if (status == .forbidden) "forbidden" else "unauthorized").withStatus(status);
-
-        if (self.routeSecurityChallenge(route_options)) |challenge| {
-            response.setHeader(self.allocator, "www-authenticate", challenge) catch {};
-        } else if (auth_style != .api_key) {
-            response.setHeader(self.allocator, "www-authenticate", "Bearer") catch {};
-        }
-        return response;
+        return self.buildUnauthorizedResponse(
+            req,
+            self.unauthorized_handler,
+            self.routeSecurityChallenge(route_options),
+            self.routeSecurityStyle(route_options),
+        );
     }
 
     fn unauthorizedResponseForWebSocket(
@@ -1629,23 +1618,12 @@ pub const App = struct {
         req: *const Request,
         route_options: types.WebSocketRouteOptions,
     ) Response {
-        if (self.unauthorized_handler) |handler| {
-            return handler(req, self.allocator) catch |err| {
-                std.log.warn("unauthorized handler failed: {s}", .{@errorName(err)});
-                return Response.text("internal server error").withStatus(.internal_server_error);
-            };
-        }
-
-        const auth_style = self.dependenciesSecurityStyle(route_options.dependencies);
-        const status: std.http.Status = if (auth_style == .api_key) .forbidden else .unauthorized;
-        var response = Response.text(if (status == .forbidden) "forbidden" else "unauthorized").withStatus(status);
-
-        if (self.dependenciesSecurityChallenge(route_options.dependencies)) |challenge| {
-            response.setHeader(self.allocator, "www-authenticate", challenge) catch {};
-        } else if (auth_style != .api_key) {
-            response.setHeader(self.allocator, "www-authenticate", "Bearer") catch {};
-        }
-        return response;
+        return self.buildUnauthorizedResponse(
+            req,
+            self.unauthorized_handler,
+            self.dependenciesSecurityChallenge(route_options.dependencies),
+            self.dependenciesSecurityStyle(route_options.dependencies),
+        );
     }
 
     fn insufficientScopeResponseForRoute(
@@ -1653,61 +1631,13 @@ pub const App = struct {
         req: *const Request,
         route_options: types.StoredRouteOptions,
     ) Response {
-        if (self.insufficient_scope_handler) |handler| {
-            return handler(req, self.allocator) catch |err| {
-                std.log.warn("insufficient-scope handler failed: {s}", .{@errorName(err)});
-                return Response.text("internal server error").withStatus(.internal_server_error);
-            };
-        }
-
-        const challenge_base_opt = self.routeSecurityChallenge(route_options);
-        const auth_style = self.routeSecurityStyle(route_options);
-        if (challenge_base_opt == null and auth_style == .api_key) {
-            return Response.text("forbidden").withStatus(.forbidden);
-        }
-        const challenge_base = challenge_base_opt orelse "Bearer";
-        const required_scopes = self.routeRequiredScopes(route_options);
-
-        var response = Response.text("forbidden").withStatus(.forbidden);
-
-        if (std.ascii.eqlIgnoreCase(challenge_base, "bearer")) {
-            var challenge_buf: std.ArrayList(u8) = .empty;
-            defer challenge_buf.deinit(self.allocator);
-
-            var writer = challenge_buf.writer(self.allocator);
-            writer.writeAll("Bearer error=\"insufficient_scope\"") catch {
-                response.setHeader(
-                    self.allocator,
-                    "www-authenticate",
-                    "Bearer error=\"insufficient_scope\"",
-                ) catch {};
-                return response;
-            };
-
-            if (required_scopes.len > 0) {
-                writer.writeAll(", scope=\"") catch {};
-                for (required_scopes, 0..) |scope, idx| {
-                    if (idx != 0) writer.writeByte(' ') catch {};
-                    writer.writeAll(scope) catch {};
-                }
-                writer.writeByte('"') catch {};
-            }
-
-            const challenge = challenge_buf.toOwnedSlice(self.allocator) catch {
-                response.setHeader(
-                    self.allocator,
-                    "www-authenticate",
-                    "Bearer error=\"insufficient_scope\"",
-                ) catch {};
-                return response;
-            };
-            defer self.allocator.free(challenge);
-            response.setHeader(self.allocator, "www-authenticate", challenge) catch {};
-            return response;
-        }
-
-        response.setHeader(self.allocator, "www-authenticate", challenge_base) catch {};
-        return response;
+        return self.buildInsufficientScopeResponse(
+            req,
+            self.insufficient_scope_handler,
+            self.routeSecurityChallenge(route_options),
+            self.routeSecurityStyle(route_options),
+            self.routeRequiredScopes(route_options),
+        );
     }
 
     fn insufficientScopeResponseForWebSocket(
@@ -1715,22 +1645,68 @@ pub const App = struct {
         req: *const Request,
         route_options: types.WebSocketRouteOptions,
     ) Response {
-        if (self.insufficient_scope_handler) |handler| {
+        return self.buildInsufficientScopeResponse(
+            req,
+            self.insufficient_scope_handler,
+            self.dependenciesSecurityChallenge(route_options.dependencies),
+            self.dependenciesSecurityStyle(route_options.dependencies),
+            self.dependenciesRequiredScopes(route_options.dependencies) orelse &.{},
+        );
+    }
+
+    /// Shared logic for building unauthorized responses (Route and WebSocket).
+    fn buildUnauthorizedResponse(
+        self: *const App,
+        req: *const Request,
+        custom_handler: ?AuthFailureFn,
+        security_challenge: ?[]const u8,
+        security_style: SecurityAuthStyle,
+    ) Response {
+        if (custom_handler) |handler| {
+            return handler(req, self.allocator) catch |err| {
+                std.log.warn("unauthorized handler failed: {s}", .{@errorName(err)});
+                return Response.text("internal server error").withStatus(.internal_server_error);
+            };
+        }
+
+        const status: std.http.Status = if (security_style == .api_key) .forbidden else .unauthorized;
+        var response = Response.text(if (status == .forbidden) "forbidden" else "unauthorized").withStatus(status);
+
+        if (security_challenge) |challenge| {
+            response.setHeader(self.allocator, "www-authenticate", challenge) catch |err| {
+                std.log.debug("failed to set header: {s}", .{@errorName(err)});
+            };
+        } else if (security_style != .api_key) {
+            response.setHeader(self.allocator, "www-authenticate", "Bearer") catch |err| {
+                std.log.debug("failed to set header: {s}", .{@errorName(err)});
+            };
+        }
+        return response;
+    }
+
+    /// Shared logic for building insufficient-scope responses (Route and WebSocket).
+    fn buildInsufficientScopeResponse(
+        self: *const App,
+        req: *const Request,
+        custom_handler: ?AuthFailureFn,
+        security_challenge: ?[]const u8,
+        security_style: SecurityAuthStyle,
+        required_scopes: []const []const u8,
+    ) Response {
+        if (custom_handler) |handler| {
             return handler(req, self.allocator) catch |err| {
                 std.log.warn("insufficient-scope handler failed: {s}", .{@errorName(err)});
                 return Response.text("internal server error").withStatus(.internal_server_error);
             };
         }
 
-        const challenge_base_opt = self.dependenciesSecurityChallenge(route_options.dependencies);
-        const auth_style = self.dependenciesSecurityStyle(route_options.dependencies);
-        if (challenge_base_opt == null and auth_style == .api_key) {
+        if (security_challenge == null and security_style == .api_key) {
             return Response.text("forbidden").withStatus(.forbidden);
         }
-        const challenge_base = challenge_base_opt orelse "Bearer";
-        const required_scopes = self.dependenciesRequiredScopes(route_options.dependencies) orelse &.{};
+        const challenge_base = security_challenge orelse "Bearer";
 
         var response = Response.text("forbidden").withStatus(.forbidden);
+
         if (std.ascii.eqlIgnoreCase(challenge_base, "bearer")) {
             var challenge_buf: std.ArrayList(u8) = .empty;
             defer challenge_buf.deinit(self.allocator);
@@ -1741,17 +1717,27 @@ pub const App = struct {
                     self.allocator,
                     "www-authenticate",
                     "Bearer error=\"insufficient_scope\"",
-                ) catch {};
+                ) catch |err| {
+                    std.log.debug("failed to set header: {s}", .{@errorName(err)});
+                };
                 return response;
             };
 
             if (required_scopes.len > 0) {
-                writer.writeAll(", scope=\"") catch {};
+                writer.writeAll(", scope=\"") catch |err| {
+                    std.log.debug("failed to set header: {s}", .{@errorName(err)});
+                };
                 for (required_scopes, 0..) |scope, idx| {
-                    if (idx != 0) writer.writeByte(' ') catch {};
-                    writer.writeAll(scope) catch {};
+                    if (idx != 0) writer.writeByte(' ') catch |err| {
+                        std.log.debug("failed to set header: {s}", .{@errorName(err)});
+                    };
+                    writer.writeAll(scope) catch |err| {
+                        std.log.debug("failed to set header: {s}", .{@errorName(err)});
+                    };
                 }
-                writer.writeByte('"') catch {};
+                writer.writeByte('"') catch |err| {
+                    std.log.debug("failed to set header: {s}", .{@errorName(err)});
+                };
             }
 
             const challenge = challenge_buf.toOwnedSlice(self.allocator) catch {
@@ -1759,15 +1745,21 @@ pub const App = struct {
                     self.allocator,
                     "www-authenticate",
                     "Bearer error=\"insufficient_scope\"",
-                ) catch {};
+                ) catch |err| {
+                    std.log.debug("failed to set header: {s}", .{@errorName(err)});
+                };
                 return response;
             };
             defer self.allocator.free(challenge);
-            response.setHeader(self.allocator, "www-authenticate", challenge) catch {};
+            response.setHeader(self.allocator, "www-authenticate", challenge) catch |err| {
+                std.log.debug("failed to set header: {s}", .{@errorName(err)});
+            };
             return response;
         }
 
-        response.setHeader(self.allocator, "www-authenticate", challenge_base) catch {};
+        response.setHeader(self.allocator, "www-authenticate", challenge_base) catch |err| {
+            std.log.debug("failed to set header: {s}", .{@errorName(err)});
+        };
         return response;
     }
 
@@ -1839,64 +1831,47 @@ pub const App = struct {
         return null;
     }
 
-    fn normalizeTelemetrySink(sink: anytype) TelemetryFn {
+    /// Generic sink type checker: returns true if T is fn(EventType, std.mem.Allocator) void/!void.
+    fn isSinkType(comptime EventType: type, comptime T: type) bool {
+        if (@typeInfo(T) != .@"fn") return false;
+        const info = @typeInfo(T).@"fn";
+        if (info.params.len != 2) return false;
+        if (info.params[0].type != EventType) return false;
+        if (info.params[1].type != std.mem.Allocator) return false;
+        return isVoidOrErrorVoid(info.return_type orelse return false);
+    }
+
+    /// Generic sink normalizer: coerces a bare function to the expected pointer type.
+    fn normalizeSinkFn(comptime FnType: type, comptime EventType: type, sink: anytype) FnType {
         const T = @TypeOf(sink);
-        if (T == TelemetryFn) return sink;
+        if (T == FnType) return sink;
         if (@typeInfo(T) == .@"fn") {
-            if (comptime isTelemetrySinkType(T)) {
-                const ptr: TelemetryFn = &sink;
+            if (comptime isSinkType(EventType, T)) {
+                const ptr: FnType = &sink;
                 return ptr;
             }
         }
-        @compileError("Telemetry sink must be fn(App.TelemetryEvent, std.mem.Allocator) !void");
+        @compileError("invalid sink type");
+    }
+
+    fn normalizeTelemetrySink(sink: anytype) TelemetryFn {
+        return normalizeSinkFn(TelemetryFn, TelemetryEvent, sink);
     }
 
     fn normalizeTraceSink(sink: anytype) TraceFn {
-        const T = @TypeOf(sink);
-        if (T == TraceFn) return sink;
-        if (@typeInfo(T) == .@"fn") {
-            if (comptime isTraceSinkType(T)) {
-                const ptr: TraceFn = &sink;
-                return ptr;
-            }
-        }
-        @compileError("Trace sink must be fn(App.TraceEvent, std.mem.Allocator) !void");
+        return normalizeSinkFn(TraceFn, TraceEvent, sink);
     }
 
     fn normalizeAccessLogSink(sink: anytype) AccessLogFn {
-        const T = @TypeOf(sink);
-        if (T == AccessLogFn) return sink;
-        if (@typeInfo(T) == .@"fn") {
-            if (comptime isAccessLogSinkType(T)) {
-                const ptr: AccessLogFn = &sink;
-                return ptr;
-            }
-        }
-        @compileError("Access log sink must be fn(App.AccessLogEvent, std.mem.Allocator) !void");
+        return normalizeSinkFn(AccessLogFn, AccessLogEvent, sink);
     }
 
     fn normalizeMetricsSink(sink: anytype) MetricsFn {
-        const T = @TypeOf(sink);
-        if (T == MetricsFn) return sink;
-        if (@typeInfo(T) == .@"fn") {
-            if (comptime isMetricsSinkType(T)) {
-                const ptr: MetricsFn = &sink;
-                return ptr;
-            }
-        }
-        @compileError("Metrics sink must be fn(App.MetricsEvent, std.mem.Allocator) !void");
+        return normalizeSinkFn(MetricsFn, MetricsEvent, sink);
     }
 
     fn normalizeAuditSink(sink: anytype) AuditFn {
-        const T = @TypeOf(sink);
-        if (T == AuditFn) return sink;
-        if (@typeInfo(T) == .@"fn") {
-            if (comptime isAuditSinkType(T)) {
-                const ptr: AuditFn = &sink;
-                return ptr;
-            }
-        }
-        @compileError("Audit sink must be fn(App.AuditEvent, std.mem.Allocator) !void");
+        return normalizeSinkFn(AuditFn, AuditEvent, sink);
     }
 
     fn normalizeAuthFailureHandler(handler: anytype) AuthFailureFn {
@@ -1909,51 +1884,6 @@ pub const App = struct {
             }
         }
         @compileError("Auth failure handler must be fn(*const Request, std.mem.Allocator) !Response");
-    }
-
-    fn isTelemetrySinkType(comptime T: type) bool {
-        if (@typeInfo(T) != .@"fn") return false;
-        const info = @typeInfo(T).@"fn";
-        if (info.params.len != 2) return false;
-        if (info.params[0].type != TelemetryEvent) return false;
-        if (info.params[1].type != std.mem.Allocator) return false;
-        return isVoidOrErrorVoid(info.return_type orelse return false);
-    }
-
-    fn isTraceSinkType(comptime T: type) bool {
-        if (@typeInfo(T) != .@"fn") return false;
-        const info = @typeInfo(T).@"fn";
-        if (info.params.len != 2) return false;
-        if (info.params[0].type != TraceEvent) return false;
-        if (info.params[1].type != std.mem.Allocator) return false;
-        return isVoidOrErrorVoid(info.return_type orelse return false);
-    }
-
-    fn isAccessLogSinkType(comptime T: type) bool {
-        if (@typeInfo(T) != .@"fn") return false;
-        const info = @typeInfo(T).@"fn";
-        if (info.params.len != 2) return false;
-        if (info.params[0].type != AccessLogEvent) return false;
-        if (info.params[1].type != std.mem.Allocator) return false;
-        return isVoidOrErrorVoid(info.return_type orelse return false);
-    }
-
-    fn isMetricsSinkType(comptime T: type) bool {
-        if (@typeInfo(T) != .@"fn") return false;
-        const info = @typeInfo(T).@"fn";
-        if (info.params.len != 2) return false;
-        if (info.params[0].type != MetricsEvent) return false;
-        if (info.params[1].type != std.mem.Allocator) return false;
-        return isVoidOrErrorVoid(info.return_type orelse return false);
-    }
-
-    fn isAuditSinkType(comptime T: type) bool {
-        if (@typeInfo(T) != .@"fn") return false;
-        const info = @typeInfo(T).@"fn";
-        if (info.params.len != 2) return false;
-        if (info.params[0].type != AuditEvent) return false;
-        if (info.params[1].type != std.mem.Allocator) return false;
-        return isVoidOrErrorVoid(info.return_type orelse return false);
     }
 
     fn isAuthFailureHandlerType(comptime T: type) bool {
@@ -2484,6 +2414,10 @@ fn dependencyErrorToResponse(allocator: std.mem.Allocator, err: deps.RunError) R
     };
 }
 
+/// Maps middleware errors to HTTP responses.
+/// NOTE: Uses runtime error name comparison because middleware returns `anyerror`.
+/// This means any error named "Unauthorized" from any error set will match.
+/// This is a known limitation of the current design.
 fn middlewareErrorToResponse(allocator: std.mem.Allocator, err: anyerror) Response {
     if (std.mem.eql(u8, @errorName(err), "Unauthorized")) {
         return unauthorizedResponse(allocator);
@@ -2496,13 +2430,17 @@ fn middlewareErrorToResponse(allocator: std.mem.Allocator, err: anyerror) Respon
 
 fn unauthorizedResponse(allocator: std.mem.Allocator) Response {
     var response = Response.text("unauthorized").withStatus(.unauthorized);
-    response.setHeader(allocator, "www-authenticate", "Bearer") catch {};
+    response.setHeader(allocator, "www-authenticate", "Bearer") catch |err| {
+        std.log.debug("failed to set header: {s}", .{@errorName(err)});
+    };
     return response;
 }
 
 fn insufficientScopeResponse(allocator: std.mem.Allocator) Response {
     var response = Response.text("forbidden").withStatus(.forbidden);
-    response.setHeader(allocator, "www-authenticate", "Bearer error=\"insufficient_scope\"") catch {};
+    response.setHeader(allocator, "www-authenticate", "Bearer error=\"insufficient_scope\"") catch |err| {
+        std.log.debug("failed to set header: {s}", .{@errorName(err)});
+    };
     return response;
 }
 
