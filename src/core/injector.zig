@@ -632,6 +632,7 @@ fn patternMatches(value: []const u8, pattern: []const u8) bool {
     return patternMatchesLiteral(value, pattern);
 }
 
+// c_allocator used here because regcomp/regfree are C functions that expect C-compatible memory
 fn patternMatchesPosix(value: []const u8, pattern: []const u8) ?bool {
     if (pattern.len == 0) return true;
 
