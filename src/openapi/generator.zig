@@ -617,6 +617,7 @@ fn isValidOpenApiExtensionKey(key: []const u8) bool {
     return std.ascii.toLower(key[0]) == 'x' and key[1] == '-';
 }
 
+// AUDIT #28: O(n) linear scan — acceptable for typical API sizes (<100 routes), consider HashMap for >500 routes.
 fn appendUniquePath(allocator: std.mem.Allocator, list: *std.ArrayList([]const u8), path: []const u8) !void {
     for (list.items) |existing| {
         if (std.mem.eql(u8, existing, path)) return;
@@ -642,6 +643,7 @@ fn collectResponseComponents(
     }
 }
 
+// AUDIT #28: O(n) linear scan — acceptable for typical API sizes (<100 routes), consider HashMap for >500 routes.
 fn responseComponentName(
     route_options: types.StoredRouteOptions,
     components: []const ComponentSchema,
@@ -676,6 +678,8 @@ fn collectParameterComponents(
     }
 }
 
+// AUDIT #25: Known duplication — same dedup-with-suffix algorithm as
+// uniqueRequestBodyComponentName and uniqueResponseEntryComponentName.
 fn uniqueParameterComponentName(
     allocator: std.mem.Allocator,
     components: []const ParameterComponent,
@@ -724,6 +728,7 @@ fn buildParameterComponentBaseName(
     return out.toOwnedSlice(allocator);
 }
 
+// AUDIT #28: O(n) linear scan — acceptable for typical API sizes (<100 routes), consider HashMap for >500 routes.
 fn hasParameterComponentName(components: []const ParameterComponent, name: []const u8) bool {
     for (components) |component| {
         if (std.mem.eql(u8, component.name, name)) return true;
@@ -731,6 +736,7 @@ fn hasParameterComponentName(components: []const ParameterComponent, name: []con
     return false;
 }
 
+// AUDIT #28: O(n) linear scan — acceptable for typical API sizes (<100 routes), consider HashMap for >500 routes.
 fn parameterComponentName(
     target: types.InjectedParameter,
     components: []const ParameterComponent,
@@ -810,6 +816,8 @@ fn collectRequestBodyComponents(
     }
 }
 
+// AUDIT #25: Known duplication — same dedup-with-suffix algorithm as
+// uniqueParameterComponentName and uniqueResponseEntryComponentName.
 fn uniqueRequestBodyComponentName(
     allocator: std.mem.Allocator,
     components: []const RequestBodyComponent,
@@ -864,6 +872,7 @@ fn buildRequestBodyComponentBaseName(
     return out.toOwnedSlice(allocator);
 }
 
+// AUDIT #28: O(n) linear scan — acceptable for typical API sizes (<100 routes), consider HashMap for >500 routes.
 fn hasRequestBodyComponentName(components: []const RequestBodyComponent, name: []const u8) bool {
     for (components) |component| {
         if (std.mem.eql(u8, component.name, name)) return true;
@@ -894,6 +903,7 @@ fn requestBodyComponentName(
     return requestBodyComponentNameByJson(body_json, components);
 }
 
+// AUDIT #28: O(n) linear scan — acceptable for typical API sizes (<100 routes), consider HashMap for >500 routes.
 fn requestBodyComponentNameByJson(
     body_json: []const u8,
     components: []const RequestBodyComponent,
@@ -951,6 +961,8 @@ fn collectResponseEntryComponents(
     }
 }
 
+// AUDIT #25: Known duplication — same dedup-with-suffix algorithm as
+// uniqueParameterComponentName and uniqueRequestBodyComponentName.
 fn uniqueResponseEntryComponentName(
     allocator: std.mem.Allocator,
     components: []const ResponseEntryComponent,
@@ -1009,6 +1021,7 @@ fn buildResponseEntryComponentBaseName(
     return out.toOwnedSlice(allocator);
 }
 
+// AUDIT #28: O(n) linear scan — acceptable for typical API sizes (<100 routes), consider HashMap for >500 routes.
 fn hasResponseEntryComponentName(components: []const ResponseEntryComponent, name: []const u8) bool {
     for (components) |component| {
         if (std.mem.eql(u8, component.name, name)) return true;
@@ -1016,6 +1029,7 @@ fn hasResponseEntryComponentName(components: []const ResponseEntryComponent, nam
     return false;
 }
 
+// AUDIT #28: O(n) linear scan — acceptable for typical API sizes (<100 routes), consider HashMap for >500 routes.
 fn responseEntryComponentNameByJson(
     response_json: []const u8,
     components: []const ResponseEntryComponent,
@@ -1451,61 +1465,42 @@ fn writeDependenciesArray(
     var wrote: usize = 0;
 
     for (dependencies) |dep| {
-        if (wrote != 0) try writer.writeAll(",");
-        wrote += 1;
-        try writer.writeAll("{");
-        try writeFieldName(writer, "name");
-        try writeJsonString(writer, dep.name);
-        try writer.writeAll(",");
-        try writeFieldName(writer, "required");
-        try writer.writeAll(if (dep.required) "true" else "false");
-        try writer.writeAll(",");
-        try writeFieldName(writer, "useCache");
-        try writer.writeAll(if (dep.use_cache) "true" else "false");
-        try writer.writeAll(",");
-        try writeFieldName(writer, "cacheScope");
-        try writeJsonString(writer, dependencyCacheScopeString(dep.cache_scope));
-        if (dep.depends_on.len > 0) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "dependsOn");
-            try writeStringArray(writer, dep.depends_on);
-        }
-        if (dep.scopes.len > 0) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "scopes");
-            try writeStringArray(writer, dep.scopes);
-        }
-        try writer.writeAll("}");
+        try writeSingleDependency(writer, dep, &wrote);
     }
 
     for (injected_dependencies) |dep| {
-        if (wrote != 0) try writer.writeAll(",");
-        wrote += 1;
-        try writer.writeAll("{");
-        try writeFieldName(writer, "name");
-        try writeJsonString(writer, dep.name);
-        try writer.writeAll(",");
-        try writeFieldName(writer, "required");
-        try writer.writeAll(if (dep.required) "true" else "false");
-        try writer.writeAll(",");
-        try writeFieldName(writer, "useCache");
-        try writer.writeAll(if (dep.use_cache) "true" else "false");
-        try writer.writeAll(",");
-        try writeFieldName(writer, "cacheScope");
-        try writeJsonString(writer, dependencyCacheScopeString(dep.cache_scope));
-        if (dep.depends_on.len > 0) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "dependsOn");
-            try writeStringArray(writer, dep.depends_on);
-        }
-        if (dep.scopes.len > 0) {
-            try writer.writeAll(",");
-            try writeFieldName(writer, "scopes");
-            try writeStringArray(writer, dep.scopes);
-        }
-        try writer.writeAll("}");
+        try writeSingleDependency(writer, dep, &wrote);
     }
     try writer.writeAll("]");
+}
+
+/// AUDIT #27: Extracted from writeDependenciesArray to eliminate duplicated loop body.
+fn writeSingleDependency(writer: anytype, dep: types.DependencySpec, wrote: *usize) !void {
+    if (wrote.* != 0) try writer.writeAll(",");
+    wrote.* += 1;
+    try writer.writeAll("{");
+    try writeFieldName(writer, "name");
+    try writeJsonString(writer, dep.name);
+    try writer.writeAll(",");
+    try writeFieldName(writer, "required");
+    try writer.writeAll(if (dep.required) "true" else "false");
+    try writer.writeAll(",");
+    try writeFieldName(writer, "useCache");
+    try writer.writeAll(if (dep.use_cache) "true" else "false");
+    try writer.writeAll(",");
+    try writeFieldName(writer, "cacheScope");
+    try writeJsonString(writer, dependencyCacheScopeString(dep.cache_scope));
+    if (dep.depends_on.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "dependsOn");
+        try writeStringArray(writer, dep.depends_on);
+    }
+    if (dep.scopes.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "scopes");
+        try writeStringArray(writer, dep.scopes);
+    }
+    try writer.writeAll("}");
 }
 
 fn dependencyCacheScopeString(scope: types.DependencyCacheScope) []const u8 {
