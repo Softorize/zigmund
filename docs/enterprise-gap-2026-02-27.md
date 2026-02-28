@@ -131,7 +131,7 @@
 - Runtime floor hardening (M1 progress):
   - `ServerConfig` now includes body/connection limits and shutdown/timeout tuning knobs.
   - Separate request-header timeout control added (`ServerConfig.header_timeout_ms`) to close slow-header connections before keepalive idle timeout.
-  - Server loop now supports shutdown signaling + connection drain behavior.
+  - Server loop now supports shutdown signaling + connection drain behavior, and new connections during drain receive explicit `503 Service Unavailable` shutdown responses (with overload retry policy applied).
   - Per-request body-size limits are enforced and oversized payloads return `413 Payload Too Large`.
   - Per-request header-size limits are now enforced via `ServerConfig.max_header_bytes`, with oversized request headers returning `431 Request Header Fields Too Large`.
   - Per-request query-size limits are now enforced via `ServerConfig.max_query_bytes`, with oversized query strings returning `414 URI Too Long`.

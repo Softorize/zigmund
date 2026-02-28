@@ -93,6 +93,7 @@ fn workerLoop(
         };
 
         if (shutdownRequested(state)) {
+            sendShuttingDownResponse(connection.stream.handle, cfg.overload_retry_after_seconds);
             connection.stream.close();
             continue;
         }
@@ -241,35 +242,45 @@ fn requestHeaderBytes(raw_request: *std.http.Server.Request) usize {
     return total;
 }
 
-fn sendOverloadedResponse(fd: std.posix.fd_t, retry_after_seconds: u32) void {
+fn sendServiceUnavailableResponse(fd: std.posix.fd_t, body: []const u8, retry_after_seconds: u32) void {
+    var response_buf: [768]u8 = undefined;
     if (retry_after_seconds == 0) {
-        const response =
+        const response = std.fmt.bufPrint(
+            &response_buf,
             "HTTP/1.1 503 Service Unavailable\r\n" ++
-            "content-type: text/plain; charset=utf-8\r\n" ++
-            "content-length: 17\r\n" ++
-            "connection: close\r\n" ++
-            "\r\n" ++
-            "server overloaded";
+                "content-type: text/plain; charset=utf-8\r\n" ++
+                "content-length: {d}\r\n" ++
+                "connection: close\r\n" ++
+                "\r\n" ++
+                "{s}",
+            .{ body.len, body },
+        ) catch return;
         _ = std.posix.write(fd, response) catch {};
         return;
     }
 
     var retry_after_buf: [32]u8 = undefined;
     const retry_after = std.fmt.bufPrint(&retry_after_buf, "{d}", .{retry_after_seconds}) catch return;
-
-    var response_buf: [512]u8 = undefined;
     const response = std.fmt.bufPrint(
         &response_buf,
         "HTTP/1.1 503 Service Unavailable\r\n" ++
             "content-type: text/plain; charset=utf-8\r\n" ++
-            "content-length: 17\r\n" ++
+            "content-length: {d}\r\n" ++
             "connection: close\r\n" ++
             "retry-after: {s}\r\n" ++
             "\r\n" ++
-            "server overloaded",
-        .{retry_after},
+            "{s}",
+        .{ body.len, retry_after, body },
     ) catch return;
     _ = std.posix.write(fd, response) catch {};
+}
+
+fn sendOverloadedResponse(fd: std.posix.fd_t, retry_after_seconds: u32) void {
+    sendServiceUnavailableResponse(fd, "server overloaded", retry_after_seconds);
+}
+
+fn sendShuttingDownResponse(fd: std.posix.fd_t, retry_after_seconds: u32) void {
+    sendServiceUnavailableResponse(fd, "server shutting down", retry_after_seconds);
 }
 
 fn setSocketRecvTimeout(fd: std.posix.fd_t, timeout_ms: i32) !void {
@@ -378,4 +389,28 @@ test "sendOverloadedResponse omits retry-after when disabled" {
     try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "503 Service Unavailable") != null);
     try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "retry-after:") == null);
     try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "server overloaded") != null);
+}
+
+test "sendShuttingDownResponse writes explicit shutdown payload" {
+    const bind_address = try std.net.Address.resolveIp("127.0.0.1", 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    defer listener.deinit();
+
+    const client_address = try std.net.Address.resolveIp("127.0.0.1", listener.listen_address.getPort());
+    var client = try std.net.tcpConnectToAddress(client_address);
+    defer client.close();
+
+    const accepted = try listener.accept();
+    defer accepted.stream.close();
+
+    sendShuttingDownResponse(accepted.stream.handle, 2);
+
+    var read_buf: [512]u8 = undefined;
+    const n = try client.read(&read_buf);
+    try std.testing.expect(n > 0);
+    try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "503 Service Unavailable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "retry-after: 2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_buf[0..n], "server shutting down") != null);
 }
