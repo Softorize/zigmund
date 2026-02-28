@@ -153,6 +153,9 @@
    - `ServerConfig` now includes `write_timeout_ms` for socket-level HTTP response write timeout control.
    - CLI `serve`/`dev` now accept `--write-timeout-ms <n>`.
    - startup audit config payloads now emit `write_timeout_ms`.
+37. Request-id header customization extension:
+   - `AppConfig` now includes `request_id_header` (default: `x-request-id`) for inbound/outbound request-id propagation header naming.
+   - empty header values fallback to default `x-request-id`.
 
 ## Migration Actions
 
@@ -199,6 +202,7 @@
 28. If CI/CD pipelines currently treat `zigmund cloud` as plan-only, migrate to `--execute` / `--dry-run` where deployment orchestration should be performed directly by Zigmund CLI; use `--image <tag>` for deterministic docker artifact naming.
 29. If OpenAPI route security policy requires explicit OR alternatives or non-default ordering, migrate route/websocket declarations to `openapi_security` for deterministic security-array authoring independent of dependency wiring.
 30. If runtime policy wrappers/scripts currently set only header/body/idle timeouts, migrate to include `--write-timeout-ms` when explicit response write-deadline control is required.
+31. If edge/gateway policy requires a non-default request correlation header, migrate `AppConfig.request_id_header` to your organization-standard header name and update tests/clients accordingly.
 
 ## Compatibility Notes
 

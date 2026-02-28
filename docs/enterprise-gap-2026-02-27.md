@@ -66,6 +66,7 @@
 - Dependency lifecycle now supports deterministic cleanup hooks via `addDependencyWithCleanup(...)`, executed in LIFO order for both success and error responses.
 - Observability foundation added:
   - request ID generation/forwarding (`x-request-id`),
+  - configurable request-id header name via `AppConfig.request_id_header`,
   - request-id availability in request dependency state,
   - telemetry sink API (`setTelemetrySink`) with method/path/status/latency events.
   - structured access-log sink API (`setAccessLogSink`) with trace context, scheme/host, remote address, user-agent, and latency fields.

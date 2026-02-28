@@ -35,6 +35,7 @@ pub const AppConfig = struct {
     redoc_url: ?[]const u8 = "/redoc",
     metrics_url: ?[]const u8 = null,
     request_id_enabled: bool = true,
+    request_id_header: []const u8 = "x-request-id",
     docs: SwaggerUiConfig = .{},
     redoc: RedocUiConfig = .{},
     servers: []const []const u8 = &.{},

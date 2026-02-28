@@ -321,6 +321,42 @@ test "request id propagation can be disabled via app config" {
     try std.testing.expectEqualStrings("", telemetry_last_request_id.?);
 }
 
+test "request id header name can be customized via app config" {
+    resetTelemetryState(std.testing.allocator);
+    defer resetTelemetryState(std.testing.allocator);
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "observability-request-id-header",
+        .version = "0.0.1",
+        .request_id_header = "x-correlation-id",
+    });
+    defer app.deinit();
+
+    app.setTelemetrySink(telemetrySink);
+    try app.get("/observe", observabilityHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var generated = try client.get("/observe");
+    defer generated.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, generated.status);
+    const generated_request_id = generated.header("x-correlation-id") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(generated_request_id.len != 0);
+    try std.testing.expect(generated.header("x-request-id") == null);
+    try std.testing.expect(std.mem.indexOf(u8, generated.body, generated_request_id) != null);
+
+    var forwarded = try client.requestWithHeaders(.GET, "/observe", "", &.{
+        .{ .name = "x-correlation-id", .value = "corr-123" },
+    });
+    defer forwarded.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, forwarded.status);
+    try std.testing.expectEqualStrings("corr-123", forwarded.header("x-correlation-id").?);
+    try std.testing.expect(forwarded.header("x-request-id") == null);
+    try std.testing.expect(std.mem.indexOf(u8, forwarded.body, "\"request_id\":\"corr-123\"") != null);
+}
+
 test "traceparent context populates trace id and span id in dependencies and sinks" {
     resetTelemetryState(std.testing.allocator);
     defer resetTelemetryState(std.testing.allocator);

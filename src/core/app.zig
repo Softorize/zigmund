@@ -1161,8 +1161,9 @@ pub const App = struct {
     }
 
     fn ensureRequestId(self: *App, req: *Request) !void {
+        const request_id_header = self.requestIdHeaderName();
         if (req.requestId() == null) {
-            if (req.header("x-request-id")) |incoming| {
+            if (req.header(request_id_header)) |incoming| {
                 if (incoming.len != 0) {
                     req.setRequestIdBorrowed(incoming);
                 }
@@ -1185,6 +1186,11 @@ pub const App = struct {
                 std.log.warn("failed to set request_id dependency: {s}", .{@errorName(err)});
             };
         }
+    }
+
+    fn requestIdHeaderName(self: *const App) []const u8 {
+        if (self.cfg.request_id_header.len == 0) return "x-request-id";
+        return self.cfg.request_id_header;
     }
 
     fn ensureTraceContext(self: *App, req: *Request) void {
@@ -1293,10 +1299,11 @@ pub const App = struct {
     }
 
     fn attachRequestIdHeader(self: *App, req: *Request, response: *Response) void {
-        if (response.hasHeader("x-request-id")) return;
+        const request_id_header = self.requestIdHeaderName();
+        if (response.hasHeader(request_id_header)) return;
         const request_id = req.requestId() orelse return;
-        response.setHeader(self.allocator, "x-request-id", request_id) catch |err| {
-            std.log.warn("failed to set x-request-id header: {s}", .{@errorName(err)});
+        response.setHeader(self.allocator, request_id_header, request_id) catch |err| {
+            std.log.warn("failed to set request id header: {s}", .{@errorName(err)});
         };
     }
 
