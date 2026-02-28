@@ -170,10 +170,13 @@ pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
     }
 
     var is_new = false;
+    var owned_id: ?[]u8 = null;
     if (session_id == null) {
-        session_id = try generateSessionId(allocator);
+        owned_id = try generateSessionId(allocator);
+        session_id = owned_id.?;
         is_new = true;
     }
+    defer if (owned_id) |id| allocator.free(id);
 
     // Get or create session
     const session = try sess_store.getOrCreate(session_id.?);
@@ -210,7 +213,9 @@ pub fn responseHook(req: *Request, response: *Response, allocator: std.mem.Alloc
             try cookie_buf.writer(allocator).print("; Max-Age={d}", .{global_options.max_age});
         }
 
-        try response.setHeader(allocator, "Set-Cookie", try cookie_buf.toOwnedSlice(allocator));
+        const cookie_str = try cookie_buf.toOwnedSlice(allocator);
+        defer allocator.free(cookie_str);
+        try response.setHeader(allocator, "Set-Cookie", cookie_str);
     }
 }
 

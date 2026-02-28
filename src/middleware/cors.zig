@@ -74,18 +74,22 @@ pub fn responseHook(req: *Request, response: *Response, allocator: std.mem.Alloc
     // Expose headers
     if (global_options.expose_headers.len > 0) {
         const expose = try joinStrings(allocator, global_options.expose_headers, ", ");
+        defer allocator.free(expose);
         try response.setHeader(allocator, "Access-Control-Expose-Headers", expose);
     }
 
     // Preflight-specific headers
     if (req.dependency("_cors_preflight")) |_| {
         const methods = try joinStrings(allocator, global_options.allowed_methods, ", ");
+        defer allocator.free(methods);
         try response.setHeader(allocator, "Access-Control-Allow-Methods", methods);
 
         const headers_str = try joinStrings(allocator, global_options.allowed_headers, ", ");
+        defer allocator.free(headers_str);
         try response.setHeader(allocator, "Access-Control-Allow-Headers", headers_str);
 
-        const max_age = try std.fmt.allocPrint(allocator, "{d}", .{global_options.max_age});
+        var max_age_buf: [20]u8 = undefined;
+        const max_age = std.fmt.bufPrint(&max_age_buf, "{d}", .{global_options.max_age}) catch "86400";
         try response.setHeader(allocator, "Access-Control-Max-Age", max_age);
 
         // Short-circuit: 204 No Content for preflight
@@ -94,7 +98,7 @@ pub fn responseHook(req: *Request, response: *Response, allocator: std.mem.Alloc
     }
 }
 
-fn joinStrings(allocator: std.mem.Allocator, strings: []const []const u8, sep: []const u8) ![]const u8 {
+fn joinStrings(allocator: std.mem.Allocator, strings: []const []const u8, sep: []const u8) ![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     for (strings, 0..) |s, i| {
         if (i > 0) try buf.appendSlice(allocator, sep);

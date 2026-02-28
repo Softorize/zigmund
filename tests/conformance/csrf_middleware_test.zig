@@ -17,6 +17,7 @@ test "CSRF middleware generates token cookie on GET" {
     try app.get("/page", echoHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.get("/page");
     defer response.deinit(std.testing.allocator);
 
@@ -45,6 +46,7 @@ test "CSRF middleware rejects POST without token" {
     try app.post("/submit", echoHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.post("/submit", "{}");
     defer response.deinit(std.testing.allocator);
 

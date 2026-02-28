@@ -21,6 +21,7 @@ test "rate limit middleware adds X-RateLimit headers" {
     try app.get("/api/data", echoHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.requestWithHeaders(.GET, "/api/data", "", &.{
         .{ .name = "x-forwarded-for", .value = "10.0.0.1" },
     });

@@ -54,6 +54,7 @@ pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
     if (cookie_token == null) {
         // Generate new token
         const token = try generateToken(allocator);
+        defer allocator.free(token);
         try req.setDependencyValue("_csrf_token", token);
         try req.setDependencyValue("_csrf_new_cookie", "true");
     } else {
@@ -72,10 +73,10 @@ pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
     // Check header first, then form field
     const submitted_token = req.header(global_options.header_name) orelse
         req.queryParam(global_options.field_name) orelse
-    {
-        try req.setDependencyValue("_csrf_rejected", "true");
-        return;
-    };
+        {
+            try req.setDependencyValue("_csrf_rejected", "true");
+            return;
+        };
 
     if (!std.mem.eql(u8, expected_token, submitted_token)) {
         try req.setDependencyValue("_csrf_rejected", "true");
@@ -103,6 +104,7 @@ pub fn responseHook(req: *Request, response: *Response, allocator: std.mem.Alloc
                 if (global_options.cookie_secure) "; Secure" else "",
             },
         );
+        defer allocator.free(cookie);
         try response.setHeader(allocator, "Set-Cookie", cookie);
     }
 
