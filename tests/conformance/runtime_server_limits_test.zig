@@ -594,6 +594,7 @@ test "audit sink emits startup config and lifecycle events during serve" {
         .worker_count = 1,
         .accept_poll_interval_ms = 10,
         .header_timeout_ms = 1_500,
+        .write_timeout_ms = 1_250,
         .idle_timeout_ms = 250,
         .shutdown_grace_period_ms = 100,
         .max_header_bytes = 8 * 1024,
@@ -640,6 +641,7 @@ test "audit sink emits startup config and lifecycle events during serve" {
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"reuse_address\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"header_timeout_ms\":1500") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"body_timeout_ms\":10000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "\"write_timeout_ms\":1250") != null);
 
     var port_buf: [32]u8 = undefined;
     const port_fragment = try std.fmt.bufPrint(&port_buf, "\"port\":{d}", .{port});

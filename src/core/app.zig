@@ -1481,7 +1481,7 @@ pub const App = struct {
     fn emitStartupConfigAudit(self: *App, cfg: runtime.ServerConfig) void {
         const detail = std.fmt.allocPrint(
             self.allocator,
-            "{{\"host\":{f},\"port\":{d},\"workers\":{d},\"recv_buffer_size\":{d},\"send_buffer_size\":{d},\"reuse_address\":{},\"max_header_bytes\":{d},\"max_query_bytes\":{d},\"max_body_bytes\":{d},\"max_connections\":{d},\"accept_poll_interval_ms\":{d},\"header_timeout_ms\":{d},\"body_timeout_ms\":{d},\"idle_timeout_ms\":{d},\"shutdown_grace_period_ms\":{d},\"trusted_proxy_headers\":{},\"trusted_proxy_forwarded_header\":{},\"trusted_proxy_x_forwarded_headers\":{},\"trusted_proxy_cidrs\":{d},\"tls_enabled\":{}}}",
+            "{{\"host\":{f},\"port\":{d},\"workers\":{d},\"recv_buffer_size\":{d},\"send_buffer_size\":{d},\"reuse_address\":{},\"max_header_bytes\":{d},\"max_query_bytes\":{d},\"max_body_bytes\":{d},\"max_connections\":{d},\"accept_poll_interval_ms\":{d},\"header_timeout_ms\":{d},\"body_timeout_ms\":{d},\"write_timeout_ms\":{d},\"idle_timeout_ms\":{d},\"shutdown_grace_period_ms\":{d},\"trusted_proxy_headers\":{},\"trusted_proxy_forwarded_header\":{},\"trusted_proxy_x_forwarded_headers\":{},\"trusted_proxy_cidrs\":{d},\"tls_enabled\":{}}}",
             .{
                 std.json.fmt(cfg.host, .{}),
                 cfg.port,
@@ -1496,6 +1496,7 @@ pub const App = struct {
                 cfg.accept_poll_interval_ms,
                 cfg.header_timeout_ms,
                 cfg.body_timeout_ms,
+                cfg.write_timeout_ms,
                 cfg.idle_timeout_ms,
                 cfg.shutdown_grace_period_ms,
                 cfg.trusted_proxy_headers,

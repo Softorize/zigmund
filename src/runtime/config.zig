@@ -19,6 +19,7 @@ pub const ServerConfig = struct {
     accept_poll_interval_ms: i32 = 250,
     header_timeout_ms: i32 = 10_000,
     body_timeout_ms: i32 = 10_000,
+    write_timeout_ms: i32 = 10_000,
     idle_timeout_ms: i32 = 30_000,
     shutdown_grace_period_ms: u64 = 30_000,
     reuse_address: bool = true,

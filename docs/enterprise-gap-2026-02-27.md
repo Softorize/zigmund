@@ -134,6 +134,7 @@
   - Per-request body-size limits are enforced and oversized payloads return `413 Payload Too Large`.
   - Per-request header-size limits are now enforced via `ServerConfig.max_header_bytes`, with oversized request headers returning `431 Request Header Fields Too Large`.
   - Per-request query-size limits are now enforced via `ServerConfig.max_query_bytes`, with oversized query strings returning `414 URI Too Long`.
+  - Server-wide HTTP response write timeout control is now available via `ServerConfig.write_timeout_ms` (CLI: `--write-timeout-ms`) and applied at socket level for response dispatch paths.
   - Route-level HTTP guardrails now support per-route overrides for header/query/body limits (`RouteOptions.max_header_bytes`, `RouteOptions.max_query_bytes`, `RouteOptions.max_body_bytes`) over global server defaults.
   - Connection-overload behavior for `ServerConfig.max_connections` now emits explicit `503 Service Unavailable` responses (instead of silent drop).
   - Idle polling/timeout primitives are wired in the server loop for deterministic connection teardown.
