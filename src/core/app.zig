@@ -9,6 +9,10 @@ const Response = @import("../http/response.zig").Response;
 const openapi_gen = @import("../openapi/generator.zig");
 const docs_ui = @import("../openapi/docs_ui.zig");
 const metrics_registry = @import("metrics_registry.zig");
+const observability = @import("observability.zig");
+const auth_response = @import("auth_response.zig");
+const response_shaping = @import("response_shaping.zig");
+const dispatch_helpers = @import("dispatch_helpers.zig");
 
 pub const App = struct {
     allocator: std.mem.Allocator,
@@ -274,23 +278,23 @@ pub const App = struct {
     }
 
     pub fn enableJsonTelemetrySink(self: *App) void {
-        self.telemetry_sink = jsonTelemetrySink;
+        self.telemetry_sink = observability.jsonTelemetrySink;
     }
 
     pub fn enableJsonTraceSink(self: *App) void {
-        self.trace_sink = jsonTraceSink;
+        self.trace_sink = observability.jsonTraceSink;
     }
 
     pub fn enableJsonAccessLogSink(self: *App) void {
-        self.access_log_sink = jsonAccessLogSink;
+        self.access_log_sink = observability.jsonAccessLogSink;
     }
 
     pub fn enableJsonMetricsSink(self: *App) void {
-        self.metrics_sink = jsonMetricsSink;
+        self.metrics_sink = observability.jsonMetricsSink;
     }
 
     pub fn enableJsonAuditSink(self: *App) void {
-        self.audit_sink = jsonAuditSink;
+        self.audit_sink = observability.jsonAuditSink;
     }
 
     pub fn setTraceContextHeader(self: *App, header_name: []const u8) !void {
@@ -310,7 +314,7 @@ pub const App = struct {
         opts: types.IncludeRouterOptions,
     ) !void {
         for (router.httpRoutes()) |route| {
-            const combined = try joinPaths(self.allocator, prefix, route.path);
+            const combined = try dispatch_helpers.joinPaths(self.allocator, prefix, route.path);
             defer self.allocator.free(combined);
 
             var merged_opts = route.options;
@@ -327,7 +331,7 @@ pub const App = struct {
         }
 
         for (router.websocketRoutes()) |route| {
-            const combined = try joinPaths(self.allocator, prefix, route.path);
+            const combined = try dispatch_helpers.joinPaths(self.allocator, prefix, route.path);
             defer self.allocator.free(combined);
 
             var merged_ws_opts = route.options;
@@ -621,14 +625,14 @@ pub const App = struct {
                     var dep_response = switch (err) {
                         error.Unauthorized => self.unauthorizedResponseForWebSocket(&req, ws_route.options),
                         error.InsufficientScope => self.insufficientScopeResponseForWebSocket(&req, ws_route.options),
-                        else => dependencyErrorToResponse(self.allocator, err),
+                        else => auth_response.dependencyErrorToResponse(self.allocator, err),
                     };
                     defer dep_response.deinit(self.allocator);
-                    try sendResponse(raw_request, self.allocator, &dep_response);
+                    try dispatch_helpers.sendResponse(raw_request, self.allocator, &dep_response);
                     return;
                 };
 
-                if (!isWebSocketOriginAllowed(req.header("origin"), ws_route.options.allowed_origins)) {
+                if (!dispatch_helpers.isWebSocketOriginAllowed(req.header("origin"), ws_route.options.allowed_origins)) {
                     self.emitAudit(.{
                         .category = "websocket",
                         .action = "origin_rejected",
@@ -646,7 +650,7 @@ pub const App = struct {
                     return;
                 }
 
-                const selected_subprotocol = selectWebSocketSubprotocol(
+                const selected_subprotocol = dispatch_helpers.selectWebSocketSubprotocol(
                     req.header("sec-websocket-protocol"),
                     ws_route.options.subprotocols,
                 );
@@ -716,7 +720,7 @@ pub const App = struct {
         var response = try self.dispatchWithPipeline(&req);
         defer response.deinit(self.allocator);
 
-        try sendResponse(raw_request, self.allocator, &response);
+        try dispatch_helpers.sendResponse(raw_request, self.allocator, &response);
     }
 
     fn queryLengthFromTarget(target: []const u8) usize {
@@ -775,7 +779,7 @@ pub const App = struct {
         const start_ns = std.time.nanoTimestamp();
 
         self.runRequestMiddleware(req) catch |err| {
-            var response = middlewareErrorToResponse(self.allocator, err);
+            var response = auth_response.middlewareErrorToResponse(self.allocator, err);
             self.finalizeResponse(req, &response, start_ns);
             return response;
         };
@@ -790,7 +794,7 @@ pub const App = struct {
 
         self.runResponseMiddleware(req, &response) catch |err| {
             response.deinit(self.allocator);
-            var fallback = middlewareErrorToResponse(self.allocator, err);
+            var fallback = auth_response.middlewareErrorToResponse(self.allocator, err);
             self.finalizeResponse(req, &fallback, start_ns);
             return fallback;
         };
@@ -869,12 +873,12 @@ pub const App = struct {
                     self.emitAuthAudit(req, "http_insufficient_scope", "dependency");
                     return self.insufficientScopeResponseForRoute(req, route.options);
                 }
-                return dependencyErrorToResponse(self.allocator, err);
+                return auth_response.dependencyErrorToResponse(self.allocator, err);
             };
 
             var route_response = route.handler(req, self.allocator) catch |err| {
                 if (err == error.ValidationFailed and req.hasValidationIssues()) {
-                    return validationIssuesToResponse(self.allocator, req.validationIssues());
+                    return dispatch_helpers.validationIssuesToResponse(self.allocator, req.validationIssues());
                 }
                 if (err == error.UnsupportedMediaType) {
                     return Response.text("unsupported media type").withStatus(.unsupported_media_type);
@@ -1296,7 +1300,7 @@ pub const App = struct {
         if (self.cfg.request_id_enabled) {
             self.attachRequestIdHeader(req, response);
         }
-        const latency_us = elapsedMicros(start_ns);
+        const latency_us = observability.elapsedMicros(start_ns);
         self.emitTelemetry(req, response.status, latency_us);
         self.emitTrace(req, response.status, latency_us);
         self.emitAccessLog(req, response.status, latency_us);
@@ -1316,7 +1320,7 @@ pub const App = struct {
         if (self.telemetry_sink == null and !self.cfg.structured_telemetry_logs) return;
 
         const trace_identity = buildTraceIdentity(req);
-        const path = observabilityPath(req);
+        const path = observability.observabilityPath(req);
         const event: TelemetryEvent = .{
             .request_id = req.requestId() orelse "",
             .trace_id = trace_identity.trace_id,
@@ -1335,7 +1339,7 @@ pub const App = struct {
         }
 
         if (self.cfg.structured_telemetry_logs) {
-            jsonTelemetrySink(event, self.allocator) catch |err| {
+            observability.jsonTelemetrySink(event, self.allocator) catch |err| {
                 std.log.warn("telemetry json sink failed: {s}", .{@errorName(err)});
             };
         }
@@ -1345,7 +1349,7 @@ pub const App = struct {
         if (self.trace_sink == null and !self.cfg.structured_trace_logs) return;
 
         const trace_identity = buildTraceIdentity(req);
-        const path = observabilityPath(req);
+        const path = observability.observabilityPath(req);
         const event: TraceEvent = .{
             .request_id = req.requestId() orelse "",
             .trace_context = trace_identity.trace_context,
@@ -1367,7 +1371,7 @@ pub const App = struct {
         }
 
         if (self.cfg.structured_trace_logs) {
-            jsonTraceSink(event, self.allocator) catch |err| {
+            observability.jsonTraceSink(event, self.allocator) catch |err| {
                 std.log.warn("trace json sink failed: {s}", .{@errorName(err)});
             };
         }
@@ -1389,7 +1393,7 @@ pub const App = struct {
                 "");
         const host = req.dependency("zigmund.proxy.host") orelse req.header("host") orelse "";
         const trace_identity = buildTraceIdentity(req);
-        const path = observabilityPath(req);
+        const path = observability.observabilityPath(req);
 
         const event: AccessLogEvent = .{
             .request_id = req.requestId() orelse "",
@@ -1416,7 +1420,7 @@ pub const App = struct {
         }
 
         if (self.cfg.structured_access_logs) {
-            jsonAccessLogSink(event, self.allocator) catch |err| {
+            observability.jsonAccessLogSink(event, self.allocator) catch |err| {
                 std.log.warn("access log json sink failed: {s}", .{@errorName(err)});
             };
         }
@@ -1426,7 +1430,7 @@ pub const App = struct {
         const collect_registry = self.cfg.metrics_url != null;
         const emit_sink_or_logs = self.metrics_sink != null or self.cfg.structured_metrics_logs;
         if (!collect_registry and !emit_sink_or_logs) return;
-        const path = observabilityPath(req);
+        const path = observability.observabilityPath(req);
 
         if (collect_registry) {
             self.metrics.observe(req.method, path, status, latency_us) catch |err| {
@@ -1466,10 +1470,10 @@ pub const App = struct {
         }
 
         if (self.cfg.structured_metrics_logs) {
-            jsonMetricsSink(count_event, self.allocator) catch |err| {
+            observability.jsonMetricsSink(count_event, self.allocator) catch |err| {
                 std.log.warn("metrics json sink failed: {s}", .{@errorName(err)});
             };
-            jsonMetricsSink(latency_event, self.allocator) catch |err| {
+            observability.jsonMetricsSink(latency_event, self.allocator) catch |err| {
                 std.log.warn("metrics json sink failed: {s}", .{@errorName(err)});
             };
         }
@@ -1484,7 +1488,7 @@ pub const App = struct {
         }
 
         if (self.cfg.structured_audit_logs) {
-            jsonAuditSink(event, self.allocator) catch |err| {
+            observability.jsonAuditSink(event, self.allocator) catch |err| {
                 std.log.warn("audit json sink failed: {s}", .{@errorName(err)});
             };
         }
@@ -1548,8 +1552,8 @@ pub const App = struct {
         response: *Response,
     ) !void {
         if (route_options.response_model_name == null) return;
-        if (!needsResponseShaping(route_options)) return;
-        if (!isJsonContentType(response.content_type)) return;
+        if (!response_shaping.needsResponseShaping(route_options)) return;
+        if (!dispatch_helpers.isJsonContentType(response.content_type)) return;
 
         var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, response.body, .{}) catch return;
         defer parsed.deinit();
@@ -1558,13 +1562,13 @@ pub const App = struct {
         if (route_options.response_model_transform) |transform| {
             try transform(&shaped, self.allocator);
         }
-        try applyResponseModelFieldFilter(
+        try response_shaping.applyResponseModelFieldFilter(
             self.allocator,
             &shaped,
             route_options.response_model_field_rules,
         );
 
-        try applyTopLevelIncludeExclude(
+        try response_shaping.applyTopLevelIncludeExclude(
             self.allocator,
             &shaped,
             route_options.response_model_include,
@@ -1572,18 +1576,18 @@ pub const App = struct {
         );
 
         if (route_options.response_model_exclude_defaults) {
-            try applyExcludeDefaults(
+            try response_shaping.applyExcludeDefaults(
                 &shaped,
                 route_options.response_model_field_rules,
             );
         }
 
         if (route_options.response_model_exclude_none) {
-            try pruneNullValues(self.allocator, &shaped);
+            try response_shaping.pruneNullValues(self.allocator, &shaped);
         }
 
         if (route_options.response_model_by_alias) {
-            try applyResponseModelAliases(
+            try response_shaping.applyResponseModelAliases(
                 self.allocator,
                 &shaped,
                 route_options.response_model_field_rules,
@@ -1793,7 +1797,7 @@ pub const App = struct {
     ) ?[]const u8 {
         for (dependencies) |dep| {
             const scheme = self.lookupSecurityScheme(dep.name) orelse continue;
-            if (challengeForSecurityScheme(scheme.scheme)) |challenge| return challenge;
+            if (auth_response.challengeForSecurityScheme(scheme.scheme)) |challenge| return challenge;
         }
         return null;
     }
@@ -2015,608 +2019,6 @@ pub const App = struct {
         return @typeInfo(T).error_union.payload == void;
     }
 };
-
-fn needsResponseShaping(options: types.StoredRouteOptions) bool {
-    if (options.response_model_transform != null) return true;
-    if (options.response_model_validate != null) return true;
-    if (options.response_model_field_rules.len != 0) return true;
-    if (options.response_model_include.len != 0) return true;
-    if (options.response_model_exclude.len != 0) return true;
-    if (options.response_model_exclude_none) return true;
-    if (options.response_model_exclude_unset) return true;
-    if (options.response_model_exclude_defaults) return true;
-    return false;
-}
-
-fn elapsedMicros(start_ns: i128) u64 {
-    const now_ns = std.time.nanoTimestamp();
-    const latency_ns: i128 = if (now_ns > start_ns) now_ns - start_ns else 0;
-    return @intCast(@divFloor(latency_ns, 1_000));
-}
-
-fn observabilityPath(req: *const Request) []const u8 {
-    return req.dependency("zigmund.route.path_template") orelse req.path;
-}
-
-fn isJsonContentType(content_type: []const u8) bool {
-    const media_type = std.mem.trim(u8, mediaTypeToken(content_type), " \t");
-    if (std.ascii.eqlIgnoreCase(media_type, "application/json")) return true;
-    return std.mem.endsWith(u8, media_type, "+json");
-}
-
-fn mediaTypeToken(raw: []const u8) []const u8 {
-    const end = std.mem.indexOfScalar(u8, raw, ';') orelse raw.len;
-    return raw[0..end];
-}
-
-fn applyTopLevelIncludeExclude(
-    allocator: std.mem.Allocator,
-    value: *std.json.Value,
-    include: []const []const u8,
-    exclude: []const []const u8,
-) !void {
-    if (include.len == 0 and exclude.len == 0) return;
-
-    var path_buf: std.ArrayList(u8) = .empty;
-    defer path_buf.deinit(allocator);
-
-    try applyIncludeExcludeRecursive(allocator, value, include, exclude, &path_buf);
-}
-
-fn applyResponseModelFieldFilter(
-    allocator: std.mem.Allocator,
-    value: *std.json.Value,
-    rules: []const types.ResponseModelFieldRule,
-) !void {
-    if (rules.len == 0) return;
-
-    const include_paths = try allocator.alloc([]const u8, rules.len);
-    defer allocator.free(include_paths);
-
-    for (rules, 0..) |rule, idx| {
-        include_paths[idx] = rule.path;
-    }
-    try applyTopLevelIncludeExclude(allocator, value, include_paths, &.{});
-}
-
-fn applyExcludeDefaults(
-    value: *std.json.Value,
-    rules: []const types.ResponseModelFieldRule,
-) !void {
-    for (rules) |rule| {
-        if (rule.default_value == .none) continue;
-        try removePathIfDefault(value, rule.path, rule.default_value);
-    }
-}
-
-fn removePathIfDefault(
-    value: *std.json.Value,
-    path: []const u8,
-    default_value: types.ResponseModelDefaultValue,
-) !void {
-    if (path.len == 0) return;
-
-    switch (value.*) {
-        .object => |*object| {
-            const split = splitPath(path);
-            if (split.tail.len == 0) {
-                const current = object.get(split.head) orelse return;
-                if (jsonValueMatchesDefault(current, default_value)) {
-                    _ = object.swapRemove(split.head);
-                }
-                return;
-            }
-
-            if (object.getPtr(split.head)) |child| {
-                try removePathIfDefault(child, split.tail, default_value);
-            }
-        },
-        .array => |*array| {
-            for (array.items) |*item| {
-                try removePathIfDefault(item, path, default_value);
-            }
-        },
-        else => {},
-    }
-}
-
-fn jsonValueMatchesDefault(value: std.json.Value, default_value: types.ResponseModelDefaultValue) bool {
-    return switch (default_value) {
-        .none => false,
-        .null => value == .null,
-        .bool => |expected| switch (value) {
-            .bool => |actual| actual == expected,
-            else => false,
-        },
-        .integer => |expected| switch (value) {
-            .integer => |actual| actual == expected,
-            .float => |actual| actual == @as(f64, @floatFromInt(expected)),
-            .number_string => |actual| blk: {
-                const parsed = std.fmt.parseInt(i64, actual, 10) catch break :blk false;
-                break :blk parsed == expected;
-            },
-            else => false,
-        },
-        .float => |expected| switch (value) {
-            .float => |actual| actual == expected,
-            .integer => |actual| @as(f64, @floatFromInt(actual)) == expected,
-            .number_string => |actual| blk: {
-                const parsed = std.fmt.parseFloat(f64, actual) catch break :blk false;
-                break :blk parsed == expected;
-            },
-            else => false,
-        },
-        .string => |expected| switch (value) {
-            .string => |actual| std.mem.eql(u8, actual, expected),
-            else => false,
-        },
-    };
-}
-
-fn applyResponseModelAliases(
-    allocator: std.mem.Allocator,
-    value: *std.json.Value,
-    rules: []const types.ResponseModelFieldRule,
-) !void {
-    var max_depth: usize = 0;
-    for (rules) |rule| {
-        if (rule.alias == null) continue;
-        max_depth = @max(max_depth, pathDepth(rule.path));
-    }
-    if (max_depth == 0) return;
-
-    var depth = max_depth;
-    while (depth > 0) : (depth -= 1) {
-        for (rules) |rule| {
-            const alias = rule.alias orelse continue;
-            if (pathDepth(rule.path) != depth) continue;
-            try renamePathField(allocator, value, rule.path, alias);
-        }
-    }
-}
-
-fn renamePathField(
-    allocator: std.mem.Allocator,
-    value: *std.json.Value,
-    path: []const u8,
-    alias: []const u8,
-) !void {
-    if (path.len == 0) return;
-
-    switch (value.*) {
-        .object => |*object| {
-            const split = splitPath(path);
-            if (split.tail.len == 0) {
-                if (std.mem.eql(u8, split.head, alias)) return;
-
-                const removed = object.fetchSwapRemove(split.head) orelse return;
-                if (object.get(alias) == null) {
-                    try object.put(alias, removed.value);
-                }
-                return;
-            }
-
-            if (object.getPtr(split.head)) |child| {
-                try renamePathField(allocator, child, split.tail, alias);
-            }
-        },
-        .array => |*array| {
-            for (array.items) |*item| {
-                try renamePathField(allocator, item, path, alias);
-            }
-        },
-        else => {},
-    }
-}
-
-fn splitPath(path: []const u8) struct { head: []const u8, tail: []const u8 } {
-    const dot = std.mem.indexOfScalar(u8, path, '.') orelse {
-        return .{ .head = path, .tail = "" };
-    };
-    return .{
-        .head = path[0..dot],
-        .tail = path[dot + 1 ..],
-    };
-}
-
-fn pathDepth(path: []const u8) usize {
-    if (path.len == 0) return 0;
-
-    var depth: usize = 1;
-    for (path) |ch| {
-        if (ch == '.') depth += 1;
-    }
-    return depth;
-}
-
-fn applyIncludeExcludeRecursive(
-    allocator: std.mem.Allocator,
-    value: *std.json.Value,
-    include: []const []const u8,
-    exclude: []const []const u8,
-    path_buf: *std.ArrayList(u8),
-) !void {
-    switch (value.*) {
-        .object => |*object| {
-            var remove_keys: std.ArrayList([]const u8) = .empty;
-            defer remove_keys.deinit(allocator);
-
-            var iter = object.iterator();
-            while (iter.next()) |entry| {
-                const restore_len = path_buf.items.len;
-                if (restore_len != 0) try path_buf.append(allocator, '.');
-                try path_buf.appendSlice(allocator, entry.key_ptr.*);
-                const path = path_buf.items;
-
-                const include_exact = pathInList(include, path);
-                const include_child = pathHasChild(include, path);
-                const include_match = include.len == 0 or include_exact or include_child;
-                const exclude_exact = pathInList(exclude, path);
-                const exclude_child = pathHasChild(exclude, path);
-
-                if (!include_match or exclude_exact) {
-                    try remove_keys.append(allocator, entry.key_ptr.*);
-                    path_buf.items.len = restore_len;
-                    continue;
-                }
-
-                if (include_child or exclude_child) {
-                    try applyIncludeExcludeRecursive(allocator, entry.value_ptr, include, exclude, path_buf);
-                }
-
-                path_buf.items.len = restore_len;
-            }
-
-            for (remove_keys.items) |key| {
-                _ = object.swapRemove(key);
-            }
-        },
-        .array => |*array| {
-            for (array.items) |*item| {
-                try applyIncludeExcludeRecursive(allocator, item, include, exclude, path_buf);
-            }
-        },
-        else => {},
-    }
-}
-
-fn pruneNullValues(allocator: std.mem.Allocator, value: *std.json.Value) !void {
-    switch (value.*) {
-        .object => |*object| {
-            var remove_keys: std.ArrayList([]const u8) = .empty;
-            defer remove_keys.deinit(allocator);
-
-            var iter = object.iterator();
-            while (iter.next()) |entry| {
-                try pruneNullValues(allocator, entry.value_ptr);
-                if (entry.value_ptr.* == .null) {
-                    try remove_keys.append(allocator, entry.key_ptr.*);
-                }
-            }
-
-            for (remove_keys.items) |key| {
-                _ = object.swapRemove(key);
-            }
-        },
-        .array => |*array| {
-            var idx: usize = 0;
-            while (idx < array.items.len) : (idx += 1) {
-                try pruneNullValues(allocator, &array.items[idx]);
-            }
-
-            var write_idx: usize = 0;
-            for (array.items) |item| {
-                if (item == .null) continue;
-                array.items[write_idx] = item;
-                write_idx += 1;
-            }
-            array.items.len = write_idx;
-        },
-        else => {},
-    }
-}
-
-fn pathInList(list: []const []const u8, needle: []const u8) bool {
-    for (list) |item| {
-        if (std.mem.eql(u8, item, needle)) return true;
-    }
-    return false;
-}
-
-fn pathHasChild(list: []const []const u8, path: []const u8) bool {
-    if (path.len == 0) return list.len != 0;
-
-    for (list) |item| {
-        if (item.len <= path.len) continue;
-        if (!std.mem.startsWith(u8, item, path)) continue;
-        if (item[path.len] == '.') return true;
-    }
-    return false;
-}
-
-fn isWebSocketOriginAllowed(origin_header: ?[]const u8, allowed_origins: []const []const u8) bool {
-    if (allowed_origins.len == 0) return true;
-
-    const origin = std.mem.trim(u8, origin_header orelse return false, " \t");
-    if (origin.len == 0) return false;
-
-    for (allowed_origins) |item| {
-        const allowed = std.mem.trim(u8, item, " \t");
-        if (allowed.len == 0) continue;
-        if (std.mem.eql(u8, allowed, "*")) return true;
-        if (std.ascii.eqlIgnoreCase(allowed, origin)) return true;
-    }
-
-    return false;
-}
-
-fn selectWebSocketSubprotocol(
-    offered_header: ?[]const u8,
-    supported_subprotocols: []const []const u8,
-) ?[]const u8 {
-    if (supported_subprotocols.len == 0) return null;
-    const offered = offered_header orelse return null;
-
-    var offered_tokens = std.mem.splitScalar(u8, offered, ',');
-    while (offered_tokens.next()) |token_raw| {
-        const token = std.mem.trim(u8, token_raw, " \t");
-        if (token.len == 0) continue;
-
-        for (supported_subprotocols) |supported_raw| {
-            const supported = std.mem.trim(u8, supported_raw, " \t");
-            if (supported.len == 0) continue;
-            if (std.mem.eql(u8, token, supported)) return supported;
-        }
-    }
-
-    return null;
-}
-
-fn sendResponse(raw: *std.http.Server.Request, allocator: std.mem.Allocator, response: *const Response) !void {
-    var headers: std.ArrayList(std.http.Header) = .empty;
-    defer headers.deinit(allocator);
-
-    try headers.append(allocator, .{
-        .name = "content-type",
-        .value = response.content_type,
-    });
-
-    try headers.appendSlice(allocator, response.headers.items);
-
-    try raw.respond(response.body, .{
-        .status = response.status,
-        .extra_headers = headers.items,
-    });
-}
-
-fn joinPaths(allocator: std.mem.Allocator, prefix: []const u8, path: []const u8) ![]u8 {
-    const normalized_prefix = if (prefix.len == 0) "/" else prefix;
-    if (normalized_prefix[0] != '/' or path.len == 0 or path[0] != '/') return error.InvalidPath;
-
-    if (std.mem.eql(u8, normalized_prefix, "/")) {
-        return allocator.dupe(u8, path);
-    }
-
-    const prefix_no_trailing = std.mem.trimRight(u8, normalized_prefix, "/");
-    if (std.mem.eql(u8, path, "/")) {
-        return std.fmt.allocPrint(allocator, "{s}", .{prefix_no_trailing});
-    }
-    return std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix_no_trailing, path });
-}
-
-fn dependencyErrorToResponse(allocator: std.mem.Allocator, err: deps.RunError) Response {
-    return switch (err) {
-        error.Unauthorized => unauthorizedResponse(allocator),
-        error.InsufficientScope => insufficientScopeResponse(allocator),
-        error.MissingDependency => Response.text("missing dependency").withStatus(.internal_server_error),
-        error.DependencyCycleDetected => Response.text("dependency cycle detected").withStatus(.internal_server_error),
-        error.DependencyExecutionFailed => Response.text("dependency execution failed").withStatus(.internal_server_error),
-    };
-}
-
-/// Maps middleware errors to HTTP responses.
-/// NOTE: Uses runtime error name comparison because middleware returns `anyerror`.
-/// This means any error named "Unauthorized" from any error set will match.
-/// This is a known limitation of the current design.
-fn middlewareErrorToResponse(allocator: std.mem.Allocator, err: anyerror) Response {
-    if (std.mem.eql(u8, @errorName(err), "Unauthorized")) {
-        return unauthorizedResponse(allocator);
-    }
-    if (std.mem.eql(u8, @errorName(err), "InsufficientScope")) {
-        return insufficientScopeResponse(allocator);
-    }
-    return Response.text("middleware execution failed").withStatus(.internal_server_error);
-}
-
-fn unauthorizedResponse(allocator: std.mem.Allocator) Response {
-    var response = Response.text("unauthorized").withStatus(.unauthorized);
-    response.setHeader(allocator, "www-authenticate", "Bearer") catch |err| {
-        std.log.debug("failed to set header: {s}", .{@errorName(err)});
-    };
-    return response;
-}
-
-fn insufficientScopeResponse(allocator: std.mem.Allocator) Response {
-    var response = Response.text("forbidden").withStatus(.forbidden);
-    response.setHeader(allocator, "www-authenticate", "Bearer error=\"insufficient_scope\"") catch |err| {
-        std.log.debug("failed to set header: {s}", .{@errorName(err)});
-    };
-    return response;
-}
-
-fn challengeForSecurityScheme(scheme: security.OpenApiSecurityScheme) ?[]const u8 {
-    return switch (scheme) {
-        .http => |http| httpChallenge(http.scheme),
-        .oauth2, .openid_connect => "Bearer",
-        .api_key => null,
-    };
-}
-
-fn httpChallenge(raw_scheme: []const u8) []const u8 {
-    if (std.ascii.eqlIgnoreCase(raw_scheme, "basic")) {
-        return "Basic realm=\"zigmund\"";
-    }
-    if (std.ascii.eqlIgnoreCase(raw_scheme, "bearer")) return "Bearer";
-    if (std.ascii.eqlIgnoreCase(raw_scheme, "digest")) {
-        return "Digest realm=\"zigmund\", qop=\"auth\", algorithm=SHA-256";
-    }
-    return raw_scheme;
-}
-
-fn validationIssuesToResponse(
-    allocator: std.mem.Allocator,
-    issues: []const Request.ValidationIssue,
-) !Response {
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(allocator);
-
-    var writer = out.writer(allocator);
-    try writer.writeAll("{\"detail\":[");
-
-    for (issues, 0..) |issue, idx| {
-        if (idx != 0) try writer.writeAll(",");
-
-        try writer.writeAll("{\"loc\":[");
-        try writeJsonString(&writer, issue.location.asString());
-        try writer.writeAll(",");
-        try writeJsonString(&writer, issue.field);
-        try writer.writeAll("],");
-
-        try writer.writeAll("\"msg\":");
-        try writeJsonString(&writer, issue.message);
-        try writer.writeAll(",");
-
-        try writer.writeAll("\"type\":");
-        try writeJsonString(&writer, issue.issue_type);
-
-        if (issue.input) |input| {
-            try writer.writeAll(",\"input\":");
-            try writeJsonString(&writer, input);
-        }
-
-        try writer.writeAll("}");
-    }
-
-    try writer.writeAll("]}");
-
-    const payload = try out.toOwnedSlice(allocator);
-    return .{
-        .status = .unprocessable_entity,
-        .body = payload,
-        .content_type = "application/json",
-        .owned_body = payload,
-    };
-}
-
-fn writeJsonString(writer: anytype, value: []const u8) !void {
-    try writer.print("{f}", .{std.json.fmt(value, .{})});
-}
-
-fn jsonTelemetrySink(event: App.TelemetryEvent, allocator: std.mem.Allocator) !void {
-    const line = try std.fmt.allocPrint(
-        allocator,
-        "{{\"event\":\"telemetry\",\"request_id\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
-        .{
-            std.json.fmt(event.request_id, .{}),
-            std.json.fmt(event.trace_id, .{}),
-            std.json.fmt(event.span_id, .{}),
-            std.json.fmt(@tagName(event.method), .{}),
-            std.json.fmt(event.path, .{}),
-            @intFromEnum(event.status),
-            event.latency_us,
-        },
-    );
-    defer allocator.free(line);
-    try writeStderrLine(line);
-}
-
-fn jsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator) !void {
-    const line = try std.fmt.allocPrint(
-        allocator,
-        "{{\"event\":\"trace\",\"request_id\":{f},\"trace_context\":{f},\"tracestate\":{f},\"baggage\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
-        .{
-            std.json.fmt(event.request_id, .{}),
-            std.json.fmt(event.trace_context, .{}),
-            std.json.fmt(event.tracestate, .{}),
-            std.json.fmt(event.baggage, .{}),
-            std.json.fmt(event.trace_id, .{}),
-            std.json.fmt(event.span_id, .{}),
-            std.json.fmt(@tagName(event.method), .{}),
-            std.json.fmt(event.path, .{}),
-            @intFromEnum(event.status),
-            event.latency_us,
-        },
-    );
-    defer allocator.free(line);
-    try writeStderrLine(line);
-}
-
-fn jsonAccessLogSink(event: App.AccessLogEvent, allocator: std.mem.Allocator) !void {
-    const line = try std.fmt.allocPrint(
-        allocator,
-        "{{\"event\":\"access_log\",\"request_id\":{f},\"trace_context\":{f},\"tracestate\":{f},\"baggage\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"scheme\":{f},\"host\":{f},\"status\":{d},\"latency_us\":{d},\"remote_addr\":{f},\"user_agent\":{f}}}",
-        .{
-            std.json.fmt(event.request_id, .{}),
-            std.json.fmt(event.trace_context, .{}),
-            std.json.fmt(event.tracestate, .{}),
-            std.json.fmt(event.baggage, .{}),
-            std.json.fmt(event.trace_id, .{}),
-            std.json.fmt(event.span_id, .{}),
-            std.json.fmt(@tagName(event.method), .{}),
-            std.json.fmt(event.path, .{}),
-            std.json.fmt(event.scheme, .{}),
-            std.json.fmt(event.host, .{}),
-            @intFromEnum(event.status),
-            event.latency_us,
-            std.json.fmt(event.remote_addr, .{}),
-            std.json.fmt(event.user_agent, .{}),
-        },
-    );
-    defer allocator.free(line);
-    try writeStderrLine(line);
-}
-
-fn jsonMetricsSink(event: App.MetricsEvent, allocator: std.mem.Allocator) !void {
-    const line = try std.fmt.allocPrint(
-        allocator,
-        "{{\"event\":\"metrics\",\"name\":{f},\"value\":{d},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
-        .{
-            std.json.fmt(event.name, .{}),
-            event.value,
-            std.json.fmt(@tagName(event.method), .{}),
-            std.json.fmt(event.path, .{}),
-            @intFromEnum(event.status),
-            event.latency_us,
-        },
-    );
-    defer allocator.free(line);
-    try writeStderrLine(line);
-}
-
-fn jsonAuditSink(event: App.AuditEvent, allocator: std.mem.Allocator) !void {
-    const line = try std.fmt.allocPrint(
-        allocator,
-        "{{\"event\":\"audit\",\"category\":{f},\"action\":{f},\"request_id\":{f},\"method\":{f},\"path\":{f},\"detail\":{f}}}",
-        .{
-            std.json.fmt(event.category, .{}),
-            std.json.fmt(event.action, .{}),
-            std.json.fmt(event.request_id, .{}),
-            std.json.fmt(event.method, .{}),
-            std.json.fmt(event.path, .{}),
-            std.json.fmt(event.detail, .{}),
-        },
-    );
-    defer allocator.free(line);
-    try writeStderrLine(line);
-}
-
-fn writeStderrLine(line: []const u8) !void {
-    var stderr_buffer: [4096]u8 = undefined;
-    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
-    try stderr_writer.interface.writeAll(line);
-    try stderr_writer.interface.writeAll("\n");
-    try stderr_writer.interface.flush();
-}
 
 test "openapi endpoint works in synthetic dispatch" {
     var app = try App.init(std.testing.allocator, .{ .title = "Zigmund", .version = "0.1.0" });
