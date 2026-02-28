@@ -44,6 +44,7 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, command, "openapi")) {
         const opts = try parseOpenApiFlags(&args);
+        try validateOpenApiCommandOptions(opts);
         if (opts.deterministic) {
             app.cfg.openapi_deterministic = true;
         }
@@ -441,6 +442,12 @@ fn parseOpenApiFlags(args: anytype) !OpenApiCommandOptions {
     }
 
     return opts;
+}
+
+fn validateOpenApiCommandOptions(opts: OpenApiCommandOptions) !void {
+    if (opts.diff_semantic and opts.diff_path == null) {
+        return error.DiffSemanticRequiresDiffPath;
+    }
 }
 
 fn parseOutputFlags(args: anytype) !?[]const u8 {
@@ -1472,6 +1479,13 @@ test "parse openapi flags supports deterministic out diff and json-schema dialec
     const semantic_opts = try parseOpenApiFlags(&semantic_iter);
     try std.testing.expect(semantic_opts.diff_semantic);
     try std.testing.expectEqualStrings("baseline.json", semantic_opts.diff_path.?);
+
+    try std.testing.expectError(
+        error.DiffSemanticRequiresDiffPath,
+        validateOpenApiCommandOptions(.{
+            .diff_semantic = true,
+        }),
+    );
 }
 
 test "parse serve flags supports header timeout option" {

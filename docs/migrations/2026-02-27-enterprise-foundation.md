@@ -165,6 +165,7 @@
    - new incoming connections during shutdown/drain now receive explicit `503 Service Unavailable` responses with `server shutting down` payload (instead of silent close), reusing configured overload retry policy.
 40. OpenAPI semantic snapshot diff extension:
    - `zigmund openapi` now supports `--diff-semantic` for JSON-structural snapshot comparison (object-key-order agnostic) when used with `--diff <path>`.
+   - `--diff-semantic` without `--diff` now fails fast (`DiffSemanticRequiresDiffPath`).
 
 ## Migration Actions
 
