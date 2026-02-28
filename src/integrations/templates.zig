@@ -1,5 +1,6 @@
 const std = @import("std");
 const Response = @import("../http/response.zig").Response;
+const template = @import("../template/mod.zig");
 
 pub const TemplateValue = union(enum) {
     string: []const u8,
@@ -77,6 +78,33 @@ pub const TemplatesIntegration = struct {
         bindings: []const TemplateBinding,
     ) !Response {
         const rendered = try self.render(template_name, bindings);
+        return .{
+            .status = .ok,
+            .body = rendered,
+            .content_type = "text/html; charset=utf-8",
+            .owned_body = rendered,
+        };
+    }
+
+    /// Render a template using the Jinja2-compatible engine.
+    /// This provides full Jinja2 features: control flow, filters, inheritance, macros.
+    pub fn renderJinja(
+        self: *const TemplatesIntegration,
+        template_name: []const u8,
+        vars: []const struct { []const u8, template.Value },
+    ) ![]u8 {
+        var engine = template.Engine.init(self.allocator, self.templates_dir);
+        defer engine.deinit();
+        return try engine.render(template_name, vars);
+    }
+
+    /// Render a Jinja2 template and return it as an HTML response.
+    pub fn renderJinjaHtmlResponse(
+        self: *const TemplatesIntegration,
+        template_name: []const u8,
+        vars: []const struct { []const u8, template.Value },
+    ) !Response {
+        const rendered = try self.renderJinja(template_name, vars);
         return .{
             .status = .ok,
             .body = rendered,

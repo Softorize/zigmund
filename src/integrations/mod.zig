@@ -28,3 +28,8 @@ pub const SqlIntegration = sql.SqlIntegration;
 pub const SqlSessionProvider = sql.SqlSessionProvider;
 
 pub const CompatibilityAdapters = compatibility.CompatibilityAdapters;
+
+pub const jinja = @import("../template/mod.zig");
+pub const JinjaEngine = jinja.Engine;
+pub const JinjaValue = jinja.Value;
+pub const renderJinjaString = jinja.renderString;
