@@ -15,6 +15,7 @@ const ServeState = struct {
     should_stop_fn: ?ShouldStopFn = null,
     active_connections: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     shutdown_started_ms: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+    force_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 };
 
 pub fn serve(
@@ -57,10 +58,20 @@ pub fn serve(
     const threads = std.heap.c_allocator.alloc(std.Thread, workers - 1) catch return error.WorkerSpawnFailed;
     defer std.heap.c_allocator.free(threads);
 
+    var spawned: usize = 0;
+    errdefer {
+        // Signal shutdown so already-spawned workers exit their accept loops.
+        state.force_stop.store(true, .release);
+        for (threads[0..spawned]) |thread| {
+            thread.join();
+        }
+    }
+
     for (threads) |*thread| {
         thread.* = std.Thread.spawn(.{}, workerLoop, .{ &listener, cfg, ctx, dispatch, &state, tls_ctx }) catch {
             return error.WorkerSpawnFailed;
         };
+        spawned += 1;
     }
 
     workerLoop(&listener, cfg, ctx, dispatch, &state, tls_ctx);
@@ -326,6 +337,7 @@ fn shutdownRequested(state: *const ServeState) bool {
 }
 
 fn shouldTerminate(state: *ServeState, cfg: ServerConfig) bool {
+    if (state.force_stop.load(.acquire)) return true;
     if (!shutdownRequested(state)) return false;
 
     if (state.shutdown_started_ms.load(.acquire) == 0) {

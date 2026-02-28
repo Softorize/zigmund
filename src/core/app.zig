@@ -36,6 +36,7 @@ pub const App = struct {
     openapi_cache: ?[]u8 = null,
     docs_cache: ?[]u8 = null,
     redoc_cache: ?[]u8 = null,
+    cache_mutex: std.Thread.Mutex = .{},
 
     const LifecycleFn = *const fn () anyerror!void;
     const RequestMiddlewareFn = *const fn (*Request, std.mem.Allocator) anyerror!void;
@@ -354,6 +355,7 @@ pub const App = struct {
 
         if (T == Middleware) {
             const name = try self.allocator.dupe(u8, mw.name);
+            errdefer self.allocator.free(name);
             try self.middleware.append(self.allocator, .{
                 .name = name,
                 .request_hook = mw.request_hook,
@@ -469,6 +471,9 @@ pub const App = struct {
     }
 
     pub fn openapi(self: *App) ![]const u8 {
+        self.cache_mutex.lock();
+        defer self.cache_mutex.unlock();
+
         if (self.openapi_cache) |doc| return doc;
 
         const doc = try openapi_gen.generate(
@@ -1964,6 +1969,9 @@ pub const App = struct {
     }
 
     fn docsHtml(self: *App) ![]const u8 {
+        self.cache_mutex.lock();
+        defer self.cache_mutex.unlock();
+
         if (self.docs_cache) |html| return html;
 
         const openapi_url = self.cfg.openapi_url orelse "/openapi.json";
@@ -1978,6 +1986,9 @@ pub const App = struct {
     }
 
     fn redocHtml(self: *App) ![]const u8 {
+        self.cache_mutex.lock();
+        defer self.cache_mutex.unlock();
+
         if (self.redoc_cache) |html| return html;
 
         const openapi_url = self.cfg.openapi_url orelse "/openapi.json";
@@ -1992,10 +2003,19 @@ pub const App = struct {
     }
 
     fn invalidateGeneratedCaches(self: *App) void {
-        self.freeGeneratedCaches();
+        self.cache_mutex.lock();
+        defer self.cache_mutex.unlock();
+        self.freeGeneratedCachesLocked();
     }
 
     fn freeGeneratedCaches(self: *App) void {
+        self.cache_mutex.lock();
+        defer self.cache_mutex.unlock();
+        self.freeGeneratedCachesLocked();
+    }
+
+    /// Must be called with cache_mutex held.
+    fn freeGeneratedCachesLocked(self: *App) void {
         if (self.openapi_cache) |doc| {
             self.allocator.free(doc);
             self.openapi_cache = null;
