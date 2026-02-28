@@ -1,6 +1,7 @@
 .{
     .name = .zigmund,
     .version = "0.1.0",
+    .description = "A FastAPI-inspired web framework for Zig",
     .fingerprint = 0xfb4ac3d91277c3cf,
     .minimum_zig_version = "0.15.2",
     .dependencies = .{},
@@ -9,9 +10,6 @@
         "build.zig.zon",
         "src",
         "assets",
-        "examples",
-        "tests",
-        "tools",
         "README.md",
         "LICENSE",
     },

@@ -345,6 +345,7 @@ fn parseServeFlags(
             continue;
         }
 
+        std.log.err("unknown flag: {s}", .{arg});
         return error.UnknownFlag;
     }
 
@@ -366,6 +367,7 @@ fn parseRoutesFlags(args: *std.process.ArgIterator) !bool {
             json_output = true;
             continue;
         }
+        std.log.err("unknown flag: {s}", .{arg});
         return error.UnknownFlag;
     }
 
@@ -438,6 +440,7 @@ fn parseOpenApiFlags(args: anytype) !OpenApiCommandOptions {
             opts.json_schema_dialect = .disabled;
             continue;
         }
+        std.log.err("unknown flag: {s}", .{arg});
         return error.UnknownFlag;
     }
 
@@ -458,6 +461,7 @@ fn parseOutputFlags(args: anytype) !?[]const u8 {
             out_path = args.next() orelse return error.MissingOutputPath;
             continue;
         }
+        std.log.err("unknown flag: {s}", .{arg});
         return error.UnknownFlag;
     }
 
@@ -493,6 +497,7 @@ fn parseCloudFlags(args: anytype) !CloudCommandOptions {
             opts.image_tag = args.next() orelse return error.MissingImageTagValue;
             continue;
         }
+        std.log.err("unknown flag: {s}", .{arg});
         return error.UnknownFlag;
     }
 
@@ -867,7 +872,7 @@ fn cloudAppSlug(allocator: std.mem.Allocator, title: []const u8) ![]u8 {
 
 fn usage() !void {
     try writeStdout(
-            "Usage: zigmund <command> [options]\n" ++
+        "Usage: zigmund <command> [options]\n" ++
             "Commands:\n" ++
             "  serve [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--overload-retry-after-seconds <n>|--no-overload-retry-after] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--write-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--overload-retry-after-seconds <n>|--no-overload-retry-after] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--write-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
@@ -1030,20 +1035,37 @@ fn hashDirectoryTree(
     var walker = try dir.walk(allocator);
     defer walker.deinit();
 
+    var paths: std.ArrayList([]u8) = .empty;
+    defer {
+        for (paths.items) |p| allocator.free(p);
+        paths.deinit(allocator);
+    }
+
     while (try walker.next()) |entry| {
+        const duped = try allocator.dupe(u8, entry.path);
+        try paths.append(allocator, duped);
+    }
+
+    std.mem.sort([]u8, paths.items, {}, struct {
+        fn lessThan(_: void, a: []u8, b: []u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lessThan);
+
+    for (paths.items) |path| {
         hasher.update(root);
         hasher.update("/");
-        hasher.update(entry.path);
+        hasher.update(path);
 
-        const stat = dir.statFile(entry.path) catch continue;
+        const stat = dir.statFile(path) catch continue;
         hashStat(hasher, stat);
     }
 }
 
 fn hashStat(hasher: *std.hash.Wyhash, stat: std.fs.File.Stat) void {
-    var size = stat.size;
-    var mtime = stat.mtime;
-    var kind_tag: u16 = @intFromEnum(stat.kind);
+    const size = stat.size;
+    const mtime = stat.mtime;
+    const kind_tag: u16 = @intFromEnum(stat.kind);
 
     hasher.update(std.mem.asBytes(&size));
     hasher.update(std.mem.asBytes(&mtime));
