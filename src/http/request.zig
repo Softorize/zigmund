@@ -214,27 +214,7 @@ pub const Request = struct {
     }
 
     pub fn cookieAs(self: *Request, comptime T: type, key: []const u8) !T {
-        const raw_value = self.cookie(key) orelse {
-            if (@typeInfo(T) == .optional) return null;
-            try self.addValidationIssue(.{
-                .location = .cookie,
-                .field = key,
-                .message = "Field required",
-                .issue_type = "missing",
-            });
-            return error.ValidationFailed;
-        };
-
-        return parseScalar(T, raw_value) catch {
-            try self.addValidationIssue(.{
-                .location = .cookie,
-                .field = key,
-                .message = "Invalid value",
-                .issue_type = "type_error",
-                .input = raw_value,
-            });
-            return error.ValidationFailed;
-        };
+        return self.resolveTypedValue(T, self.cookie(key), .cookie, key);
     }
 
     pub fn setPathParam(self: *Request, key: []const u8, value: []const u8) !void {
@@ -250,75 +230,15 @@ pub const Request = struct {
     }
 
     pub fn queryAs(self: *Request, comptime T: type, key: []const u8) !T {
-        const raw_value = self.queryParam(key) orelse {
-            if (@typeInfo(T) == .optional) return null;
-            try self.addValidationIssue(.{
-                .location = .query,
-                .field = key,
-                .message = "Field required",
-                .issue_type = "missing",
-            });
-            return error.ValidationFailed;
-        };
-
-        return parseScalar(T, raw_value) catch {
-            try self.addValidationIssue(.{
-                .location = .query,
-                .field = key,
-                .message = "Invalid value",
-                .issue_type = "type_error",
-                .input = raw_value,
-            });
-            return error.ValidationFailed;
-        };
+        return self.resolveTypedValue(T, self.queryParam(key), .query, key);
     }
 
     pub fn paramAs(self: *Request, comptime T: type, key: []const u8) !T {
-        const raw_value = self.param(key) orelse {
-            if (@typeInfo(T) == .optional) return null;
-            try self.addValidationIssue(.{
-                .location = .path,
-                .field = key,
-                .message = "Field required",
-                .issue_type = "missing",
-            });
-            return error.ValidationFailed;
-        };
-
-        return parseScalar(T, raw_value) catch {
-            try self.addValidationIssue(.{
-                .location = .path,
-                .field = key,
-                .message = "Invalid value",
-                .issue_type = "type_error",
-                .input = raw_value,
-            });
-            return error.ValidationFailed;
-        };
+        return self.resolveTypedValue(T, self.param(key), .path, key);
     }
 
     pub fn headerAs(self: *Request, comptime T: type, key: []const u8) !T {
-        const raw_value = self.header(key) orelse {
-            if (@typeInfo(T) == .optional) return null;
-            try self.addValidationIssue(.{
-                .location = .header,
-                .field = key,
-                .message = "Field required",
-                .issue_type = "missing",
-            });
-            return error.ValidationFailed;
-        };
-
-        return parseScalar(T, raw_value) catch {
-            try self.addValidationIssue(.{
-                .location = .header,
-                .field = key,
-                .message = "Invalid value",
-                .issue_type = "type_error",
-                .input = raw_value,
-            });
-            return error.ValidationFailed;
-        };
+        return self.resolveTypedValue(T, self.header(key), .header, key);
     }
 
     pub fn bodyJson(self: *Request, comptime T: type) !std.json.Parsed(T) {
@@ -382,25 +302,13 @@ pub const Request = struct {
                 var out: T = undefined;
                 inline for (info.fields) |field| {
                     const raw_value = self.formField(field.name) catch {
-                        try self.addValidationIssue(.{
-                            .location = .body,
-                            .field = field.name,
-                            .message = "Invalid form encoding",
-                            .issue_type = "form_invalid",
-                            .input = self.body,
-                        });
+                        try self.failValidation(.body, field.name, "Invalid form encoding", "form_invalid", self.body);
                         return error.ValidationFailed;
                     };
 
                     if (raw_value) |raw| {
                         const parsed = parseFormValue(field.type, raw) catch {
-                            try self.addValidationIssue(.{
-                                .location = .body,
-                                .field = field.name,
-                                .message = "Invalid value",
-                                .issue_type = "type_error",
-                                .input = raw,
-                            });
+                            try self.failValidation(.body, field.name, "Invalid value", "type_error", raw);
                             return error.ValidationFailed;
                         };
                         @field(out, field.name) = parsed;
@@ -411,12 +319,7 @@ pub const Request = struct {
                         } else if (@typeInfo(field.type) == .optional) {
                             @field(out, field.name) = null;
                         } else {
-                            try self.addValidationIssue(.{
-                                .location = .body,
-                                .field = field.name,
-                                .message = "Field required",
-                                .issue_type = "missing",
-                            });
+                            try self.failValidation(.body, field.name, "Field required", "missing", null);
                             return error.ValidationFailed;
                         }
                     }
@@ -425,23 +328,11 @@ pub const Request = struct {
             },
             else => {
                 const decoded = self.decodeFormComponentLeaky(self.body) catch {
-                    try self.addValidationIssue(.{
-                        .location = .body,
-                        .field = "body",
-                        .message = "Invalid form encoding",
-                        .issue_type = "form_invalid",
-                        .input = self.body,
-                    });
+                    try self.failValidation(.body, "body", "Invalid form encoding", "form_invalid", self.body);
                     return error.ValidationFailed;
                 };
                 return parseFormValue(T, decoded) catch {
-                    try self.addValidationIssue(.{
-                        .location = .body,
-                        .field = "body",
-                        .message = "Invalid value",
-                        .issue_type = "type_error",
-                        .input = decoded,
-                    });
+                    try self.failValidation(.body, "body", "Invalid value", "type_error", decoded);
                     return error.ValidationFailed;
                 };
             },
@@ -614,12 +505,17 @@ pub const Request = struct {
         if (self.dependency_cleanups_ran) return;
         self.dependency_cleanups_ran = true;
 
+        var first_err: ?anyerror = null;
         var idx = self.dependency_cleanups.items.len;
         while (idx > 0) {
             idx -= 1;
             const cleanup = self.dependency_cleanups.items[idx];
-            try cleanup.run(self, cleanup.key, cleanup.value, allocator);
+            cleanup.run(self, cleanup.key, cleanup.value, allocator) catch |err| {
+                std.log.debug("dependency cleanup failed for '{s}': {s}", .{ cleanup.key, @errorName(err) });
+                if (first_err == null) first_err = err;
+            };
         }
+        if (first_err) |err| return err;
     }
 
     pub fn setRequestId(self: *Request, request_id: []const u8) !void {
@@ -696,30 +592,27 @@ pub const Request = struct {
         return .{ .path = target, .query = "" };
     }
 
+    fn storeHeaderOwned(self: *Request, name: []const u8, value: []const u8) !void {
+        const owned_name = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_name);
+        const owned_value = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(owned_value);
+        try self.synthetic_headers.append(self.allocator, .{
+            .name = owned_name,
+            .value = owned_value,
+        });
+    }
+
     fn storeSyntheticHeaders(self: *Request, headers: []const std.http.Header) !void {
         for (headers) |hdr| {
-            const name = try self.allocator.dupe(u8, hdr.name);
-            errdefer self.allocator.free(name);
-            const value = try self.allocator.dupe(u8, hdr.value);
-            errdefer self.allocator.free(value);
-            try self.synthetic_headers.append(self.allocator, .{
-                .name = name,
-                .value = value,
-            });
+            try self.storeHeaderOwned(hdr.name, hdr.value);
         }
     }
 
     fn storeRawHeaders(self: *Request, raw: *std.http.Server.Request) !void {
         var it = raw.iterateHeaders();
         while (it.next()) |hdr| {
-            const name = try self.allocator.dupe(u8, hdr.name);
-            errdefer self.allocator.free(name);
-            const value = try self.allocator.dupe(u8, hdr.value);
-            errdefer self.allocator.free(value);
-            try self.synthetic_headers.append(self.allocator, .{
-                .name = name,
-                .value = value,
-            });
+            try self.storeHeaderOwned(hdr.name, hdr.value);
         }
     }
 
@@ -999,6 +892,58 @@ pub const Request = struct {
 
     pub fn addValidationIssue(self: *Request, issue: ValidationIssue) !void {
         try self.validation_issues.append(self.allocator, issue);
+    }
+
+    /// Helper to add a validation issue. Used by formAsLeaky to reduce
+    /// the repeated addValidationIssue + return error.ValidationFailed pattern.
+    fn failValidation(
+        self: *Request,
+        comptime location: ValidationLocation,
+        field: []const u8,
+        message: []const u8,
+        issue_type: []const u8,
+        input: ?[]const u8,
+    ) !void {
+        try self.addValidationIssue(.{
+            .location = location,
+            .field = field,
+            .message = message,
+            .issue_type = issue_type,
+            .input = input,
+        });
+    }
+
+    /// Generic helper that eliminates duplication across cookieAs, queryAs,
+    /// paramAs, and headerAs. Resolves a raw string value into a typed T,
+    /// recording a validation issue when the key is missing or unparseable.
+    fn resolveTypedValue(
+        self: *Request,
+        comptime T: type,
+        raw_value: ?[]const u8,
+        comptime location: ValidationLocation,
+        field: []const u8,
+    ) !T {
+        const raw = raw_value orelse {
+            if (@typeInfo(T) == .optional) return null;
+            try self.addValidationIssue(.{
+                .location = location,
+                .field = field,
+                .message = "Field required",
+                .issue_type = "missing",
+            });
+            return error.ValidationFailed;
+        };
+
+        return parseScalar(T, raw) catch {
+            try self.addValidationIssue(.{
+                .location = location,
+                .field = field,
+                .message = "Invalid value",
+                .issue_type = "type_error",
+                .input = raw,
+            });
+            return error.ValidationFailed;
+        };
     }
 };
 
