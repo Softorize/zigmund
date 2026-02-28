@@ -121,6 +121,16 @@ pub fn deriveOpenApiRequestBodies(comptime handler: anytype) []const types.Injec
     return &Derived.specs;
 }
 
+// NOTE (audit #21): `invokeInjected` and `invokeWebSocketInjected` below are
+// intentionally kept as separate functions despite their structural similarity.
+// Key differences:
+//   1. The WebSocket variant accepts an extra `conn: *websocket.Connection` parameter.
+//   2. It stores `conn` into `context.ws_conn` before argument resolution so that
+//      downstream resolvers can access the WebSocket connection.
+//   3. Return-type adaptation uses `adaptVoidReturn` (void payload) instead of
+//      `adaptReturn` (Response payload).
+// Merging them into a single generic would obscure these differences and make the
+// code harder to maintain, so the duplication is deliberate.
 fn invokeInjected(comptime handler: anytype, req: *Request, allocator: std.mem.Allocator) anyerror!Response {
     const HandlerType = @TypeOf(handler);
     if (@typeInfo(HandlerType) != .@"fn") {
@@ -214,13 +224,12 @@ fn resolveParamMarker(comptime Marker: type, req: *Request) anyerror!Marker {
             const raw_value = req.queryParam(key);
             if (raw_value == null) {
                 if (Marker.options.required) {
-                    try req.addValidationIssue(.{
+                    return failValidation(req, .{
                         .location = .query,
                         .field = key,
                         .message = "Field required",
                         .issue_type = "missing",
                     });
-                    return error.ValidationFailed;
                 }
                 out.value = null;
                 return out;
@@ -317,14 +326,13 @@ fn validateStrictMode(
     switch (@typeInfo(Base)) {
         .bool => {
             if (!std.ascii.eqlIgnoreCase(input, "true") and !std.ascii.eqlIgnoreCase(input, "false")) {
-                try req.addValidationIssue(.{
+                return failValidation(req, .{
                     .location = location,
                     .field = field,
                     .message = "Strict mode requires true/false for boolean values",
                     .issue_type = "strict_bool",
                     .input = input,
                 });
-                return error.ValidationFailed;
             }
         },
         else => {},
@@ -350,14 +358,13 @@ fn validateEnumConstraint(
         if (stringInList(Marker.options.enum_values, serialized)) return;
     }
 
-    try req.addValidationIssue(.{
+    return failValidation(req, .{
         .location = location,
         .field = field,
         .message = "Value is not one of the allowed enum values",
         .issue_type = "enum",
         .input = raw_value,
     });
-    return error.ValidationFailed;
 }
 
 fn validateLengthAndPatternConstraints(
@@ -372,40 +379,37 @@ fn validateLengthAndPatternConstraints(
 
     if (Marker.options.min_length) |min_len| {
         if (candidate.len < min_len) {
-            try req.addValidationIssue(.{
+            return failValidation(req, .{
                 .location = location,
                 .field = field,
                 .message = "String is shorter than min_length",
                 .issue_type = "min_length",
                 .input = candidate,
             });
-            return error.ValidationFailed;
         }
     }
 
     if (Marker.options.max_length) |max_len| {
         if (candidate.len > max_len) {
-            try req.addValidationIssue(.{
+            return failValidation(req, .{
                 .location = location,
                 .field = field,
                 .message = "String is longer than max_length",
                 .issue_type = "max_length",
                 .input = candidate,
             });
-            return error.ValidationFailed;
         }
     }
 
     if (Marker.options.pattern) |pattern| {
         if (!patternMatches(candidate, pattern)) {
-            try req.addValidationIssue(.{
+            return failValidation(req, .{
                 .location = location,
                 .field = field,
                 .message = "String does not match required pattern",
                 .issue_type = "pattern",
                 .input = candidate,
             });
-            return error.ValidationFailed;
         }
     }
 }
@@ -420,55 +424,52 @@ fn validateNumericConstraints(
 ) !void {
     const numeric = numericAsF64(Marker.ValueType, parsed_value) orelse return;
 
+    // Each numeric bound (gt, ge, lt, le) follows the same check-and-fail pattern.
     if (Marker.options.gt) |threshold| {
         if (!(numeric > threshold)) {
-            try req.addValidationIssue(.{
+            return failValidation(req, .{
                 .location = location,
                 .field = field,
                 .message = "Value must be greater than gt",
                 .issue_type = "gt",
                 .input = raw_value,
             });
-            return error.ValidationFailed;
         }
     }
 
     if (Marker.options.ge) |threshold| {
         if (!(numeric >= threshold)) {
-            try req.addValidationIssue(.{
+            return failValidation(req, .{
                 .location = location,
                 .field = field,
                 .message = "Value must be greater than or equal to ge",
                 .issue_type = "ge",
                 .input = raw_value,
             });
-            return error.ValidationFailed;
         }
     }
 
     if (Marker.options.lt) |threshold| {
         if (!(numeric < threshold)) {
-            try req.addValidationIssue(.{
+            return failValidation(req, .{
                 .location = location,
                 .field = field,
                 .message = "Value must be less than lt",
                 .issue_type = "lt",
                 .input = raw_value,
             });
-            return error.ValidationFailed;
         }
     }
 
     if (Marker.options.le) |threshold| {
         if (!(numeric <= threshold)) {
-            try req.addValidationIssue(.{
+            return failValidation(req, .{
                 .location = location,
                 .field = field,
                 .message = "Value must be less than or equal to le",
                 .issue_type = "le",
                 .input = raw_value,
             });
-            return error.ValidationFailed;
         }
     }
 }
@@ -537,14 +538,13 @@ fn runModelValidator(
     };
 
     result catch |err| {
-        try req.addValidationIssue(.{
+        return failValidation(req, .{
             .location = location,
             .field = field,
             .message = "Model validation failed",
             .issue_type = "model_validator",
             .input = @errorName(err),
         });
-        return error.ValidationFailed;
     };
 }
 
@@ -629,6 +629,10 @@ fn stringInList(haystack: []const []const u8, needle: []const u8) bool {
 
 fn patternMatches(value: []const u8, pattern: []const u8) bool {
     if (patternMatchesPosix(value, pattern)) |matched| return matched;
+    std.log.warn(
+        "POSIX regex compilation failed for pattern '{s}', using literal fallback",
+        .{pattern},
+    );
     return patternMatchesLiteral(value, pattern);
 }
 
@@ -665,6 +669,15 @@ fn patternMatchesLiteral(value: []const u8, pattern: []const u8) bool {
     if (anchored_start) return std.mem.startsWith(u8, value, body);
     if (anchored_end) return std.mem.endsWith(u8, value, body);
     return std.mem.indexOf(u8, value, body) != null;
+}
+
+/// Convenience helper: records a validation issue and unconditionally returns
+/// `error.ValidationFailed`.  Turns the recurring 4-6 line pattern
+/// (`addValidationIssue` + `return error.ValidationFailed`) into a single
+/// `return failValidation(req, .{...})` call.
+fn failValidation(req: *Request, issue: Request.ValidationIssue) anyerror {
+    req.addValidationIssue(issue) catch |err| return err;
+    return error.ValidationFailed;
 }
 
 fn isProviderMarkerType(comptime T: type) bool {
