@@ -53,6 +53,7 @@ fn currentTimestamp() i64 {
 /// Request hook: check rate limit and set headers.
 pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
     if (!global_store_init) return;
+    _ = allocator;
 
     const key = getClientKey(req);
     const now = currentTimestamp();
@@ -61,7 +62,6 @@ pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
     const entry = global_store.getPtr(key);
     if (entry) |e| {
         if (now - e.window_start >= window) {
-            // New window
             e.count = 1;
             e.window_start = now;
         } else {
@@ -71,23 +71,37 @@ pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
         const remaining = if (e.count <= global_options.max_requests) global_options.max_requests - e.count else 0;
         const reset = e.window_start + window;
 
-        try req.setDependencyValue("_rate_limit", try std.fmt.allocPrint(allocator, "{d}", .{global_options.max_requests}));
-        try req.setDependencyValue("_rate_remaining", try std.fmt.allocPrint(allocator, "{d}", .{remaining}));
-        try req.setDependencyValue("_rate_reset", try std.fmt.allocPrint(allocator, "{d}", .{reset}));
+        var limit_buf: [20]u8 = undefined;
+        var remaining_buf: [20]u8 = undefined;
+        var reset_buf: [20]u8 = undefined;
+        const limit_str = std.fmt.bufPrint(&limit_buf, "{d}", .{global_options.max_requests}) catch return;
+        const remaining_str = std.fmt.bufPrint(&remaining_buf, "{d}", .{remaining}) catch return;
+        const reset_str = std.fmt.bufPrint(&reset_buf, "{d}", .{reset}) catch return;
+
+        try req.setDependencyValue("_rate_limit", limit_str);
+        try req.setDependencyValue("_rate_remaining", remaining_str);
+        try req.setDependencyValue("_rate_reset", reset_str);
 
         if (e.count > global_options.max_requests) {
             try req.setDependencyValue("_rate_exceeded", "true");
         }
     } else {
-        // New client
         const owned_key = try global_allocator.dupe(u8, key);
         try global_store.put(owned_key, .{ .count = 1, .window_start = now });
 
         const remaining = global_options.max_requests - 1;
         const reset = now + window;
-        try req.setDependencyValue("_rate_limit", try std.fmt.allocPrint(allocator, "{d}", .{global_options.max_requests}));
-        try req.setDependencyValue("_rate_remaining", try std.fmt.allocPrint(allocator, "{d}", .{remaining}));
-        try req.setDependencyValue("_rate_reset", try std.fmt.allocPrint(allocator, "{d}", .{reset}));
+
+        var limit_buf: [20]u8 = undefined;
+        var remaining_buf: [20]u8 = undefined;
+        var reset_buf: [20]u8 = undefined;
+        const limit_str = std.fmt.bufPrint(&limit_buf, "{d}", .{global_options.max_requests}) catch return;
+        const remaining_str = std.fmt.bufPrint(&remaining_buf, "{d}", .{remaining}) catch return;
+        const reset_str = std.fmt.bufPrint(&reset_buf, "{d}", .{reset}) catch return;
+
+        try req.setDependencyValue("_rate_limit", limit_str);
+        try req.setDependencyValue("_rate_remaining", remaining_str);
+        try req.setDependencyValue("_rate_reset", reset_str);
     }
 }
 
@@ -106,7 +120,8 @@ pub fn responseHook(req: *Request, response: *Response, allocator: std.mem.Alloc
         response.body = "{\"detail\":\"Rate limit exceeded\"}";
         response.content_type = "application/json";
 
-        const retry_after = try std.fmt.allocPrint(allocator, "{d}", .{global_options.window_seconds});
+        var retry_buf: [20]u8 = undefined;
+        const retry_after = std.fmt.bufPrint(&retry_buf, "{d}", .{global_options.window_seconds}) catch "60";
         try response.setHeader(allocator, "Retry-After", retry_after);
     }
 }

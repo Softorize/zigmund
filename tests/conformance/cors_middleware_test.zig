@@ -19,6 +19,7 @@ test "CORS middleware adds headers for allowed origin" {
     try app.get("/api/data", echoHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.requestWithHeaders(.GET, "/api/data", "", &.{
         .{ .name = "origin", .value = "https://example.com" },
     });
@@ -55,6 +56,7 @@ test "CORS middleware returns 204 for preflight OPTIONS" {
     try app.get("/api/data", echoHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.requestWithHeaders(.OPTIONS, "/api/data", "", &.{
         .{ .name = "origin", .value = "https://app.example.com" },
         .{ .name = "access-control-request-method", .value = "POST" },
@@ -88,6 +90,7 @@ test "CORS middleware ignores requests without Origin header" {
     try app.get("/api/data", echoHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.get("/api/data");
     defer response.deinit(std.testing.allocator);
 

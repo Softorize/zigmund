@@ -21,6 +21,7 @@ test "session middleware sets session cookie" {
     try app.get("/page", echoHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.get("/page");
     defer response.deinit(std.testing.allocator);
 
@@ -55,7 +56,9 @@ test "session middleware generates unique session IDs" {
 
     // Use separate clients so cookies are not shared between requests
     var client1 = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client1.deinit();
     var client2 = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client2.deinit();
 
     // Get two sessions from separate clients (no cookie sharing)
     var resp1 = try client1.get("/page");
