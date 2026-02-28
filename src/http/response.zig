@@ -128,6 +128,7 @@ pub const Response = struct {
             .content_type = "text/event-stream; charset=utf-8",
             .owned_body = payload,
         };
+        errdefer response.deinit(allocator);
         try response.setHeader(allocator, "cache-control", "no-cache");
         try response.setHeader(allocator, "connection", "keep-alive");
         return response;

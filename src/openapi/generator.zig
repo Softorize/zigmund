@@ -1242,7 +1242,7 @@ fn writeComponentParameterRef(writer: anytype, component_name: []const u8) !void
     try writer.writeAll("{");
     try writeFieldName(writer, "$ref");
     try writer.writeAll("\"#/components/parameters/");
-    try writer.writeAll(component_name);
+    try writeJsonStringContent(writer, component_name);
     try writer.writeAll("\"}");
 }
 
@@ -1250,7 +1250,7 @@ fn writeComponentRequestBodyRef(writer: anytype, component_name: []const u8) !vo
     try writer.writeAll("{");
     try writeFieldName(writer, "$ref");
     try writer.writeAll("\"#/components/requestBodies/");
-    try writer.writeAll(component_name);
+    try writeJsonStringContent(writer, component_name);
     try writer.writeAll("\"}");
 }
 
@@ -1258,8 +1258,23 @@ fn writeComponentResponseRef(writer: anytype, component_name: []const u8) !void 
     try writer.writeAll("{");
     try writeFieldName(writer, "$ref");
     try writer.writeAll("\"#/components/responses/");
-    try writer.writeAll(component_name);
+    try writeJsonStringContent(writer, component_name);
     try writer.writeAll("\"}");
+}
+
+/// Write the content of a JSON string value (without surrounding quotes),
+/// escaping characters that would break JSON syntax.
+fn writeJsonStringContent(writer: anytype, value: []const u8) !void {
+    for (value) |ch| {
+        switch (ch) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            '\t' => try writer.writeAll("\\t"),
+            else => try writer.writeByte(ch),
+        }
+    }
 }
 
 fn writeFallbackPathParameter(writer: anytype, name: []const u8) !void {
