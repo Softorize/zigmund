@@ -19,13 +19,9 @@ fn smallHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Re
     return zigmund.Response.json(allocator, .{ .ok = true });
 }
 
-test "compression middleware compresses large text responses" {
-    // Note: Compression is temporarily disabled in Zig 0.15.2 due to
-    // broken std.compress.flate API (missing BlockWriter.bit_writer and
-    // Hasher.final). This test verifies the middleware still functions
-    // correctly as a no-op without errors.
+test "compression middleware compresses large text responses with gzip" {
     var app = try zigmund.App.init(std.testing.allocator, .{
-        .title = "compression-test",
+        .title = "compression-gzip-test",
         .version = "0.0.1",
     });
     defer app.deinit();
@@ -34,6 +30,41 @@ test "compression middleware compresses large text responses" {
     try app.get("/large", largeHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
+    var response = try client.requestWithHeaders(.GET, "/large", "", &.{
+        .{ .name = "accept-encoding", .value = "gzip" },
+    });
+    defer response.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, response.status);
+
+    // Verify Content-Encoding header is set
+    var has_encoding = false;
+    for (response.headers.items) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "content-encoding")) {
+            has_encoding = true;
+            try std.testing.expectEqualStrings("gzip", h.value);
+        }
+    }
+    try std.testing.expect(has_encoding);
+
+    // Compressed body should be significantly smaller than 2048
+    try std.testing.expect(response.body.len < 2048);
+    try std.testing.expect(response.body.len > 0);
+}
+
+test "compression middleware compresses large text responses with deflate" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "compression-deflate-test",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addMiddleware(zigmund.compressionMw(.{ .min_size = 1024 }));
+    try app.get("/large", largeHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.requestWithHeaders(.GET, "/large", "", &.{
         .{ .name = "accept-encoding", .value = "deflate" },
     });
@@ -41,9 +72,15 @@ test "compression middleware compresses large text responses" {
 
     try std.testing.expectEqual(.ok, response.status);
 
-    // Compression is disabled in Zig 0.15.2 due to stdlib issues.
-    // Response should be returned uncompressed without errors.
-    try std.testing.expect(response.body.len == 2048);
+    var has_encoding = false;
+    for (response.headers.items) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "content-encoding")) {
+            has_encoding = true;
+            try std.testing.expectEqualStrings("deflate", h.value);
+        }
+    }
+    try std.testing.expect(has_encoding);
+    try std.testing.expect(response.body.len < 2048);
 }
 
 test "compression middleware skips small responses" {
@@ -57,8 +94,9 @@ test "compression middleware skips small responses" {
     try app.get("/small", smallHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.requestWithHeaders(.GET, "/small", "", &.{
-        .{ .name = "accept-encoding", .value = "deflate" },
+        .{ .name = "accept-encoding", .value = "gzip" },
     });
     defer response.deinit(std.testing.allocator);
 
@@ -83,6 +121,7 @@ test "compression middleware skips when no accept-encoding" {
     try app.get("/large", largeHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.get("/large");
     defer response.deinit(std.testing.allocator);
 

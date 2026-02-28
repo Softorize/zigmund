@@ -183,6 +183,7 @@ fn applyNativeTlsLinks(step: *std.Build.Step.Compile, openssl_prefix: ?[]const u
     step.linkLibC();
     step.linkSystemLibrary("ssl");
     step.linkSystemLibrary("crypto");
+    step.linkSystemLibrary("z");
 
     if (openssl_prefix) |prefix| {
         const include_path = std.fmt.allocPrint(step.step.owner.allocator, "{s}/include", .{prefix}) catch return;
