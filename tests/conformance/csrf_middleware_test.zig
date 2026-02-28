@@ -65,6 +65,7 @@ test "CSRF middleware allows GET without token" {
     try app.get("/page", echoHandler, .{});
 
     var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
     var response = try client.get("/page");
     defer response.deinit(std.testing.allocator);
 
