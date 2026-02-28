@@ -636,21 +636,28 @@ fn patternMatches(value: []const u8, pattern: []const u8) bool {
     return patternMatchesLiteral(value, pattern);
 }
 
-// c_allocator used here because regcomp/regfree are C functions that expect C-compatible memory
+// Use an opaque-safe byte buffer for regex_t because on Linux the struct is
+// opaque to Zig's @cImport and cannot be stack-allocated directly.
+// 256 bytes is sufficient for regex_t on all known platforms (glibc ~64 bytes,
+// musl ~72 bytes, macOS ~64 bytes).
+const regex_buf_size = 256;
+
 fn patternMatchesPosix(value: []const u8, pattern: []const u8) ?bool {
     if (pattern.len == 0) return true;
 
     const pattern_z = std.heap.c_allocator.dupeZ(u8, pattern) catch return null;
     defer std.heap.c_allocator.free(pattern_z);
 
-    var regex: c.regex_t = undefined;
-    if (c.regcomp(&regex, pattern_z.ptr, c.REG_EXTENDED) != 0) return null;
-    defer c.regfree(&regex);
+    var regex_buf: [regex_buf_size]u8 align(@alignOf(usize)) = undefined;
+    const regex: *c.regex_t = @ptrCast(&regex_buf);
+
+    if (c.regcomp(regex, pattern_z.ptr, c.REG_EXTENDED) != 0) return null;
+    defer c.regfree(regex);
 
     const value_z = std.heap.c_allocator.dupeZ(u8, value) catch return null;
     defer std.heap.c_allocator.free(value_z);
 
-    const exec_rc = c.regexec(&regex, value_z.ptr, 0, null, 0);
+    const exec_rc = c.regexec(regex, value_z.ptr, 0, null, 0);
     if (exec_rc == 0) return true;
     if (exec_rc == c.REG_NOMATCH) return false;
     return null;
