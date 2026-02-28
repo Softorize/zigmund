@@ -156,6 +156,11 @@
 37. Request-id header customization extension:
    - `AppConfig` now includes `request_id_header` (default: `x-request-id`) for inbound/outbound request-id propagation header naming.
    - empty header values fallback to default `x-request-id`.
+38. Overload retry policy extension:
+   - `ServerConfig` now includes `overload_retry_after_seconds` (default: `1`) for `Retry-After` header emission on connection-overload (`503`) responses.
+   - CLI `serve`/`dev` now accept:
+     - `--overload-retry-after-seconds <n>`,
+     - `--no-overload-retry-after` (sets overload retry header policy to disabled/`0`).
 
 ## Migration Actions
 
@@ -203,6 +208,7 @@
 29. If OpenAPI route security policy requires explicit OR alternatives or non-default ordering, migrate route/websocket declarations to `openapi_security` for deterministic security-array authoring independent of dependency wiring.
 30. If runtime policy wrappers/scripts currently set only header/body/idle timeouts, migrate to include `--write-timeout-ms` when explicit response write-deadline control is required.
 31. If edge/gateway policy requires a non-default request correlation header, migrate `AppConfig.request_id_header` to your organization-standard header name and update tests/clients accordingly.
+32. If your traffic-management policy relies on explicit retry hints during overload, migrate runtime wrappers to set `--overload-retry-after-seconds`; use `--no-overload-retry-after` when `Retry-After` must be suppressed.
 
 ## Compatibility Notes
 

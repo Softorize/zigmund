@@ -16,6 +16,7 @@ pub const ServerConfig = struct {
     max_query_bytes: usize = 16 * 1024,
     max_body_bytes: usize = 8 * 1024 * 1024,
     max_connections: usize = 0,
+    overload_retry_after_seconds: u32 = 1,
     accept_poll_interval_ms: i32 = 250,
     header_timeout_ms: i32 = 10_000,
     body_timeout_ms: i32 = 10_000,

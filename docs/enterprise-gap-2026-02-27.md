@@ -137,7 +137,7 @@
   - Per-request query-size limits are now enforced via `ServerConfig.max_query_bytes`, with oversized query strings returning `414 URI Too Long`.
   - Server-wide HTTP response write timeout control is now available via `ServerConfig.write_timeout_ms` (CLI: `--write-timeout-ms`) and applied at socket level for response dispatch paths.
   - Route-level HTTP guardrails now support per-route overrides for header/query/body limits (`RouteOptions.max_header_bytes`, `RouteOptions.max_query_bytes`, `RouteOptions.max_body_bytes`) over global server defaults.
-  - Connection-overload behavior for `ServerConfig.max_connections` now emits explicit `503 Service Unavailable` responses (instead of silent drop).
+  - Connection-overload behavior for `ServerConfig.max_connections` now emits explicit `503 Service Unavailable` responses (instead of silent drop) with configurable `Retry-After` header policy via `ServerConfig.overload_retry_after_seconds` (`0` disables header emission).
   - Idle polling/timeout primitives are wired in the server loop for deterministic connection teardown.
   - TLS runtime path is now implemented via OpenSSL-backed in-process connections (PEM cert/key loading + handshake + HTTP dispatch over TLS), removing the previous hard `TlsNotYetImplemented` runtime block.
 - Auth failure hardening:

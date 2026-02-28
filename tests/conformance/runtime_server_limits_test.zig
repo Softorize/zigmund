@@ -601,6 +601,7 @@ test "audit sink emits startup config and lifecycle events during serve" {
         .max_query_bytes = 4 * 1024,
         .max_body_bytes = 16 * 1024,
         .max_connections = 32,
+        .overload_retry_after_seconds = 9,
         .reuse_address = false,
         .trusted_proxy_headers = false,
         .trusted_proxy_forwarded_header = false,
@@ -639,6 +640,7 @@ test "audit sink emits startup config and lifecycle events during serve" {
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"trusted_proxy_cidrs\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"max_query_bytes\":4096") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"reuse_address\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail, "\"overload_retry_after_seconds\":9") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"header_timeout_ms\":1500") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"body_timeout_ms\":10000") != null);
     try std.testing.expect(std.mem.indexOf(u8, detail, "\"write_timeout_ms\":1250") != null);

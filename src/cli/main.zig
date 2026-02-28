@@ -225,6 +225,15 @@ fn parseServeFlags(
             cfg.max_connections = try std.fmt.parseInt(usize, value, 10);
             continue;
         }
+        if (std.mem.eql(u8, arg, "--overload-retry-after-seconds")) {
+            const value = args.next() orelse return error.MissingOverloadRetryAfterValue;
+            cfg.overload_retry_after_seconds = try std.fmt.parseInt(u32, value, 10);
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--no-overload-retry-after")) {
+            cfg.overload_retry_after_seconds = 0;
+            continue;
+        }
 
         if (std.mem.eql(u8, arg, "--idle-timeout-ms")) {
             const value = args.next() orelse return error.MissingIdleTimeoutValue;
@@ -844,8 +853,8 @@ fn usage() !void {
     try writeStdout(
             "Usage: zigmund <command> [options]\n" ++
             "Commands:\n" ++
-            "  serve [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--write-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
-            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--write-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  serve [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--overload-retry-after-seconds <n>|--no-overload-retry-after] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--write-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
+            "  dev   [--watch-ms <n>] [--host <host>] [--port <port>] [--workers <n>] [--recv-buffer-bytes <n>] [--send-buffer-bytes <n>] [--reuse-address|--no-reuse-address] [--max-body-bytes <n>] [--max-header-bytes <n>] [--max-query-bytes <n>] [--max-connections <n>] [--overload-retry-after-seconds <n>|--no-overload-retry-after] [--idle-timeout-ms <n>] [--accept-poll-ms <n>] [--header-timeout-ms <n>] [--body-timeout-ms <n>] [--write-timeout-ms <n>] [--shutdown-grace-ms <n>] [--trusted-proxy-headers|--no-trusted-proxy-headers] [--trusted-proxy-forwarded-header|--no-trusted-proxy-forwarded-header] [--trusted-proxy-x-forwarded-headers|--no-trusted-proxy-x-forwarded-headers] [--trusted-proxy-cidrs <cidr[,cidr...]>] [--tls-cert <pem>] [--tls-key <pem>]\n" ++
             "  routes [--json]\n" ++
             "  openapi [--deterministic] [--json-schema-dialect <uri>|--no-json-schema-dialect] [--out <path>] [--diff <path>]\n" ++
             "  cloud [--provider <generic|docker|flyio>] [--out <path>] [--emit-dir <dir>] [--image <tag>] [--execute] [--dry-run]\n" ++
@@ -1364,6 +1373,34 @@ test "parse serve flags supports max query bytes option" {
 
     try parseServeFlags(std.testing.allocator, &iter, &cfg, &owned);
     try std.testing.expectEqual(@as(usize, 4096), cfg.max_query_bytes);
+}
+
+test "parse serve flags supports overload retry-after options" {
+    var cfg = zigmund.ServerConfig{};
+    var owned: ServeFlagsOwned = .{};
+    defer owned.deinit(std.testing.allocator);
+
+    var iter = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--overload-retry-after-seconds 9",
+    ));
+    defer iter.deinit();
+
+    try parseServeFlags(std.testing.allocator, &iter, &cfg, &owned);
+    try std.testing.expectEqual(@as(u32, 9), cfg.overload_retry_after_seconds);
+
+    var cfg_no_retry = zigmund.ServerConfig{};
+    var owned_no_retry: ServeFlagsOwned = .{};
+    defer owned_no_retry.deinit(std.testing.allocator);
+
+    var iter_no_retry = (try std.process.ArgIteratorGeneral(.{}).init(
+        std.testing.allocator,
+        "--no-overload-retry-after",
+    ));
+    defer iter_no_retry.deinit();
+
+    try parseServeFlags(std.testing.allocator, &iter_no_retry, &cfg_no_retry, &owned_no_retry);
+    try std.testing.expectEqual(@as(u32, 0), cfg_no_retry.overload_retry_after_seconds);
 }
 
 test "parse serve flags supports socket buffer and reuse-address options" {
