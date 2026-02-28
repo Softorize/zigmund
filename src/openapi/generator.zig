@@ -201,18 +201,21 @@ pub fn generate(
     try writer.writeAll(",");
     try writeFieldName(&writer, "version");
     try writeJsonString(&writer, cfg.version);
-    try writer.writeAll("},");
+    try writer.writeAll("}");
 
-    try writeFieldName(&writer, "servers");
-    try writer.writeAll("[");
-    for (cfg.servers, 0..) |server_url, idx| {
-        if (idx != 0) try writer.writeAll(",");
-        try writer.writeAll("{");
-        try writeFieldName(&writer, "url");
-        try writeJsonString(&writer, server_url);
-        try writer.writeAll("}");
+    if (cfg.servers.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(&writer, "servers");
+        try writer.writeAll("[");
+        for (cfg.servers, 0..) |server_url, idx| {
+            if (idx != 0) try writer.writeAll(",");
+            try writer.writeAll("{");
+            try writeFieldName(&writer, "url");
+            try writeJsonString(&writer, server_url);
+            try writer.writeAll("}");
+        }
+        try writer.writeAll("]");
     }
-    try writer.writeAll("]");
 
     if (security_schemes.len > 0 or response_components.items.len > 0 or parameter_components.items.len > 0 or request_body_components.items.len > 0 or response_entry_components.items.len > 0) {
         try writer.writeAll(",");

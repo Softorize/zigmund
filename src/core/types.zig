@@ -76,6 +76,8 @@ pub const InjectedRequestBody = struct {
     fields: []const InjectedBodyField = &.{},
 };
 
+/// NOTE: Constraint fields (gt, ge, lt, le, min_length, max_length, pattern, enum_values, strict)
+/// are shared with InjectedParameter -- see audit #41.
 pub const InjectedBodyField = struct {
     name: []const u8,
     required: bool = true,
@@ -110,6 +112,8 @@ pub const InjectedParameterIn = enum {
     }
 };
 
+/// NOTE: Constraint fields (gt, ge, lt, le, min_length, max_length, pattern, enum_values, strict)
+/// are shared with InjectedBodyField -- see audit #41.
 pub const InjectedParameter = struct {
     name: []const u8,
     in: InjectedParameterIn,
@@ -183,6 +187,7 @@ pub const OpenApiResponseExamples = struct {
     examples: []const OpenApiExample = &.{},
 };
 
+/// NOTE: Shares most fields with OpenApiWebhook -- see audit #40.
 pub const OpenApiCallback = struct {
     name: []const u8,
     expression: []const u8,
@@ -200,6 +205,7 @@ pub const OpenApiCallback = struct {
     tags: []const []const u8 = &.{},
 };
 
+/// NOTE: Shares most fields with OpenApiCallback -- see audit #40.
 pub const OpenApiWebhook = struct {
     name: []const u8,
     method: RouteMethod = .POST,
@@ -276,6 +282,9 @@ pub const RouteOptions = struct {
     default_response_class: ?[]const u8 = null,
 };
 
+/// Stored version of RouteOptions with owned copies of string data.
+/// NOTE: Many fields are shared with RouteOptions -- see docs/audit-2026-02-27.md #39.
+/// A future refactoring could embed a shared base struct to reduce duplication.
 pub const StoredRouteOptions = struct {
     name: ?[]const u8 = null,
     summary: ?[]const u8 = null,

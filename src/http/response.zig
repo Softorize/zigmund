@@ -134,6 +134,10 @@ pub const Response = struct {
         return response;
     }
 
+    /// Returns a copy of this response with the given status code.
+    /// NOTE: Ownership of `owned_body` and `headers` transfers to the returned copy.
+    /// The caller must NOT call `deinit` on the original after calling `withStatus`.
+    /// This method is designed for chaining: `Response.text("ok").withStatus(.created)`.
     pub fn withStatus(self: Response, status: std.http.Status) Response {
         var next = self;
         next.status = status;
@@ -266,6 +270,13 @@ fn guessContentType(path: []const u8) []const u8 {
     if (std.mem.endsWith(u8, path, ".svg")) return "image/svg+xml";
     if (std.mem.endsWith(u8, path, ".png")) return "image/png";
     if (std.mem.endsWith(u8, path, ".jpg") or std.mem.endsWith(u8, path, ".jpeg")) return "image/jpeg";
+    if (std.mem.endsWith(u8, path, ".xml")) return "application/xml";
+    if (std.mem.endsWith(u8, path, ".wasm")) return "application/wasm";
+    if (std.mem.endsWith(u8, path, ".ico")) return "image/x-icon";
+    if (std.mem.endsWith(u8, path, ".webp")) return "image/webp";
+    if (std.mem.endsWith(u8, path, ".pdf")) return "application/pdf";
+    if (std.mem.endsWith(u8, path, ".gif")) return "image/gif";
+    if (std.mem.endsWith(u8, path, ".mp4")) return "video/mp4";
     return "application/octet-stream";
 }
 

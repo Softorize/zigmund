@@ -135,6 +135,8 @@ fn handleConnection(
     const peer_address = connection.address;
     defer connection.stream.close();
 
+    // Using c_allocator for connection buffers: these are hot-path allocations
+    // where GPA overhead is undesirable. The buffers are always freed via defer.
     const recv_buf = try std.heap.c_allocator.alloc(u8, cfg.recv_buffer_size);
     defer std.heap.c_allocator.free(recv_buf);
     const send_buf = try std.heap.c_allocator.alloc(u8, cfg.send_buffer_size);
@@ -294,7 +296,7 @@ fn sendShuttingDownResponse(fd: std.posix.fd_t, retry_after_seconds: u32) void {
     sendServiceUnavailableResponse(fd, "server shutting down", retry_after_seconds);
 }
 
-fn setSocketRecvTimeout(fd: std.posix.fd_t, timeout_ms: i32) !void {
+fn setSocketTimeout(fd: std.posix.fd_t, comptime opt: u32, timeout_ms: i32) !void {
     if (timeout_ms < 0) return;
 
     const timeout_ms_nonnegative: u64 = @intCast(timeout_ms);
@@ -307,27 +309,17 @@ fn setSocketRecvTimeout(fd: std.posix.fd_t, timeout_ms: i32) !void {
     try std.posix.setsockopt(
         fd,
         std.posix.SOL.SOCKET,
-        std.posix.SO.RCVTIMEO,
+        opt,
         std.mem.asBytes(&timeout),
     );
 }
 
-fn setSocketSendTimeout(fd: std.posix.fd_t, timeout_ms: i32) !void {
-    if (timeout_ms < 0) return;
+fn setSocketRecvTimeout(fd: std.posix.fd_t, timeout_ms: i32) !void {
+    return setSocketTimeout(fd, std.posix.SO.RCVTIMEO, timeout_ms);
+}
 
-    const timeout_ms_nonnegative: u64 = @intCast(timeout_ms);
-    const secs: i64 = @intCast(timeout_ms_nonnegative / 1000);
-    const usec: i32 = @intCast((timeout_ms_nonnegative % 1000) * 1000);
-    const timeout = std.posix.timeval{
-        .sec = secs,
-        .usec = usec,
-    };
-    try std.posix.setsockopt(
-        fd,
-        std.posix.SOL.SOCKET,
-        std.posix.SO.SNDTIMEO,
-        std.mem.asBytes(&timeout),
-    );
+fn setSocketSendTimeout(fd: std.posix.fd_t, timeout_ms: i32) !void {
+    return setSocketTimeout(fd, std.posix.SO.SNDTIMEO, timeout_ms);
 }
 
 fn shutdownRequested(state: *const ServeState) bool {
