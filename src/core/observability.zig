@@ -2,6 +2,14 @@ const std = @import("std");
 const App = @import("app.zig").App;
 const Request = @import("../http/request.zig").Request;
 
+pub const StructuredLogRedactionOptions = struct {
+    marker: []const u8 = "[redacted]",
+    redact_tracestate: bool = true,
+    redact_baggage: bool = true,
+    redact_remote_addr: bool = true,
+    redact_user_agent: bool = true,
+};
+
 pub fn elapsedMicros(start_ns: i128) u64 {
     const now_ns = std.time.nanoTimestamp();
     const latency_ns: i128 = if (now_ns > start_ns) now_ns - start_ns else 0;
@@ -51,6 +59,10 @@ pub fn jsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator) !void 
     try writeStderrLine(line);
 }
 
+pub fn redactedJsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator) !void {
+    try jsonTraceSink(redactTraceEvent(event, .{}), allocator);
+}
+
 pub fn jsonAccessLogSink(event: App.AccessLogEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
@@ -74,6 +86,10 @@ pub fn jsonAccessLogSink(event: App.AccessLogEvent, allocator: std.mem.Allocator
     );
     defer allocator.free(line);
     try writeStderrLine(line);
+}
+
+pub fn redactedJsonAccessLogSink(event: App.AccessLogEvent, allocator: std.mem.Allocator) !void {
+    try jsonAccessLogSink(redactAccessLogEvent(event, .{}), allocator);
 }
 
 pub fn jsonMetricsSink(event: App.MetricsEvent, allocator: std.mem.Allocator) !void {
@@ -116,4 +132,89 @@ pub fn writeStderrLine(line: []const u8) !void {
     try stderr_writer.interface.writeAll(line);
     try stderr_writer.interface.writeAll("\n");
     try stderr_writer.interface.flush();
+}
+
+pub fn redactTraceEvent(
+    event: App.TraceEvent,
+    options: StructuredLogRedactionOptions,
+) App.TraceEvent {
+    var sanitized = event;
+    if (options.redact_tracestate and sanitized.tracestate.len != 0) {
+        sanitized.tracestate = options.marker;
+    }
+    if (options.redact_baggage and sanitized.baggage.len != 0) {
+        sanitized.baggage = options.marker;
+    }
+    return sanitized;
+}
+
+pub fn redactAccessLogEvent(
+    event: App.AccessLogEvent,
+    options: StructuredLogRedactionOptions,
+) App.AccessLogEvent {
+    var sanitized = event;
+    if (options.redact_tracestate and sanitized.tracestate.len != 0) {
+        sanitized.tracestate = options.marker;
+    }
+    if (options.redact_baggage and sanitized.baggage.len != 0) {
+        sanitized.baggage = options.marker;
+    }
+    if (options.redact_remote_addr and sanitized.remote_addr.len != 0) {
+        sanitized.remote_addr = options.marker;
+    }
+    if (options.redact_user_agent and sanitized.user_agent.len != 0) {
+        sanitized.user_agent = options.marker;
+    }
+    return sanitized;
+}
+
+test "trace event redaction only masks configured fields" {
+    const event: App.TraceEvent = .{
+        .request_id = "req-1",
+        .trace_context = "00-abc-123-01",
+        .tracestate = "vendor=1",
+        .baggage = "user.id=42",
+        .trace_id = "abc",
+        .span_id = "123",
+        .method = .GET,
+        .path = "/orders",
+        .status = .ok,
+        .latency_us = 10,
+    };
+
+    const sanitized = redactTraceEvent(event, .{
+        .marker = "***",
+        .redact_tracestate = true,
+        .redact_baggage = false,
+    });
+
+    try std.testing.expectEqualStrings("***", sanitized.tracestate);
+    try std.testing.expectEqualStrings("user.id=42", sanitized.baggage);
+    try std.testing.expectEqualStrings("00-abc-123-01", sanitized.trace_context);
+}
+
+test "access log redaction masks client metadata by default" {
+    const event: App.AccessLogEvent = .{
+        .request_id = "req-1",
+        .trace_context = "00-abc-123-01",
+        .tracestate = "vendor=1",
+        .baggage = "tenant=acme",
+        .trace_id = "abc",
+        .span_id = "123",
+        .method = .GET,
+        .path = "/orders",
+        .scheme = "https",
+        .host = "example.com",
+        .status = .ok,
+        .latency_us = 10,
+        .remote_addr = "203.0.113.7",
+        .user_agent = "curl/8.0.0",
+    };
+
+    const sanitized = redactAccessLogEvent(event, .{});
+
+    try std.testing.expectEqualStrings("[redacted]", sanitized.tracestate);
+    try std.testing.expectEqualStrings("[redacted]", sanitized.baggage);
+    try std.testing.expectEqualStrings("[redacted]", sanitized.remote_addr);
+    try std.testing.expectEqualStrings("[redacted]", sanitized.user_agent);
 }

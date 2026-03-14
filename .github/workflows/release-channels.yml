@@ -34,11 +34,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.15.2
+      - uses: sigstore/cosign-installer@v3
       - name: Resolve channel
         id: resolve_channel
         run: |
@@ -59,6 +62,7 @@ jobs:
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
       - name: Run release channel pipeline
         env:
+          COSIGN_SIGN_RELEASES: "true"
           PERF_GATE_MODE: ${{ steps.resolve_perf.outputs.mode }}
           RELEASE_REF: ${{ github.ref_name }}
         run: sh tools/release/run_release_channel.sh "${{ steps.resolve_channel.outputs.channel }}"
@@ -67,3 +71,7 @@ jobs:
         with:
           name: zigmund-release-${{ steps.resolve_channel.outputs.channel }}
           path: dist/release/*
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/release/*

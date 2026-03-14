@@ -1,5 +1,7 @@
 pub const ServerConfig = @import("config.zig").ServerConfig;
 pub const TlsConfig = @import("config.zig").TlsConfig;
+pub const TlsProtocolVersion = @import("config.zig").TlsProtocolVersion;
+pub const TlsClientAuth = @import("config.zig").TlsClientAuth;
 pub const ProxyInfo = @import("proxy.zig").ProxyInfo;
 pub const extractProxyInfo = @import("proxy.zig").extractProxyInfo;
 pub const extractProxyInfoWithConfig = @import("proxy.zig").extractProxyInfoWithConfig;

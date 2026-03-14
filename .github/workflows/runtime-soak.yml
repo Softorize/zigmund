@@ -1,0 +1,41 @@
+name: Runtime Soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      soak_rounds:
+        description: Soak rounds override
+        required: false
+        type: string
+      soak_connections:
+        description: Soak connections per round override
+        required: false
+        type: string
+  schedule:
+    - cron: "0 5 * * 3"
+
+jobs:
+  soak:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - perf
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+      - name: Run production validation suite
+        env:
+          ZIGMUND_SOAK_ROUNDS: ${{ github.event.inputs.soak_rounds }}
+          ZIGMUND_SOAK_CONNECTIONS: ${{ github.event.inputs.soak_connections }}
+        run: sh tools/reliability/run_production_validation.sh
+      - name: Upload runtime soak evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-soak-${{ github.run_id }}
+          path: dist/reliability/*
+          retention-days: 120

@@ -1,9 +1,25 @@
 const std = @import("std");
 
+pub const TlsProtocolVersion = enum {
+    tls_1_2,
+    tls_1_3,
+};
+
+pub const TlsClientAuth = enum {
+    none,
+    optional,
+    required,
+};
+
 pub const TlsConfig = struct {
     cert_pem_path: []const u8,
     key_pem_path: []const u8,
     alpn: []const []const u8 = &.{"http/1.1"},
+    min_version: TlsProtocolVersion = .tls_1_2,
+    max_version: ?TlsProtocolVersion = null,
+    cipher_list: ?[]const u8 = null,
+    client_auth: TlsClientAuth = .none,
+    client_ca_pem_path: ?[]const u8 = null,
 };
 
 pub const ServerConfig = struct {

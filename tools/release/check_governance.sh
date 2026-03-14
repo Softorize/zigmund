@@ -19,8 +19,30 @@ if ! grep -q "MIT License" LICENSE; then
   exit 1
 fi
 
+for required_file in SECURITY.md SUPPORT.md .github/CODEOWNERS .github/workflows/security.yml; do
+  if [ ! -f "$required_file" ]; then
+    echo "missing governance file: $required_file" >&2
+    exit 1
+  fi
+done
+
 if ! grep -q '\.minimum_zig_version = "0.15.2"' build.zig.zon; then
   echo "build.zig.zon minimum Zig version is not pinned to 0.15.2" >&2
+  exit 1
+fi
+
+if ! rg -n 'id-token: write' .github/workflows/release-channels.yml >/dev/null 2>&1; then
+  echo "release workflow missing id-token: write permission" >&2
+  exit 1
+fi
+
+if ! rg -n 'attestations: write' .github/workflows/release-channels.yml >/dev/null 2>&1; then
+  echo "release workflow missing attestations: write permission" >&2
+  exit 1
+fi
+
+if ! rg -n 'cosign sign-blob' tools/release/build_release_artifacts.sh >/dev/null 2>&1; then
+  echo "release artifact script missing cosign signing step" >&2
   exit 1
 fi
 

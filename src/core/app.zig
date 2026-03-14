@@ -45,6 +45,9 @@ pub const App = struct {
     const LifecycleFn = *const fn () anyerror!void;
     const RequestMiddlewareFn = *const fn (*Request, std.mem.Allocator) anyerror!void;
     const ResponseMiddlewareFn = *const fn (*Request, *Response, std.mem.Allocator) anyerror!void;
+    const RequestMiddlewareWithContextFn = *const fn (*Request, std.mem.Allocator, ?*anyopaque) anyerror!void;
+    const ResponseMiddlewareWithContextFn = *const fn (*Request, *Response, std.mem.Allocator, ?*anyopaque) anyerror!void;
+    const MiddlewareDeinitFn = *const fn (?*anyopaque, std.mem.Allocator) void;
     const ExceptionHandlerFn = *const fn (*Request, anyerror, std.mem.Allocator) anyerror!Response;
     const TelemetryFn = *const fn (TelemetryEvent, std.mem.Allocator) anyerror!void;
     const TraceFn = *const fn (TraceEvent, std.mem.Allocator) anyerror!void;
@@ -113,8 +116,12 @@ pub const App = struct {
 
     pub const Middleware = struct {
         name: []const u8,
+        context: ?*anyopaque = null,
         request_hook: ?RequestMiddlewareFn = null,
         response_hook: ?ResponseMiddlewareFn = null,
+        request_hook_with_context: ?RequestMiddlewareWithContextFn = null,
+        response_hook_with_context: ?ResponseMiddlewareWithContextFn = null,
+        deinit_hook: ?MiddlewareDeinitFn = null,
     };
 
     const LifecycleHook = struct {
@@ -123,8 +130,12 @@ pub const App = struct {
 
     const MiddlewareEntry = struct {
         name: []const u8,
+        context: ?*anyopaque = null,
         request_hook: ?RequestMiddlewareFn = null,
         response_hook: ?ResponseMiddlewareFn = null,
+        request_hook_with_context: ?RequestMiddlewareWithContextFn = null,
+        response_hook_with_context: ?ResponseMiddlewareWithContextFn = null,
+        deinit_hook: ?MiddlewareDeinitFn = null,
     };
 
     const ExceptionHandlerRegistration = struct {
@@ -154,7 +165,10 @@ pub const App = struct {
         self.startup_hooks.deinit(self.allocator);
         self.shutdown_hooks.deinit(self.allocator);
 
-        for (self.middleware.items) |entry| self.allocator.free(entry.name);
+        for (self.middleware.items) |entry| {
+            if (entry.deinit_hook) |hook| hook(entry.context, self.allocator);
+            self.allocator.free(entry.name);
+        }
         self.middleware.deinit(self.allocator);
 
         for (self.exception_handlers.items) |item| {
@@ -282,11 +296,11 @@ pub const App = struct {
     }
 
     pub fn enableJsonTraceSink(self: *App) void {
-        self.trace_sink = observability.jsonTraceSink;
+        self.trace_sink = observability.redactedJsonTraceSink;
     }
 
     pub fn enableJsonAccessLogSink(self: *App) void {
-        self.access_log_sink = observability.jsonAccessLogSink;
+        self.access_log_sink = observability.redactedJsonAccessLogSink;
     }
 
     pub fn enableJsonMetricsSink(self: *App) void {
@@ -362,8 +376,12 @@ pub const App = struct {
             errdefer self.allocator.free(name);
             try self.middleware.append(self.allocator, .{
                 .name = name,
+                .context = mw.context,
                 .request_hook = mw.request_hook,
                 .response_hook = mw.response_hook,
+                .request_hook_with_context = mw.request_hook_with_context,
+                .response_hook_with_context = mw.response_hook_with_context,
+                .deinit_hook = mw.deinit_hook,
             });
             return;
         }
@@ -1155,6 +1173,10 @@ pub const App = struct {
 
     fn runRequestMiddleware(self: *App, req: *Request) !void {
         for (self.middleware.items) |entry| {
+            if (entry.request_hook_with_context) |hook| {
+                try hook(req, self.allocator, entry.context);
+                continue;
+            }
             if (entry.request_hook) |hook| {
                 try hook(req, self.allocator);
             }
@@ -1163,6 +1185,10 @@ pub const App = struct {
 
     fn runResponseMiddleware(self: *App, req: *Request, response: *Response) !void {
         for (self.middleware.items) |entry| {
+            if (entry.response_hook_with_context) |hook| {
+                try hook(req, response, self.allocator, entry.context);
+                continue;
+            }
             if (entry.response_hook) |hook| {
                 try hook(req, response, self.allocator);
             }
@@ -1371,7 +1397,7 @@ pub const App = struct {
         }
 
         if (self.cfg.structured_trace_logs) {
-            observability.jsonTraceSink(event, self.allocator) catch |err| {
+            observability.jsonTraceSink(self.redactedTraceEvent(event), self.allocator) catch |err| {
                 std.log.warn("trace json sink failed: {s}", .{@errorName(err)});
             };
         }
@@ -1420,7 +1446,7 @@ pub const App = struct {
         }
 
         if (self.cfg.structured_access_logs) {
-            observability.jsonAccessLogSink(event, self.allocator) catch |err| {
+            observability.jsonAccessLogSink(self.redactedAccessLogEvent(event), self.allocator) catch |err| {
                 std.log.warn("access log json sink failed: {s}", .{@errorName(err)});
             };
         }
@@ -1477,6 +1503,29 @@ pub const App = struct {
                 std.log.warn("metrics json sink failed: {s}", .{@errorName(err)});
             };
         }
+    }
+
+    fn redactedTraceEvent(self: *const App, event: TraceEvent) TraceEvent {
+        return observability.redactTraceEvent(event, .{
+            .marker = self.structuredLogRedactionText(),
+            .redact_tracestate = self.cfg.structured_log_redact_tracestate,
+            .redact_baggage = self.cfg.structured_log_redact_baggage,
+        });
+    }
+
+    fn redactedAccessLogEvent(self: *const App, event: AccessLogEvent) AccessLogEvent {
+        return observability.redactAccessLogEvent(event, .{
+            .marker = self.structuredLogRedactionText(),
+            .redact_tracestate = self.cfg.structured_log_redact_tracestate,
+            .redact_baggage = self.cfg.structured_log_redact_baggage,
+            .redact_remote_addr = self.cfg.structured_log_redact_remote_addr,
+            .redact_user_agent = self.cfg.structured_log_redact_user_agent,
+        });
+    }
+
+    fn structuredLogRedactionText(self: *const App) []const u8 {
+        if (self.cfg.structured_log_redaction_text.len == 0) return "[redacted]";
+        return self.cfg.structured_log_redaction_text;
     }
 
     fn emitAudit(self: *const App, event: AuditEvent) void {

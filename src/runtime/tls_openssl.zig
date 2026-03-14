@@ -13,6 +13,10 @@ pub const InitError = error{
     TlsCertificateLoadFailed,
     TlsPrivateKeyLoadFailed,
     TlsPrivateKeyMismatch,
+    TlsProtocolVersionRangeInvalid,
+    TlsCipherListInvalid,
+    TlsClientCaRequired,
+    TlsClientCaLoadFailed,
     OutOfMemory,
 };
 
@@ -39,6 +43,10 @@ pub const Context = if (builtin.link_libc) struct {
         const method = c.TLS_server_method();
         const ssl_ctx = c.SSL_CTX_new(method) orelse return error.TlsContextInitFailed;
         errdefer c.SSL_CTX_free(ssl_ctx);
+
+        try configureProtocolVersions(ssl_ctx, tls_cfg);
+        try configureCipherList(ssl_ctx, tls_cfg);
+        try configureClientAuth(ssl_ctx, tls_cfg);
 
         const cert_z = try std.heap.c_allocator.dupeZ(u8, tls_cfg.cert_pem_path);
         defer std.heap.c_allocator.free(cert_z);
@@ -73,6 +81,61 @@ pub const Context = if (builtin.link_libc) struct {
 
     pub fn deinit(_: *Context) void {}
 };
+
+fn configureProtocolVersions(ssl_ctx: *c.SSL_CTX, tls_cfg: config.TlsConfig) InitError!void {
+    const min_version = protocolVersionToOpenSsl(tls_cfg.min_version);
+    const max_version = if (tls_cfg.max_version) |value| protocolVersionToOpenSsl(value) else 0;
+
+    if (max_version != 0 and max_version < min_version) {
+        return error.TlsProtocolVersionRangeInvalid;
+    }
+
+    if (c.SSL_CTX_set_min_proto_version(ssl_ctx, min_version) != 1) {
+        return error.TlsContextInitFailed;
+    }
+    if (max_version != 0 and c.SSL_CTX_set_max_proto_version(ssl_ctx, max_version) != 1) {
+        return error.TlsContextInitFailed;
+    }
+}
+
+fn configureCipherList(ssl_ctx: *c.SSL_CTX, tls_cfg: config.TlsConfig) InitError!void {
+    const cipher_list = tls_cfg.cipher_list orelse return;
+    const cipher_list_z = try std.heap.c_allocator.dupeZ(u8, cipher_list);
+    defer std.heap.c_allocator.free(cipher_list_z);
+
+    if (c.SSL_CTX_set_cipher_list(ssl_ctx, cipher_list_z.ptr) != 1) {
+        return error.TlsCipherListInvalid;
+    }
+}
+
+fn configureClientAuth(ssl_ctx: *c.SSL_CTX, tls_cfg: config.TlsConfig) InitError!void {
+    if (tls_cfg.client_auth == .none) {
+        c.SSL_CTX_set_verify(ssl_ctx, c.SSL_VERIFY_NONE, null);
+        return;
+    }
+
+    const client_ca_path = tls_cfg.client_ca_pem_path orelse return error.TlsClientCaRequired;
+    const client_ca_path_z = try std.heap.c_allocator.dupeZ(u8, client_ca_path);
+    defer std.heap.c_allocator.free(client_ca_path_z);
+
+    if (c.SSL_CTX_load_verify_locations(ssl_ctx, client_ca_path_z.ptr, null) != 1) {
+        return error.TlsClientCaLoadFailed;
+    }
+
+    const verify_mode: c_int = switch (tls_cfg.client_auth) {
+        .none => c.SSL_VERIFY_NONE,
+        .optional => c.SSL_VERIFY_PEER,
+        .required => c.SSL_VERIFY_PEER | c.SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+    };
+    c.SSL_CTX_set_verify(ssl_ctx, verify_mode, null);
+}
+
+fn protocolVersionToOpenSsl(version: config.TlsProtocolVersion) c_int {
+    return switch (version) {
+        .tls_1_2 => c.TLS1_2_VERSION,
+        .tls_1_3 => c.TLS1_3_VERSION,
+    };
+}
 
 pub const Connection = if (builtin.link_libc) struct {
     ssl: *c.SSL,

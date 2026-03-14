@@ -64,3 +64,46 @@ test "tls startup failure emits serve_failed audit event" {
     try std.testing.expect(saw_serve_failed);
     try std.testing.expectEqualStrings("TlsCertificateLoadFailed", serve_failed_detail orelse "");
 }
+
+test "tls startup rejects required client auth without CA bundle" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "tls-config-client-auth",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    const result = app.serve(.{
+        .host = "127.0.0.1",
+        .port = 0,
+        .worker_count = 1,
+        .tls = .{
+            .cert_pem_path = "/definitely/missing/cert.pem",
+            .key_pem_path = "/definitely/missing/key.pem",
+            .client_auth = .required,
+        },
+    });
+
+    try std.testing.expectError(error.TlsClientCaRequired, result);
+}
+
+test "tls startup rejects invalid protocol version range" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "tls-config-version-range",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    const result = app.serve(.{
+        .host = "127.0.0.1",
+        .port = 0,
+        .worker_count = 1,
+        .tls = .{
+            .cert_pem_path = "/definitely/missing/cert.pem",
+            .key_pem_path = "/definitely/missing/key.pem",
+            .min_version = .tls_1_3,
+            .max_version = .tls_1_2,
+        },
+    });
+
+    try std.testing.expectError(error.TlsProtocolVersionRangeInvalid, result);
+}

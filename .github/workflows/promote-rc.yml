@@ -1,0 +1,47 @@
+name: Promote RC
+
+on:
+  workflow_dispatch:
+    inputs:
+      rc_tag:
+        description: RC tag to promote (e.g. rc-1.0.0)
+        required: true
+        type: string
+      stable_tag:
+        description: Stable tag override (default derives from rc_tag)
+        required: false
+        type: string
+      execute:
+        description: Execute tag creation/push (false = dry-run only)
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch tags
+        run: git fetch --tags --force
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Promote rc tag
+        run: |
+          if [ -n "${{ github.event.inputs.stable_tag }}" ]; then
+            base_args="${{ github.event.inputs.rc_tag }} ${{ github.event.inputs.stable_tag }}"
+          else
+            base_args="${{ github.event.inputs.rc_tag }}"
+          fi
+
+          if [ "${{ github.event.inputs.execute }}" = "true" ]; then
+            sh tools/release/promote_rc_to_stable.sh $base_args --execute
+          else
+            sh tools/release/promote_rc_to_stable.sh $base_args --dry-run
+          fi

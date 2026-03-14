@@ -48,6 +48,8 @@ pub const WebSocketException = core.WebSocketException;
 
 pub const ServerConfig = runtime.ServerConfig;
 pub const TlsConfig = runtime.TlsConfig;
+pub const TlsProtocolVersion = runtime.TlsProtocolVersion;
+pub const TlsClientAuth = runtime.TlsClientAuth;
 
 pub const TestClient = testing.TestClient;
 pub const WebSocketSession = testing.WebSocketSession;
@@ -90,6 +92,7 @@ pub const rateLimitMw = mw.rate_limit.middleware;
 pub const csrfMw = mw.csrf.middleware;
 pub const compressionMw = mw.compression.middleware;
 pub const sessionMw = mw.session.middleware;
+pub const sessionMwWithStore = mw.session.middlewareWithStore;
 
 pub const APIKeyQuery = security.APIKeyQuery;
 pub const APIKeyHeader = security.APIKeyHeader;
@@ -98,6 +101,8 @@ pub const HTTPBasic = security.HTTPBasic;
 pub const HTTPBasicCredentials = security.HTTPBasicCredentials;
 pub const HTTPBearer = security.HTTPBearer;
 pub const HTTPDigest = security.HTTPDigest;
+pub const JwtValidationOptions = security.JwtValidationOptions;
+pub const VerifiedHS256Bearer = security.VerifiedHS256Bearer;
 pub const OAuth2PasswordBearer = security.OAuth2PasswordBearer;
 pub const OAuth2ClientCredentialsBearer = security.OAuth2ClientCredentialsBearer;
 pub const OAuth2ImplicitBearer = security.OAuth2ImplicitBearer;
@@ -108,6 +113,7 @@ pub const parseAuthorizationHeader = security.parseAuthorizationHeader;
 pub const bearerTokenFromHeader = security.bearerTokenFromHeader;
 pub const decodeBasicCredentials = security.decodeBasicCredentials;
 pub const parseScopesRawAlloc = security.parseScopesRawAlloc;
+pub const validateHs256JwtToken = security.validateHs256JwtToken;
 pub const ApiKeyIn = security.ApiKeyIn;
 pub const Scope = security.Scope;
 pub const OAuthFlow = security.OAuthFlow;
