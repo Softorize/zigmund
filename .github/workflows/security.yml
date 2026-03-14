@@ -36,7 +36,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      - name: Install Gitleaks
+        env:
+          GITLEAKS_VERSION: "8.30.0"
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            -o "$RUNNER_TEMP/gitleaks.tar.gz"
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          chmod +x "$RUNNER_TEMP/gitleaks"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Run Gitleaks
+        run: gitleaks git --redact --no-banner --exit-code 1
 
   semgrep:
     name: Semgrep
@@ -61,10 +71,10 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@0.28.0
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
         with:
-          scan-type: fs
-          scan-ref: .
-          ignore-unfixed: true
-          exit-code: "1"
-          severity: HIGH,CRITICAL
+          version: v0.68.2
+          cache: true
+      - name: Run Trivy filesystem scan
+        run: trivy fs --scanners vuln --vuln-type os,library --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 .
