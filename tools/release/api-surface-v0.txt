@@ -38,6 +38,7 @@ InMemoryStore
 IncludeRouterOptions
 JinjaEngine
 JinjaValue
+JwtValidationOptions
 Middleware
 NamedSecurityScheme
 OAuth2AuthorizationCodeBearer
@@ -92,8 +93,11 @@ TemplateBinding
 TemplateValue
 TemplatesIntegration
 TestClient
+TlsClientAuth
 TlsConfig
+TlsProtocolVersion
 UploadFile
+VerifiedHS256Bearer
 WebSocketException
 WebSocketRouteOptions
 WebSocketSession
@@ -121,6 +125,8 @@ runtime
 schema
 security
 sessionMw
+sessionMwWithStore
 status
 template
 testing
+validateHs256JwtToken

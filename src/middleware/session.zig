@@ -1,4 +1,5 @@
 const std = @import("std");
+const App = @import("../core/app.zig").App;
 const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
 
@@ -60,22 +61,24 @@ pub const SessionStore = struct {
 
 /// Default in-memory session store.
 pub const InMemoryStore = struct {
-    sessions: std.StringHashMap(SessionData),
+    sessions: std.StringHashMap(*SessionData),
     allocator: std.mem.Allocator,
+    mutex: std.Thread.Mutex = .{},
 
     pub fn init(allocator: std.mem.Allocator) InMemoryStore {
         return .{
-            .sessions = std.StringHashMap(SessionData).init(allocator),
+            .sessions = std.StringHashMap(*SessionData).init(allocator),
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *InMemoryStore) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         var iter = self.sessions.iterator();
         while (iter.next()) |entry| {
-            var data = entry.value_ptr;
-            data.deinit();
-            self.allocator.free(entry.key_ptr.*);
+            self.destroySession(entry.key_ptr.*, entry.value_ptr.*);
         }
         self.sessions.deinit();
     }
@@ -90,54 +93,93 @@ pub const InMemoryStore = struct {
     }
 
     fn getFn(self: *InMemoryStore, id: []const u8) ?*SessionData {
-        return self.sessions.getPtr(id);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.sessions.get(id);
     }
 
     fn putFn(self: *InMemoryStore, id: []const u8) !*SessionData {
-        if (self.sessions.getPtr(id)) |existing| {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.sessions.get(id)) |existing| {
             existing.last_accessed = std.time.timestamp();
             return existing;
         }
+
         const owned_id = try self.allocator.dupe(u8, id);
-        const result = try self.sessions.getOrPut(owned_id);
-        if (!result.found_existing) {
-            result.value_ptr.* = SessionData.init(self.allocator);
-        }
-        return result.value_ptr;
+        errdefer self.allocator.free(owned_id);
+
+        const data = try self.allocator.create(SessionData);
+        errdefer self.allocator.destroy(data);
+        data.* = SessionData.init(self.allocator);
+
+        try self.sessions.put(owned_id, data);
+        return data;
     }
 
     fn removeFn(self: *InMemoryStore, id: []const u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         if (self.sessions.fetchRemove(id)) |entry| {
-            var data = entry.value;
-            data.deinit();
-            self.allocator.free(entry.key);
+            self.destroySession(entry.key, entry.value);
         }
+    }
+
+    fn destroySession(self: *InMemoryStore, key: []const u8, data: *SessionData) void {
+        data.deinit();
+        self.allocator.destroy(data);
+        self.allocator.free(key);
     }
 };
 
-var global_options: SessionOptions = .{};
-var global_store: ?SessionStore = null;
-var global_memory_store: ?InMemoryStore = null;
+const SessionMiddlewareState = struct {
+    allocator: std.mem.Allocator,
+    options: SessionOptions,
+    store: SessionStore,
+    owned_memory_store: ?*InMemoryStore = null,
 
-pub fn configure(allocator: std.mem.Allocator, options: SessionOptions, custom_store: ?SessionStore) void {
-    global_options = options;
-    if (custom_store) |cs| {
-        global_store = cs;
-    } else {
-        if (global_memory_store == null) {
-            global_memory_store = InMemoryStore.init(allocator);
+    fn init(
+        allocator: std.mem.Allocator,
+        options: SessionOptions,
+        custom_store: ?SessionStore,
+    ) !*SessionMiddlewareState {
+        const state = try allocator.create(SessionMiddlewareState);
+        errdefer allocator.destroy(state);
+
+        state.* = .{
+            .allocator = allocator,
+            .options = options,
+            .store = undefined,
+        };
+
+        if (custom_store) |store| {
+            state.store = store;
+            return state;
         }
-        global_store = global_memory_store.?.store();
-    }
-}
 
-pub fn deinit() void {
-    if (global_memory_store) |*ms| {
-        ms.deinit();
-        global_memory_store = null;
+        const memory_store = try allocator.create(InMemoryStore);
+        errdefer allocator.destroy(memory_store);
+        memory_store.* = InMemoryStore.init(allocator);
+
+        state.owned_memory_store = memory_store;
+        state.store = memory_store.store();
+        return state;
     }
-    global_store = null;
-}
+
+    fn deinit(self: *SessionMiddlewareState) void {
+        if (self.owned_memory_store) |store| {
+            store.deinit();
+            self.allocator.destroy(store);
+        }
+        self.allocator.destroy(self);
+    }
+};
+
+pub fn configure(_: std.mem.Allocator, _: SessionOptions, _: ?SessionStore) void {}
+
+pub fn deinit() void {}
 
 fn generateSessionId(allocator: std.mem.Allocator) ![]u8 {
     var bytes: [16]u8 = undefined;
@@ -159,18 +201,41 @@ fn extractCookieValue(cookies: []const u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
-/// Request hook: load or create session.
-pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
-    const sess_store = global_store orelse return;
+fn sessionExpired(session: *const SessionData, options: SessionOptions) bool {
+    if (options.max_age == 0) return false;
+    const expires_after = @as(i64, options.max_age);
+    return std.time.timestamp() - session.last_accessed >= expires_after;
+}
 
-    // Look for existing session cookie
+pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
+    _ = req;
+    _ = allocator;
+}
+
+fn requestHookWithContext(req: *Request, allocator: std.mem.Allocator, context: ?*anyopaque) !void {
+    const state = contextToState(context) orelse return;
+    const sess_store = state.store;
+    const options = state.options;
+
     var session_id: ?[]const u8 = null;
     if (req.header("cookie")) |cookies| {
-        session_id = extractCookieValue(cookies, global_options.cookie_name);
+        session_id = extractCookieValue(cookies, options.cookie_name);
     }
 
     var is_new = false;
     var owned_id: ?[]u8 = null;
+
+    if (session_id) |existing_id| {
+        if (sess_store.get(existing_id)) |session| {
+            if (sessionExpired(session, options)) {
+                sess_store.remove(existing_id);
+                session_id = null;
+            }
+        } else {
+            session_id = null;
+        }
+    }
+
     if (session_id == null) {
         owned_id = try generateSessionId(allocator);
         session_id = owned_id.?;
@@ -178,9 +243,7 @@ pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
     }
     defer if (owned_id) |id| allocator.free(id);
 
-    // Get or create session
-    const session = try sess_store.getOrCreate(session_id.?);
-    _ = session;
+    _ = try sess_store.getOrCreate(session_id.?);
 
     try req.setDependencyValue("_session_id", session_id.?);
     if (is_new) {
@@ -188,13 +251,23 @@ pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
     }
 }
 
-/// Response hook: set session cookie.
 pub fn responseHook(req: *Request, response: *Response, allocator: std.mem.Allocator) !void {
+    _ = req;
+    _ = response;
+    _ = allocator;
+}
+
+fn responseHookWithContext(
+    req: *Request,
+    response: *Response,
+    allocator: std.mem.Allocator,
+    context: ?*anyopaque,
+) !void {
+    const state = contextToState(context) orelse return;
     const session_id = req.dependency("_session_id") orelse return;
 
-    // Only set cookie for new sessions or if modified
     if (req.dependency("_session_new") != null) {
-        const same_site_str: []const u8 = switch (global_options.same_site) {
+        const same_site_str: []const u8 = switch (state.options.same_site) {
             .strict => "Strict",
             .lax => "Lax",
             .none => "None",
@@ -202,15 +275,15 @@ pub fn responseHook(req: *Request, response: *Response, allocator: std.mem.Alloc
 
         var cookie_buf: std.ArrayList(u8) = .empty;
         try cookie_buf.writer(allocator).print("{s}={s}; Path={s}; SameSite={s}", .{
-            global_options.cookie_name,
+            state.options.cookie_name,
             session_id,
-            global_options.cookie_path,
+            state.options.cookie_path,
             same_site_str,
         });
-        if (global_options.http_only) try cookie_buf.appendSlice(allocator, "; HttpOnly");
-        if (global_options.secure) try cookie_buf.appendSlice(allocator, "; Secure");
-        if (global_options.max_age > 0) {
-            try cookie_buf.writer(allocator).print("; Max-Age={d}", .{global_options.max_age});
+        if (state.options.http_only) try cookie_buf.appendSlice(allocator, "; HttpOnly");
+        if (state.options.secure) try cookie_buf.appendSlice(allocator, "; Secure");
+        if (state.options.max_age > 0) {
+            try cookie_buf.writer(allocator).print("; Max-Age={d}", .{state.options.max_age});
         }
 
         const cookie_str = try cookie_buf.toOwnedSlice(allocator);
@@ -219,12 +292,40 @@ pub fn responseHook(req: *Request, response: *Response, allocator: std.mem.Alloc
     }
 }
 
-/// Create a Middleware struct ready to register with the app.
-pub fn middleware(allocator: std.mem.Allocator, options: SessionOptions) @import("../core/app.zig").App.Middleware {
-    configure(allocator, options, null);
+fn deinitContext(context: ?*anyopaque, allocator: std.mem.Allocator) void {
+    _ = allocator;
+    const state = contextToState(context) orelse return;
+    state.deinit();
+}
+
+fn contextToState(context: ?*anyopaque) ?*SessionMiddlewareState {
+    const ptr = context orelse return null;
+    return @ptrCast(@alignCast(ptr));
+}
+
+pub fn middlewareWithStore(
+    allocator: std.mem.Allocator,
+    options: SessionOptions,
+    store: SessionStore,
+) App.Middleware {
+    const state = SessionMiddlewareState.init(allocator, options, store) catch @panic("failed to initialize session middleware");
     return .{
         .name = "session",
-        .request_hook = &requestHook,
-        .response_hook = &responseHook,
+        .context = @ptrCast(state),
+        .request_hook_with_context = &requestHookWithContext,
+        .response_hook_with_context = &responseHookWithContext,
+        .deinit_hook = &deinitContext,
+    };
+}
+
+/// Create a Middleware struct ready to register with the app.
+pub fn middleware(allocator: std.mem.Allocator, options: SessionOptions) App.Middleware {
+    const state = SessionMiddlewareState.init(allocator, options, null) catch @panic("failed to initialize session middleware");
+    return .{
+        .name = "session",
+        .context = @ptrCast(state),
+        .request_hook_with_context = &requestHookWithContext,
+        .response_hook_with_context = &responseHookWithContext,
+        .deinit_hook = &deinitContext,
     };
 }

@@ -12,7 +12,6 @@ test "session middleware sets session cookie" {
         .version = "0.0.1",
     });
     defer app.deinit();
-    defer zigmund.mw.session.deinit();
 
     try app.addMiddleware(zigmund.sessionMw(std.testing.allocator, .{
         .cookie_name = "session_id",
@@ -49,7 +48,6 @@ test "session middleware generates unique session IDs" {
         .version = "0.0.1",
     });
     defer app.deinit();
-    defer zigmund.mw.session.deinit();
 
     try app.addMiddleware(zigmund.sessionMw(std.testing.allocator, .{}));
     try app.get("/page", echoHandler, .{});
@@ -94,4 +92,60 @@ test "session middleware generates unique session IDs" {
     try std.testing.expect(id2 != null);
     // Sessions should be different (both are new requests without cookies)
     try std.testing.expect(!std.mem.eql(u8, id1.?, id2.?));
+}
+
+test "session middleware can share an explicit store across apps" {
+    var shared_store = zigmund.InMemoryStore.init(std.testing.allocator);
+    defer shared_store.deinit();
+
+    var app_one = try zigmund.App.init(std.testing.allocator, .{
+        .title = "session-shared-store-one",
+        .version = "0.0.1",
+    });
+    defer app_one.deinit();
+    try app_one.addMiddleware(zigmund.sessionMwWithStore(
+        std.testing.allocator,
+        .{},
+        shared_store.store(),
+    ));
+    try app_one.get("/page", echoHandler, .{});
+
+    var app_two = try zigmund.App.init(std.testing.allocator, .{
+        .title = "session-shared-store-two",
+        .version = "0.0.1",
+    });
+    defer app_two.deinit();
+    try app_two.addMiddleware(zigmund.sessionMwWithStore(
+        std.testing.allocator,
+        .{},
+        shared_store.store(),
+    ));
+    try app_two.get("/page", echoHandler, .{});
+
+    var client_one = zigmund.TestClient.init(std.testing.allocator, &app_one);
+    defer client_one.deinit();
+    var first = try client_one.get("/page");
+    defer first.deinit(std.testing.allocator);
+
+    var cookie_header: ?[]const u8 = null;
+    for (first.headers.items) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, "set-cookie")) {
+            cookie_header = header.value;
+            break;
+        }
+    }
+    try std.testing.expect(cookie_header != null);
+
+    var client_two = zigmund.TestClient.init(std.testing.allocator, &app_two);
+    defer client_two.deinit();
+    var second = try client_two.requestWithHeaders(.GET, "/page", "", &.{
+        .{ .name = "cookie", .value = cookie_header.? },
+    });
+    defer second.deinit(std.testing.allocator);
+
+    var saw_new_cookie = false;
+    for (second.headers.items) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, "set-cookie")) saw_new_cookie = true;
+    }
+    try std.testing.expect(!saw_new_cookie);
 }
