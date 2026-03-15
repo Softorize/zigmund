@@ -70,6 +70,7 @@ pub fn build(b: *std.Build) void {
         "tests/conformance/openapi_include_in_schema_test.zig",
         "tests/conformance/include_router_merge_test.zig",
         "tests/conformance/optional_parameter_runtime_test.zig",
+        "tests/conformance/param_model_binding_test.zig",
         "tests/conformance/exception_handler_test.zig",
         "tests/conformance/openapi_injected_dependencies_test.zig",
         "tests/conformance/background_tasks_test.zig",

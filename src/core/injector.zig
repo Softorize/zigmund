@@ -221,6 +221,10 @@ fn resolveParamMarker(comptime Marker: type, req: *Request) anyerror!Marker {
 
     switch (location) {
         .query => {
+            if (comptime isParameterModelMarker(Marker)) {
+                out.value = try req.queryModelAsLeaky(ValueType);
+                return out;
+            }
             const key = Marker.options.alias orelse @compileError("Query marker requires `alias` for automatic injection");
             const raw_value = req.queryParam(key);
             if (raw_value == null) {
@@ -247,6 +251,10 @@ fn resolveParamMarker(comptime Marker: type, req: *Request) anyerror!Marker {
             out.value = parsed;
         },
         .header => {
+            if (comptime isParameterModelMarker(Marker)) {
+                out.value = try req.headerModelAsLeaky(ValueType, Marker.options.convert_underscores);
+                return out;
+            }
             const key = Marker.options.alias orelse @compileError("Header marker requires `alias` for automatic injection");
             const raw_value = req.header(key);
             const parsed = try req.headerAs(ValueType, key);
@@ -254,6 +262,10 @@ fn resolveParamMarker(comptime Marker: type, req: *Request) anyerror!Marker {
             out.value = parsed;
         },
         .cookie => {
+            if (comptime isParameterModelMarker(Marker)) {
+                out.value = try req.cookieModelAsLeaky(ValueType);
+                return out;
+            }
             const key = Marker.options.alias orelse @compileError("Cookie marker requires `alias` for automatic injection");
             const raw_value = req.cookie(key);
             const parsed = try req.cookieAs(ValueType, key);
@@ -289,6 +301,13 @@ fn resolveParamMarker(comptime Marker: type, req: *Request) anyerror!Marker {
     }
 
     return out;
+}
+
+fn isParameterModelMarker(comptime Marker: type) bool {
+    return switch (Marker.Location) {
+        .query, .header, .cookie => Marker.options.alias == null and isFlatParameterModelType(Marker.ValueType),
+        else => false,
+    };
 }
 
 fn isStrictModeEnabled(comptime Marker: type, req: *const Request) bool {
@@ -1064,7 +1083,7 @@ fn countParameterMarkers(comptime HandlerType: type) usize {
     inline for (fn_info.params) |param| {
         const ParamType = param.type orelse continue;
         if (!isParamMarkerType(ParamType)) continue;
-        if (isParameterLocation(ParamType.Location)) count += 1;
+        if (isParameterLocation(ParamType.Location)) count += countParameterSpecsForMarker(ParamType);
     }
     return count;
 }
@@ -1079,10 +1098,33 @@ fn buildParameterSpecs(comptime HandlerType: type) [countParameterMarkers(Handle
         if (!isParamMarkerType(ParamType)) continue;
         if (!isParameterLocation(ParamType.Location)) continue;
 
-        specs[spec_idx] = parameterSpecForMarker(ParamType);
-        spec_idx += 1;
+        fillParameterSpecsForMarker(ParamType, &specs, &spec_idx);
     }
     return specs;
+}
+
+fn countParameterSpecsForMarker(comptime Marker: type) usize {
+    if (!isParameterModelMarker(Marker)) return 1;
+    const Base = stripOptionalType(Marker.ValueType);
+    return @typeInfo(Base).@"struct".fields.len;
+}
+
+fn fillParameterSpecsForMarker(
+    comptime Marker: type,
+    specs: []types.InjectedParameter,
+    spec_idx: *usize,
+) void {
+    if (!isParameterModelMarker(Marker)) {
+        specs[spec_idx.*] = parameterSpecForMarker(Marker);
+        spec_idx.* += 1;
+        return;
+    }
+
+    const Base = stripOptionalType(Marker.ValueType);
+    inline for (@typeInfo(Base).@"struct".fields) |field| {
+        specs[spec_idx.*] = parameterSpecForModelField(Marker, field);
+        spec_idx.* += 1;
+    }
 }
 
 fn parameterSpecForMarker(comptime Marker: type) types.InjectedParameter {
@@ -1130,6 +1172,62 @@ fn parameterSpecForMarker(comptime Marker: type) types.InjectedParameter {
     };
 }
 
+fn parameterSpecForModelField(
+    comptime Marker: type,
+    comptime field: std.builtin.Type.StructField,
+) types.InjectedParameter {
+    const location = Marker.Location;
+    const schema = schemaForType(field.type);
+    const required = !isOptionalType(field.type) and field.default_value_ptr == null;
+
+    return .{
+        .name = parameterModelFieldExternalName(location, field.name, markerConvertsUnderscores(Marker)),
+        .in = switch (location) {
+            .query => .query,
+            .header => .header,
+            .cookie => .cookie,
+            else => @compileError("Invalid parameter model marker location"),
+        },
+        .required = required,
+        .deprecated = switch (location) {
+            .query => Marker.options.deprecated,
+            else => false,
+        },
+        .description = null,
+        .schema_type = schema.schema_type,
+        .schema_format = schema.schema_format,
+        .is_array = schema.is_array,
+    };
+}
+
+fn markerConvertsUnderscores(comptime Marker: type) bool {
+    return switch (Marker.Location) {
+        .header => Marker.options.convert_underscores,
+        else => false,
+    };
+}
+
+fn parameterModelFieldExternalName(
+    comptime location: params.Location,
+    comptime field_name: []const u8,
+    comptime convert_underscores: bool,
+) []const u8 {
+    if (location != .header or !convert_underscores) return field_name;
+
+    const Holder = struct {
+        fn build() [field_name.len]u8 {
+            var out: [field_name.len]u8 = undefined;
+            inline for (field_name, 0..) |ch, idx| {
+                out[idx] = if (ch == '_') '-' else ch;
+            }
+            return out;
+        }
+
+        const value = build();
+    };
+    return Holder.value[0..];
+}
+
 fn isParameterLocation(location: params.Location) bool {
     return switch (location) {
         .query, .path, .header, .cookie => true,
@@ -1139,6 +1237,37 @@ fn isParameterLocation(location: params.Location) bool {
 
 fn isOptionalType(comptime T: type) bool {
     return @typeInfo(T) == .optional;
+}
+
+fn isFlatParameterModelType(comptime T: type) bool {
+    const Base = stripOptionalType(T);
+    if (@typeInfo(Base) != .@"struct") return false;
+    if (Base == Request.UploadFile) return false;
+
+    inline for (@typeInfo(Base).@"struct".fields) |field| {
+        const FieldBase = stripOptionalType(field.type);
+        switch (@typeInfo(FieldBase)) {
+            .bool, .int, .comptime_int, .float, .comptime_float, .@"enum" => {},
+            .pointer => |ptr| {
+                if (ptr.size == .slice and ptr.child == u8) continue;
+                if (ptr.size == .slice and ptr.child != u8) continue;
+                return false;
+            },
+            .@"struct" => {
+                if (FieldBase == std.Uri or
+                    FieldBase == std.net.Address or
+                    FieldBase == std.net.Ip4Address or
+                    FieldBase == std.net.Ip6Address)
+                {
+                    continue;
+                }
+                return false;
+            },
+            else => return false,
+        }
+    }
+
+    return true;
 }
 
 fn countRequestBodyMarkers(comptime HandlerType: type) usize {

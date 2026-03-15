@@ -49,6 +49,12 @@ pub const Request = struct {
         data: []const u8 = "",
     };
 
+    const ParamModelSource = enum {
+        query,
+        header,
+        cookie,
+    };
+
     const DependencyCleanup = struct {
         key: []u8,
         value: []u8,
@@ -287,6 +293,31 @@ pub const Request = struct {
         return self.query_params.get(key);
     }
 
+    pub fn queryParamsAllLeaky(self: *Request, key: []const u8) ![]const []const u8 {
+        var values: std.ArrayList([]const u8) = .empty;
+        errdefer values.deinit(self.arena.allocator());
+
+        if (self.query.len == 0) return &.{};
+
+        var pairs = std.mem.splitScalar(u8, self.query, '&');
+        while (pairs.next()) |pair| {
+            if (pair.len == 0) continue;
+            if (std.mem.indexOfScalar(u8, pair, '=')) |idx| {
+                const decoded_key = try self.decodeFormComponentLeaky(pair[0..idx]);
+                if (!std.mem.eql(u8, decoded_key, key)) continue;
+                const decoded_value = try self.decodeFormComponentLeaky(pair[idx + 1 ..]);
+                try values.append(self.arena.allocator(), decoded_value);
+                continue;
+            }
+
+            const decoded_key = try self.decodeFormComponentLeaky(pair);
+            if (!std.mem.eql(u8, decoded_key, key)) continue;
+            try values.append(self.arena.allocator(), "");
+        }
+
+        return values.toOwnedSlice(self.arena.allocator());
+    }
+
     pub fn queryAs(self: *Request, comptime T: type, key: []const u8) !T {
         return self.resolveTypedValue(T, self.queryParam(key), .query, key);
     }
@@ -297,6 +328,18 @@ pub const Request = struct {
 
     pub fn headerAs(self: *Request, comptime T: type, key: []const u8) !T {
         return self.resolveTypedValue(T, self.header(key), .header, key);
+    }
+
+    pub fn queryModelAsLeaky(self: *Request, comptime T: type) !T {
+        return self.bindParameterModelLeaky(T, .query, false);
+    }
+
+    pub fn headerModelAsLeaky(self: *Request, comptime T: type, comptime convert_underscores: bool) !T {
+        return self.bindParameterModelLeaky(T, .header, convert_underscores);
+    }
+
+    pub fn cookieModelAsLeaky(self: *Request, comptime T: type) !T {
+        return self.bindParameterModelLeaky(T, .cookie, false);
     }
 
     pub fn bodyJson(self: *Request, comptime T: type) !std.json.Parsed(T) {
@@ -912,6 +955,132 @@ pub const Request = struct {
             return try parseScalar(Child, raw);
         }
         return parseScalar(T, raw);
+    }
+
+    fn bindParameterModelLeaky(
+        self: *Request,
+        comptime T: type,
+        comptime source: ParamModelSource,
+        comptime convert_underscores: bool,
+    ) !T {
+        const Base = stripOptionalType(T);
+        if (@typeInfo(Base) != .@"struct") return error.UnsupportedType;
+
+        var out: Base = undefined;
+        inline for (@typeInfo(Base).@"struct".fields) |field| {
+            const key = parameterModelFieldName(source, field.name, convert_underscores);
+
+            if (comptime source == .query and isRepeatedQueryFieldType(field.type)) {
+                const raw_values = try self.queryParamsAllLeaky(key);
+                if (raw_values.len == 0) {
+                    try self.assignMissingParameterModelField(Base, field, &out, source, key);
+                } else {
+                    @field(out, field.name) = try self.parseRepeatedQueryField(field.type, key, raw_values);
+                }
+            } else {
+                const raw_value = switch (source) {
+                    .query => self.queryParam(key),
+                    .header => self.header(key),
+                    .cookie => self.cookie(key),
+                };
+
+                if (raw_value) |raw| {
+                    const parsed = parseScalar(field.type, raw) catch {
+                        try self.failValidation(validationLocationForModelSource(source), key, "Invalid value", "type_error", raw);
+                        return error.ValidationFailed;
+                    };
+                    @field(out, field.name) = parsed;
+                } else {
+                    try self.assignMissingParameterModelField(Base, field, &out, source, key);
+                }
+            }
+        }
+
+        return out;
+    }
+
+    fn parseRepeatedQueryField(
+        self: *Request,
+        comptime T: type,
+        key: []const u8,
+        raw_values: []const []const u8,
+    ) !T {
+        const SliceType = stripOptionalType(T);
+        const ptr = @typeInfo(SliceType).pointer;
+        const Child = ptr.child;
+
+        const out = try self.arena.allocator().alloc(Child, raw_values.len);
+        for (raw_values, 0..) |raw, idx| {
+            out[idx] = parseScalar(Child, raw) catch {
+                try self.failValidation(.query, key, "Invalid value", "type_error", raw);
+                return error.ValidationFailed;
+            };
+        }
+        return out;
+    }
+
+    fn assignMissingParameterModelField(
+        self: *Request,
+        comptime Base: type,
+        comptime field: std.builtin.Type.StructField,
+        out: *Base,
+        comptime source: ParamModelSource,
+        key: []const u8,
+    ) !void {
+        if (field.default_value_ptr) |default_ptr| {
+            const typed_default: *const field.type = @ptrCast(@alignCast(default_ptr));
+            @field(out.*, field.name) = typed_default.*;
+            return;
+        }
+        if (@typeInfo(field.type) == .optional) {
+            @field(out.*, field.name) = null;
+            return;
+        }
+        try self.failValidation(validationLocationForModelSource(source), key, "Field required", "missing", null);
+        return error.ValidationFailed;
+    }
+
+    fn validationLocationForModelSource(source: ParamModelSource) ValidationLocation {
+        return switch (source) {
+            .query => .query,
+            .header => .header,
+            .cookie => .cookie,
+        };
+    }
+
+    fn parameterModelFieldName(
+        comptime source: ParamModelSource,
+        comptime field_name: []const u8,
+        comptime convert_underscores: bool,
+    ) []const u8 {
+        if (source != .header or !convert_underscores) return field_name;
+
+        const Holder = struct {
+            fn build() [field_name.len]u8 {
+                var out: [field_name.len]u8 = undefined;
+                inline for (field_name, 0..) |ch, idx| {
+                    out[idx] = if (ch == '_') '-' else ch;
+                }
+                return out;
+            }
+
+            const value = build();
+        };
+        return Holder.value[0..];
+    }
+
+    fn isRepeatedQueryFieldType(comptime T: type) bool {
+        const Base = stripOptionalType(T);
+        if (@typeInfo(Base) != .pointer) return false;
+        const ptr = @typeInfo(Base).pointer;
+        return ptr.size == .slice and ptr.child != u8;
+    }
+
+    fn stripOptionalType(comptime T: type) type {
+        if (@typeInfo(T) == .optional) {
+            return @typeInfo(T).optional.child;
+        }
+        return T;
     }
 
     fn decodeFormComponentLeaky(self: *Request, input: []const u8) ![]const u8 {

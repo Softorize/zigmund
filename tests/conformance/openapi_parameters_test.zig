@@ -35,6 +35,35 @@ fn richParamHandler(
     });
 }
 
+const QueryModel = struct {
+    page: u32 = 1,
+    search: ?[]const u8 = null,
+    tags: []const []const u8,
+};
+
+const HeaderModel = struct {
+    x_token: []const u8,
+    save_data: ?[]const u8 = null,
+};
+
+const CookieModel = struct {
+    session_id: []const u8,
+    theme: ?[]const u8 = null,
+};
+
+fn modelParamHandler(
+    query: zigmund.Query(QueryModel, .{}),
+    headers: zigmund.Header(HeaderModel, .{}),
+    cookies: zigmund.Cookie(CookieModel, .{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .has_query = query.value != null,
+        .has_headers = headers.value != null,
+        .has_cookies = cookies.value != null,
+    });
+}
+
 fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
     var count: usize = 0;
     var idx: usize = 0;
@@ -120,4 +149,23 @@ test "openapi emits schema formats for uri and ip parameters" {
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_next\":{\"name\":\"next\",\"in\":\"query\",\"required\":true,\"description\":\"Next page URI\",\"schema\":{\"type\":\"string\",\"format\":\"uri\"}") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_ip\":{\"name\":\"ip\",\"in\":\"query\",\"required\":true,\"description\":\"Client IPv4\",\"schema\":{\"type\":\"string\",\"format\":\"ipv4\"}") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_peer\":{\"name\":\"peer\",\"in\":\"query\",\"required\":true,\"description\":\"Peer IPv6\",\"schema\":{\"type\":\"string\",\"format\":\"ipv6\"}") != null);
+}
+
+test "openapi expands query header and cookie parameter models into flat parameters" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "openapi-param-models",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/models", modelParamHandler, .{});
+
+    const doc = try app.openapi();
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_page\":{\"name\":\"page\",\"in\":\"query\",\"required\":false,\"schema\":{\"type\":\"integer\",\"format\":\"int32\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_search\":{\"name\":\"search\",\"in\":\"query\",\"required\":false,\"schema\":{\"type\":\"string\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_tags\":{\"name\":\"tags\",\"in\":\"query\",\"required\":true,\"schema\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"header_x_token\":{\"name\":\"x-token\",\"in\":\"header\",\"required\":true,\"schema\":{\"type\":\"string\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"header_save_data\":{\"name\":\"save-data\",\"in\":\"header\",\"required\":false,\"schema\":{\"type\":\"string\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"cookie_session_id\":{\"name\":\"session_id\",\"in\":\"cookie\",\"required\":true,\"schema\":{\"type\":\"string\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"cookie_theme\":{\"name\":\"theme\",\"in\":\"cookie\",\"required\":false,\"schema\":{\"type\":\"string\"}") != null);
 }
