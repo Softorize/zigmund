@@ -23,9 +23,10 @@ pub fn observabilityPath(req: *const Request) []const u8 {
 pub fn jsonTelemetrySink(event: App.TelemetryEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
-        "{{\"event\":\"telemetry\",\"request_id\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
+        "{{\"event\":\"telemetry\",\"request_id\":{f},\"correlation_id\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
         .{
             std.json.fmt(event.request_id, .{}),
+            std.json.fmt(event.correlation_id, .{}),
             std.json.fmt(event.trace_id, .{}),
             std.json.fmt(event.span_id, .{}),
             std.json.fmt(@tagName(event.method), .{}),
@@ -41,9 +42,10 @@ pub fn jsonTelemetrySink(event: App.TelemetryEvent, allocator: std.mem.Allocator
 pub fn jsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
-        "{{\"event\":\"trace\",\"request_id\":{f},\"trace_context\":{f},\"tracestate\":{f},\"baggage\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
+        "{{\"event\":\"trace\",\"request_id\":{f},\"correlation_id\":{f},\"trace_context\":{f},\"tracestate\":{f},\"baggage\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"status\":{d},\"latency_us\":{d}}}",
         .{
             std.json.fmt(event.request_id, .{}),
+            std.json.fmt(event.correlation_id, .{}),
             std.json.fmt(event.trace_context, .{}),
             std.json.fmt(event.tracestate, .{}),
             std.json.fmt(event.baggage, .{}),
@@ -66,9 +68,10 @@ pub fn redactedJsonTraceSink(event: App.TraceEvent, allocator: std.mem.Allocator
 pub fn jsonAccessLogSink(event: App.AccessLogEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
-        "{{\"event\":\"access_log\",\"request_id\":{f},\"trace_context\":{f},\"tracestate\":{f},\"baggage\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"scheme\":{f},\"host\":{f},\"status\":{d},\"latency_us\":{d},\"remote_addr\":{f},\"user_agent\":{f}}}",
+        "{{\"event\":\"access_log\",\"request_id\":{f},\"correlation_id\":{f},\"trace_context\":{f},\"tracestate\":{f},\"baggage\":{f},\"trace_id\":{f},\"span_id\":{f},\"method\":{f},\"path\":{f},\"scheme\":{f},\"host\":{f},\"status\":{d},\"latency_us\":{d},\"remote_addr\":{f},\"user_agent\":{f}}}",
         .{
             std.json.fmt(event.request_id, .{}),
+            std.json.fmt(event.correlation_id, .{}),
             std.json.fmt(event.trace_context, .{}),
             std.json.fmt(event.tracestate, .{}),
             std.json.fmt(event.baggage, .{}),
@@ -112,11 +115,12 @@ pub fn jsonMetricsSink(event: App.MetricsEvent, allocator: std.mem.Allocator) !v
 pub fn jsonAuditSink(event: App.AuditEvent, allocator: std.mem.Allocator) !void {
     const line = try std.fmt.allocPrint(
         allocator,
-        "{{\"event\":\"audit\",\"category\":{f},\"action\":{f},\"request_id\":{f},\"method\":{f},\"path\":{f},\"detail\":{f}}}",
+        "{{\"event\":\"audit\",\"category\":{f},\"action\":{f},\"request_id\":{f},\"correlation_id\":{f},\"method\":{f},\"path\":{f},\"detail\":{f}}}",
         .{
             std.json.fmt(event.category, .{}),
             std.json.fmt(event.action, .{}),
             std.json.fmt(event.request_id, .{}),
+            std.json.fmt(event.correlation_id, .{}),
             std.json.fmt(event.method, .{}),
             std.json.fmt(event.path, .{}),
             std.json.fmt(event.detail, .{}),

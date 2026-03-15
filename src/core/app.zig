@@ -69,6 +69,7 @@ pub const App = struct {
 
     pub const TelemetryEvent = struct {
         request_id: []const u8,
+        correlation_id: []const u8 = "",
         trace_id: []const u8,
         span_id: []const u8,
         method: std.http.Method,
@@ -79,6 +80,7 @@ pub const App = struct {
 
     pub const TraceEvent = struct {
         request_id: []const u8,
+        correlation_id: []const u8 = "",
         trace_context: []const u8,
         tracestate: []const u8,
         baggage: []const u8,
@@ -92,6 +94,7 @@ pub const App = struct {
 
     pub const AccessLogEvent = struct {
         request_id: []const u8,
+        correlation_id: []const u8 = "",
         trace_context: []const u8,
         tracestate: []const u8,
         baggage: []const u8,
@@ -120,6 +123,7 @@ pub const App = struct {
         category: []const u8,
         action: []const u8,
         request_id: []const u8 = "",
+        correlation_id: []const u8 = "",
         method: []const u8 = "",
         path: []const u8 = "",
         detail: []const u8 = "",
@@ -748,6 +752,7 @@ pub const App = struct {
                 if (self.cfg.request_id_enabled) {
                     try self.ensureRequestId(&req);
                 }
+                try self.ensureCorrelationId(&req);
                 self.ensureTraceContext(&req);
                 defer req.runDependencyCleanups(self.allocator) catch |err| {
                     std.log.err("dependency cleanup failed: {s}", .{@errorName(err)});
@@ -785,6 +790,7 @@ pub const App = struct {
                         .category = "websocket",
                         .action = "origin_rejected",
                         .request_id = req.requestId() orelse "",
+                        .correlation_id = req.correlationId() orelse "",
                         .method = @tagName(req.method),
                         .path = req.path,
                         .detail = "origin not allowed",
@@ -810,6 +816,7 @@ pub const App = struct {
                         .category = "websocket",
                         .action = "subprotocol_rejected",
                         .request_id = req.requestId() orelse "",
+                        .correlation_id = req.correlationId() orelse "",
                         .method = @tagName(req.method),
                         .path = req.path,
                         .detail = "required subprotocol missing or unsupported",
@@ -926,6 +933,7 @@ pub const App = struct {
         if (self.cfg.request_id_enabled) {
             try self.ensureRequestId(req);
         }
+        try self.ensureCorrelationId(req);
         self.ensureTraceContext(req);
         const start_ns = std.time.nanoTimestamp();
 
@@ -1527,6 +1535,44 @@ pub const App = struct {
         return self.cfg.request_id_header;
     }
 
+    fn correlationIdHeaderName(self: *const App) []const u8 {
+        if (self.cfg.correlation_id_header.len == 0) return "x-correlation-id";
+        return self.cfg.correlation_id_header;
+    }
+
+    fn ensureCorrelationId(self: *App, req: *Request) !void {
+        const correlation_header = self.correlationIdHeaderName();
+        if (req.correlationId() == null) {
+            if (req.header(correlation_header)) |incoming| {
+                if (incoming.len != 0) {
+                    req.setCorrelationIdBorrowed(incoming);
+                }
+            }
+        }
+
+        if (req.correlationId() == null) {
+            // Fall back to request ID as correlation ID
+            if (req.requestId()) |rid| {
+                try req.setCorrelationIdInline(rid);
+            } else {
+                const next_id = self.request_id_counter.fetchAdd(1, .monotonic) + 1;
+                var generated_buf: [32]u8 = undefined;
+                const generated = try std.fmt.bufPrint(
+                    &generated_buf,
+                    "corr-{x}",
+                    .{next_id},
+                );
+                try req.setCorrelationIdInline(generated);
+            }
+        }
+
+        if (req.correlationId()) |cid| {
+            req.setDependencyValueBorrowed("correlation_id", cid) catch |err| {
+                std.log.warn("failed to set correlation_id dependency: {s}", .{@errorName(err)});
+            };
+        }
+    }
+
     fn ensureTraceContext(self: *App, req: *Request) void {
         const header_name = self.trace_context_header orelse "traceparent";
         const trace_context = req.header(header_name) orelse req.header("x-correlation-id") orelse return;
@@ -1625,6 +1671,7 @@ pub const App = struct {
         if (self.cfg.request_id_enabled) {
             self.attachRequestIdHeader(req, response);
         }
+        self.attachCorrelationIdHeader(req, response);
         const latency_us = observability.elapsedMicros(start_ns);
         self.emitTelemetry(req, response.status, latency_us);
         self.emitTrace(req, response.status, latency_us);
@@ -1641,6 +1688,15 @@ pub const App = struct {
         };
     }
 
+    fn attachCorrelationIdHeader(self: *App, req: *const Request, response: *Response) void {
+        const correlation_id_header = self.correlationIdHeaderName();
+        if (response.hasHeader(correlation_id_header)) return;
+        const correlation_id = req.correlationId() orelse return;
+        response.setHeader(self.allocator, correlation_id_header, correlation_id) catch |err| {
+            std.log.warn("failed to set correlation id header: {s}", .{@errorName(err)});
+        };
+    }
+
     fn emitTelemetry(self: *const App, req: *const Request, status: std.http.Status, latency_us: u64) void {
         if (self.telemetry_sink == null and !self.cfg.structured_telemetry_logs) return;
 
@@ -1648,6 +1704,7 @@ pub const App = struct {
         const path = observability.observabilityPath(req);
         const event: TelemetryEvent = .{
             .request_id = req.requestId() orelse "",
+            .correlation_id = req.correlationId() orelse "",
             .trace_id = trace_identity.trace_id,
             .span_id = trace_identity.span_id,
             .method = req.method,
@@ -1677,6 +1734,7 @@ pub const App = struct {
         const path = observability.observabilityPath(req);
         const event: TraceEvent = .{
             .request_id = req.requestId() orelse "",
+            .correlation_id = req.correlationId() orelse "",
             .trace_context = trace_identity.trace_context,
             .tracestate = trace_identity.tracestate,
             .baggage = trace_identity.baggage,
@@ -1722,6 +1780,7 @@ pub const App = struct {
 
         const event: AccessLogEvent = .{
             .request_id = req.requestId() orelse "",
+            .correlation_id = req.correlationId() orelse "",
             .trace_context = trace_identity.trace_context,
             .tracestate = trace_identity.tracestate,
             .baggage = trace_identity.baggage,
@@ -1888,6 +1947,7 @@ pub const App = struct {
             .category = "auth",
             .action = action,
             .request_id = req.requestId() orelse "",
+            .correlation_id = req.correlationId() orelse "",
             .method = @tagName(req.method),
             .path = req.path,
             .detail = detail,
