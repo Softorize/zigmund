@@ -106,6 +106,7 @@ pub fn build(b: *std.Build) void {
         "tests/conformance/compression_middleware_test.zig",
         "tests/conformance/session_middleware_test.zig",
         "tests/conformance/timeout_middleware_test.zig",
+        "tests/conformance/https_redirect_test.zig",
         "tests/conformance/health_check_test.zig",
         "tests/conformance/problem_details_test.zig",
         "tests/conformance/api_versioning_test.zig",
