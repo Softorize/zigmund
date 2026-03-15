@@ -7,11 +7,13 @@ const websocket = @import("../runtime/websocket.zig");
 
 pub const HttpHandler = *const fn (*Request, std.mem.Allocator) anyerror!Response;
 pub const WebSocketHandler = *const fn (*websocket.Connection, *Request, std.mem.Allocator) anyerror!void;
+pub const RouteWrapperFn = *const fn (*Request, HttpHandler, std.mem.Allocator) anyerror!Response;
 
 pub const HttpRoute = struct {
     method: types.RouteMethod,
     path: []const u8,
     handler: HttpHandler,
+    wrapper: ?RouteWrapperFn = null,
     options: types.StoredRouteOptions,
 };
 
@@ -26,6 +28,7 @@ pub const Router = struct {
     allocator: std.mem.Allocator,
     http_routes: std.ArrayListUnmanaged(HttpRoute) = .empty,
     websocket_routes: std.ArrayListUnmanaged(WebSocketRoute) = .empty,
+    default_route_wrapper: ?RouteWrapperFn = null,
 
     pub fn init(allocator: std.mem.Allocator) Router {
         return .{ .allocator = allocator };
@@ -62,6 +65,7 @@ pub const Router = struct {
             .method = method,
             .path = owned_path,
             .handler = normalizeHttpHandler(handler),
+            .wrapper = self.default_route_wrapper,
             .options = stored_opts,
         });
     }
@@ -71,6 +75,7 @@ pub const Router = struct {
         method: types.RouteMethod,
         path: []const u8,
         handler: HttpHandler,
+        wrapper: ?RouteWrapperFn,
         opts: types.StoredRouteOptions,
     ) !void {
         const canonical = try canonicalizePath(path);
@@ -81,8 +86,13 @@ pub const Router = struct {
             .method = method,
             .path = owned_path,
             .handler = handler,
+            .wrapper = wrapper,
             .options = opts,
         });
+    }
+
+    pub fn setDefaultRouteWrapper(self: *Router, wrapper: anytype) void {
+        self.default_route_wrapper = normalizeRouteWrapper(wrapper);
     }
 
     pub fn addWebSocketRoute(self: *Router, path: []const u8, handler: anytype, opts: types.WebSocketRouteOptions) !void {
@@ -297,6 +307,20 @@ pub const Router = struct {
         @compileError("HTTP handler must be fn(*Request, std.mem.Allocator) !Response");
     }
 
+    fn normalizeRouteWrapper(wrapper: anytype) RouteWrapperFn {
+        const T = @TypeOf(wrapper);
+        if (T == RouteWrapperFn) return wrapper;
+        if (@typeInfo(T) == .@"fn") {
+            if (comptime isRouteWrapperType(T)) {
+                const ptr: RouteWrapperFn = &wrapper;
+                return ptr;
+            }
+        }
+        @compileError(
+            "Route wrapper must be fn(*Request, HttpHandler, std.mem.Allocator) !Response",
+        );
+    }
+
     fn normalizeWebSocketHandler(handler: anytype) WebSocketHandler {
         const T = @TypeOf(handler);
         if (T == WebSocketHandler) return handler;
@@ -339,6 +363,22 @@ pub const Router = struct {
             return @typeInfo(ret).error_union.payload == void;
         }
         return ret == void;
+    }
+
+    fn isRouteWrapperType(comptime T: type) bool {
+        if (@typeInfo(T) != .@"fn") return false;
+        const info = @typeInfo(T).@"fn";
+        if (info.params.len != 3) return false;
+        if (info.params[0].type != *Request) return false;
+        if (info.params[1].type != HttpHandler) return false;
+        if (info.params[2].type != std.mem.Allocator) return false;
+        if (info.return_type == null) return false;
+
+        const ret = info.return_type.?;
+        if (@typeInfo(ret) == .error_union) {
+            return @typeInfo(ret).error_union.payload == Response;
+        }
+        return ret == Response;
     }
 
     fn isLegacyWebSocketHandlerType(comptime T: type) bool {

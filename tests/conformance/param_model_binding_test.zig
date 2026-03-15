@@ -17,6 +17,35 @@ const CookieModel = struct {
     theme: ?[]const u8 = null,
 };
 
+const AliasEntry = struct {
+    field: []const u8,
+    alias: []const u8,
+};
+
+const AliasedQueryModel = struct {
+    page_size: u32 = 25,
+
+    pub const zigmund_query_aliases: []const AliasEntry = &.{
+        .{ .field = "page_size", .alias = "page-size" },
+    };
+};
+
+const AliasedHeaderModel = struct {
+    tenant_id: []const u8,
+
+    pub const zigmund_header_aliases: []const AliasEntry = &.{
+        .{ .field = "tenant_id", .alias = "x-tenant-id" },
+    };
+};
+
+const AliasedCookieModel = struct {
+    session_token: []const u8,
+
+    pub const zigmund_cookie_aliases: []const AliasEntry = &.{
+        .{ .field = "session_token", .alias = "session-token" },
+    };
+};
+
 fn modelHandler(
     query: zigmund.Query(QueryModel, .{}),
     headers: zigmund.Header(HeaderModel, .{}),
@@ -31,6 +60,19 @@ fn modelHandler(
         .save_data = headers.value.?.save_data,
         .session_id = cookies.value.?.session_id,
         .theme = cookies.value.?.theme,
+    });
+}
+
+fn aliasedModelHandler(
+    query: zigmund.Query(AliasedQueryModel, .{}),
+    headers: zigmund.Header(AliasedHeaderModel, .{}),
+    cookies: zigmund.Cookie(AliasedCookieModel, .{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .page_size = query.value.?.page_size,
+        .tenant_id = headers.value.?.tenant_id,
+        .session_token = cookies.value.?.session_token,
     });
 }
 
@@ -79,4 +121,40 @@ test "query header and cookie parameter models bind flat structs" {
 
     try std.testing.expectEqual(.unprocessable_entity, missing.status);
     try std.testing.expect(std.mem.indexOf(u8, missing.body, "\"loc\":[\"query\",\"tags\"]") != null);
+}
+
+test "parameter model aliases bind runtime values and appear in openapi" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "param-model-aliases",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/aliased", aliasedModelHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
+
+    const headers = [_]std.http.Header{
+        .{ .name = "x-tenant-id", .value = "tenant-7" },
+        .{ .name = "cookie", .value = "session-token=s-77" },
+    };
+
+    var res = try client.requestWithHeaders(
+        .GET,
+        "/aliased?page-size=50",
+        "",
+        &headers,
+    );
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, res.status);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"page_size\":50") != null);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"tenant_id\":\"tenant-7\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, res.body, "\"session_token\":\"s-77\"") != null);
+
+    const openapi = try app.openapi();
+    try std.testing.expect(std.mem.indexOf(u8, openapi, "\"name\":\"page-size\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, openapi, "\"name\":\"x-tenant-id\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, openapi, "\"name\":\"session-token\"") != null);
 }

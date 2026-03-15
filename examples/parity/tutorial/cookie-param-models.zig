@@ -3,12 +3,19 @@ const zigmund = @import("zigmund");
 
 const source_page = "tutorial/cookie-param-models/";
 
-fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
+const CookieContext = struct {
+    session_id: ?[]const u8 = null,
+    theme: []const u8 = "light",
+};
+
+fn implemented(
+    cookies: zigmund.Cookie(CookieContext, .{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
         .parity = "implemented",
         .page = source_page,
-        .status = "ok",
+        .cookies = cookies.value.?,
     });
 }
 

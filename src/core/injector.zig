@@ -14,10 +14,18 @@ const c = @cImport({
 pub const HttpHandler = *const fn (*Request, std.mem.Allocator) anyerror!Response;
 
 const ResolveContext = struct {
+    const CachedValueDeinitFn = *const fn (?*anyopaque, std.mem.Allocator) void;
+
+    const CachedValue = struct {
+        type_name: []const u8,
+        payload: ?*anyopaque,
+        payload_deinit: CachedValueDeinitFn,
+    };
+
     allocator: std.mem.Allocator,
     ws_conn: ?*websocket.Connection = null,
     stack: std.ArrayListUnmanaged([]const u8) = .empty,
-    request_cache: std.StringHashMapUnmanaged([]u8) = .empty,
+    request_cache: std.StringHashMapUnmanaged(CachedValue) = .empty,
 
     fn init(allocator: std.mem.Allocator) ResolveContext {
         return .{ .allocator = allocator };
@@ -26,7 +34,7 @@ const ResolveContext = struct {
     fn deinit(self: *ResolveContext) void {
         var it = self.request_cache.iterator();
         while (it.next()) |entry| {
-            self.allocator.free(entry.value_ptr.*);
+            entry.value_ptr.payload_deinit(entry.value_ptr.payload, self.allocator);
         }
         self.request_cache.deinit(self.allocator);
         self.stack.deinit(self.allocator);
@@ -48,18 +56,33 @@ const ResolveContext = struct {
         return false;
     }
 
-    fn getCached(self: *const ResolveContext, key: []const u8) ?[]const u8 {
-        return self.request_cache.get(key);
+    fn getCached(self: *const ResolveContext, comptime T: type, key: []const u8) ?T {
+        const cached = self.request_cache.get(key) orelse return null;
+        if (!std.mem.eql(u8, cached.type_name, @typeName(T))) return null;
+        const typed: *T = @ptrCast(@alignCast(cached.payload orelse return null));
+        return typed.*;
     }
 
-    fn setCached(self: *ResolveContext, key: []const u8, value: []const u8) !void {
-        const owned_value = try self.allocator.dupe(u8, value);
-        errdefer self.allocator.free(owned_value);
+    fn setCached(self: *ResolveContext, comptime T: type, key: []const u8, value: T) !void {
+        const Holder = struct {
+            fn deinit(payload: ?*anyopaque, allocator: std.mem.Allocator) void {
+                const typed: *T = @ptrCast(@alignCast(payload orelse return));
+                allocator.destroy(typed);
+            }
+        };
+
+        const owned_value = try self.allocator.create(T);
+        errdefer self.allocator.destroy(owned_value);
+        owned_value.* = value;
 
         if (self.request_cache.fetchRemove(key)) |removed| {
-            self.allocator.free(removed.value);
+            removed.value.payload_deinit(removed.value.payload, self.allocator);
         }
-        try self.request_cache.put(self.allocator, key, owned_value);
+        try self.request_cache.put(self.allocator, key, .{
+            .type_name = @typeName(T),
+            .payload = @ptrCast(owned_value),
+            .payload_deinit = Holder.deinit,
+        });
     }
 };
 
@@ -832,14 +855,20 @@ fn resolveProviderMarker(
     out.value = value_opt;
 
     const effective_cleanup = if (override_entry) |entry| entry.cleanup orelse cleanup_fn else cleanup_fn;
+    const can_register_request_cleanup = @hasDecl(Marker, "options") and Marker.options.cache_scope == .request;
 
-    if (effective_cleanup) |cleanup| {
-        if (@hasDecl(Marker, "options") and Marker.options.cache_scope == .request) {
-            if (value_opt) |value| {
+    if (can_register_request_cleanup) {
+        if (value_opt) |value| {
+            const cleanup_key = cache_key orelse @typeName(@TypeOf(Marker.Provider));
+            if (effective_cleanup) |cleanup| {
                 if (cacheableProviderValue(Marker.ProviderValueType, value)) |cleanup_value| {
-                    const cleanup_key = cache_key orelse @typeName(@TypeOf(Marker.Provider));
                     try req.registerDependencyCleanup(cleanup_key, cleanup_value, cleanup);
                 }
+            } else if (override_entry == null and
+                Marker.marker_kind == params.MarkerKind.depends and
+                comptime Request.supportsAutoDependencyCleanup(Marker.ProviderValueType))
+            {
+                try req.registerAutoDependencyCleanup(Marker.ProviderValueType, cleanup_key, value);
             }
         }
     }
@@ -852,9 +881,9 @@ fn resolveProviderMarker(
                         try req.setDependencyValue(named, cache_value);
                     }
                 }
-                if (cache_key) |key| {
-                    try context.setCached(key, cache_value);
-                }
+            }
+            if (cache_key) |key| {
+                try context.setCached(Marker.ProviderValueType, key, value);
             }
         }
     }
@@ -940,8 +969,7 @@ fn loadCachedMarkerValue(
         }
     }
 
-    const raw_cached = context.getCached(key) orelse return null;
-    return parseCachedProviderValue(Marker.ProviderValueType, raw_cached);
+    return context.getCached(Marker.ProviderValueType, key);
 }
 
 fn parseCachedProviderValue(comptime T: type, raw: []const u8) ?T {
@@ -1177,11 +1205,12 @@ fn parameterSpecForModelField(
     comptime field: std.builtin.Type.StructField,
 ) types.InjectedParameter {
     const location = Marker.Location;
+    const Base = stripOptionalType(Marker.ValueType);
     const schema = schemaForType(field.type);
     const required = !isOptionalType(field.type) and field.default_value_ptr == null;
 
     return .{
-        .name = parameterModelFieldExternalName(location, field.name, markerConvertsUnderscores(Marker)),
+        .name = parameterModelFieldExternalName(Base, location, field.name, markerConvertsUnderscores(Marker)),
         .in = switch (location) {
             .query => .query,
             .header => .header,
@@ -1208,10 +1237,12 @@ fn markerConvertsUnderscores(comptime Marker: type) bool {
 }
 
 fn parameterModelFieldExternalName(
+    comptime Model: type,
     comptime location: params.Location,
     comptime field_name: []const u8,
     comptime convert_underscores: bool,
 ) []const u8 {
+    if (parameterModelFieldAlias(Model, location, field_name)) |alias| return alias;
     if (location != .header or !convert_underscores) return field_name;
 
     const Holder = struct {
@@ -1226,6 +1257,64 @@ fn parameterModelFieldExternalName(
         const value = build();
     };
     return Holder.value[0..];
+}
+
+fn parameterModelFieldAlias(
+    comptime Model: type,
+    comptime location: params.Location,
+    comptime field_name: []const u8,
+) ?[]const u8 {
+    const decl_name = switch (location) {
+        .query => "zigmund_query_aliases",
+        .header => "zigmund_header_aliases",
+        .cookie => "zigmund_cookie_aliases",
+        else => return null,
+    };
+    if (!@hasDecl(Model, decl_name)) return null;
+
+    const raw = @field(Model, decl_name);
+    const RawType = @TypeOf(raw);
+    switch (@typeInfo(RawType)) {
+        .pointer => |ptr| {
+            if (ptr.size == .slice) {
+                inline for (raw) |entry| {
+                    validateParameterModelAliasEntry(@TypeOf(entry));
+                    if (std.mem.eql(u8, entry.field, field_name)) return entry.alias;
+                }
+            } else if (@typeInfo(ptr.child) == .array) {
+                inline for (raw.*) |entry| {
+                    validateParameterModelAliasEntry(@TypeOf(entry));
+                    if (std.mem.eql(u8, entry.field, field_name)) return entry.alias;
+                }
+            } else if (ptr.size == .one and @typeInfo(ptr.child) == .@"struct") {
+                const entry = raw.*;
+                validateParameterModelAliasEntry(@TypeOf(entry));
+                if (std.mem.eql(u8, entry.field, field_name)) return entry.alias;
+            } else {
+                @compileError("parameter model aliases must be slices, arrays, or pointers to alias entries");
+            }
+        },
+        .array => {
+            inline for (raw[0..]) |entry| {
+                validateParameterModelAliasEntry(@TypeOf(entry));
+                if (std.mem.eql(u8, entry.field, field_name)) return entry.alias;
+            }
+        },
+        else => @compileError("parameter model aliases must be a slice or array"),
+    }
+    return null;
+}
+
+fn validateParameterModelAliasEntry(comptime EntryType: type) void {
+    if (@typeInfo(EntryType) != .@"struct") {
+        @compileError("parameter model alias entries must be structs with `field` and `alias`");
+    }
+    if (!@hasField(EntryType, "field") or !@hasField(EntryType, "alias")) {
+        @compileError("parameter model alias entries must define `field` and `alias`");
+    }
+    if (@FieldType(EntryType, "field") != []const u8 or @FieldType(EntryType, "alias") != []const u8) {
+        @compileError("parameter model alias entry fields must be []const u8");
+    }
 }
 
 fn isParameterLocation(location: params.Location) bool {

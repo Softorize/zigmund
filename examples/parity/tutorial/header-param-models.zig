@@ -3,12 +3,19 @@ const zigmund = @import("zigmund");
 
 const source_page = "tutorial/header-param-models/";
 
-fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
+const HeaderContext = struct {
+    trace_id: []const u8,
+    request_source: ?[]const u8 = null,
+};
+
+fn implemented(
+    headers: zigmund.Header(HeaderContext, .{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
         .parity = "implemented",
         .page = source_page,
-        .status = "ok",
+        .headers = headers.value.?,
     });
 }
 

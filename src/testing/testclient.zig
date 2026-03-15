@@ -193,7 +193,7 @@ pub const TestClient = struct {
         defer effective.deinit(self.allocator);
 
         var req = try Request.initSyntheticWithHeaders(self.allocator, .GET, target, "", effective.headers);
-        self.app.prepareRequestContext(&req);
+        try self.app.prepareRequestContext(&req);
         req.path = self.app.effectiveRoutePath(req.path);
         var req_moved_to_state = false;
         defer if (!req_moved_to_state) req.deinit();

@@ -3,12 +3,20 @@ const zigmund = @import("zigmund");
 
 const source_page = "tutorial/query-param-models/";
 
-fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
+const QueryFilters = struct {
+    q: ?[]const u8 = null,
+    limit: u32 = 10,
+    tags: []const []const u8 = &.{},
+};
+
+fn implemented(
+    filters: zigmund.Query(QueryFilters, .{}),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
         .parity = "implemented",
         .page = source_page,
-        .status = "ok",
+        .filters = filters.value.?,
     });
 }
 

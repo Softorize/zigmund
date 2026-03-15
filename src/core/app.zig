@@ -34,6 +34,7 @@ pub const App = struct {
     mounted_apps: std.ArrayListUnmanaged(MountEntry) = .empty,
     middleware: std.ArrayListUnmanaged(MiddlewareEntry) = .empty,
     exception_handlers: std.ArrayListUnmanaged(ExceptionHandlerRegistration) = .empty,
+    request_customizer: ?RequestCustomizerFn = null,
     telemetry_sink: ?TelemetryFn = null,
     trace_sink: ?TraceFn = null,
     access_log_sink: ?AccessLogFn = null,
@@ -53,6 +54,7 @@ pub const App = struct {
     const ResponseMiddlewareFn = *const fn (*Request, *Response, std.mem.Allocator) anyerror!void;
     const RequestMiddlewareWithContextFn = *const fn (*Request, std.mem.Allocator, ?*anyopaque) anyerror!void;
     const ResponseMiddlewareWithContextFn = *const fn (*Request, *Response, std.mem.Allocator, ?*anyopaque) anyerror!void;
+    const RequestCustomizerFn = *const fn (*Request, std.mem.Allocator) anyerror!void;
     const MiddlewareDeinitFn = *const fn (?*anyopaque, std.mem.Allocator) void;
     const ExceptionHandlerFn = *const fn (*Request, anyerror, std.mem.Allocator) anyerror!Response;
     const TelemetryFn = *const fn (TelemetryEvent, std.mem.Allocator) anyerror!void;
@@ -379,6 +381,14 @@ pub const App = struct {
         self.trace_context_header = owned;
     }
 
+    pub fn setRequestCustomizer(self: *App, customizer: anytype) void {
+        self.request_customizer = normalizeRequestCustomizer(customizer);
+    }
+
+    pub fn setDefaultRouteWrapper(self: *App, wrapper: anytype) void {
+        self.router.setDefaultRouteWrapper(wrapper);
+    }
+
     pub fn includeRouter(
         self: *App,
         prefix: []const u8,
@@ -399,7 +409,7 @@ pub const App = struct {
             if (merged_opts.default_response_class == null) {
                 merged_opts.default_response_class = opts.default_response_class;
             }
-            try self.router.addHttpRouteStored(route.method, combined, route.handler, merged_opts);
+            try self.router.addHttpRouteStored(route.method, combined, route.handler, route.wrapper, merged_opts);
         }
 
         for (router.websocketRoutes()) |route| {
@@ -700,7 +710,12 @@ pub const App = struct {
         defer req.runBackgroundTasks() catch |err| {
             std.log.warn("background task failed: {s}", .{@errorName(err)});
         };
-        self.prepareRequestContext(&req);
+        self.prepareRequestContext(&req) catch |err| {
+            var prep_response = auth_response.middlewareErrorToResponse(self.allocator, err);
+            defer prep_response.deinit(self.allocator);
+            try dispatch_helpers.sendResponse(raw_request, self.allocator, &prep_response);
+            return;
+        };
         self.seedProxyContext(&req);
 
         if (raw_request.upgradeRequested() == .websocket) {
@@ -884,7 +899,9 @@ pub const App = struct {
     }
 
     fn dispatchWithPipeline(self: *App, req: *Request) !Response {
-        self.prepareRequestContext(req);
+        self.prepareRequestContext(req) catch |err| {
+            return auth_response.middlewareErrorToResponse(self.allocator, err);
+        };
         if (self.cfg.request_id_enabled) {
             try self.ensureRequestId(req);
         }
@@ -917,7 +934,9 @@ pub const App = struct {
     }
 
     fn dispatchNestedWithinParent(self: *App, req: *Request, public_prefix: ?[]const u8) !Response {
-        self.prepareRequestContext(req);
+        self.prepareRequestContext(req) catch |err| {
+            return auth_response.middlewareErrorToResponse(self.allocator, err);
+        };
 
         self.runRequestMiddleware(req) catch |err| {
             return auth_response.middlewareErrorToResponse(self.allocator, err);
@@ -1023,7 +1042,7 @@ pub const App = struct {
                 return auth_response.dependencyErrorToResponse(self.allocator, err);
             };
 
-            var route_response = route.handler(req, self.allocator) catch |err| {
+            var route_response = self.executeHttpRoute(route, req) catch |err| {
                 if (err == error.ValidationFailed and req.hasValidationIssues()) {
                     return dispatch_helpers.validationIssuesToResponse(self.allocator, req.validationIssues());
                 }
@@ -1359,9 +1378,12 @@ pub const App = struct {
         }
     }
 
-    pub fn prepareRequestContext(self: *App, req: *Request) void {
+    pub fn prepareRequestContext(self: *App, req: *Request) !void {
         req.attachAppState(&self.state);
         req.attachDependencyOverrideLookup(@ptrCast(&self.dependency_overrides), dependencyOverrideLookup);
+        if (self.request_customizer) |customizer| {
+            try customizer(req, self.allocator);
+        }
     }
 
     pub fn effectiveRoutePath(self: *const App, path: []const u8) []const u8 {
@@ -1370,6 +1392,13 @@ pub const App = struct {
         if (path.len == root_path.len) return "/";
         if (path[root_path.len] != '/') return path;
         return path[root_path.len..];
+    }
+
+    fn executeHttpRoute(self: *App, route: *const router_mod.HttpRoute, req: *Request) anyerror!Response {
+        if (route.wrapper) |wrapper| {
+            return wrapper(req, route.handler, self.allocator);
+        }
+        return route.handler(req, self.allocator);
     }
 
     fn runRequestMiddleware(self: *App, req: *Request) !void {
@@ -1394,6 +1423,33 @@ pub const App = struct {
                 try hook(req, response, self.allocator);
             }
         }
+    }
+
+    fn normalizeRequestCustomizer(customizer: anytype) RequestCustomizerFn {
+        const T = @TypeOf(customizer);
+        if (T == RequestCustomizerFn) return customizer;
+        if (@typeInfo(T) == .@"fn") {
+            if (comptime isRequestCustomizerType(T)) {
+                const ptr: RequestCustomizerFn = &customizer;
+                return ptr;
+            }
+        }
+        @compileError("Request customizer must be fn(*Request, std.mem.Allocator) !void");
+    }
+
+    fn isRequestCustomizerType(comptime T: type) bool {
+        if (@typeInfo(T) != .@"fn") return false;
+        const info = @typeInfo(T).@"fn";
+        if (info.params.len != 2) return false;
+        if (info.params[0].type != *Request) return false;
+        if (info.params[1].type != std.mem.Allocator) return false;
+        if (info.return_type == null) return false;
+
+        const ret = info.return_type.?;
+        if (@typeInfo(ret) == .error_union) {
+            return @typeInfo(ret).error_union.payload == void;
+        }
+        return ret == void;
     }
 
     fn ensureRequestId(self: *App, req: *Request) !void {

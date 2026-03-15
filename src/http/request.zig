@@ -36,6 +36,8 @@ pub const Request = struct {
     };
 
     pub const DependencyCleanupFn = *const fn (*Request, []const u8, []const u8, std.mem.Allocator) anyerror!void;
+    const DependencyCleanupRunFn = *const fn (*Request, []const u8, ?*anyopaque, std.mem.Allocator) anyerror!void;
+    const DependencyCleanupPayloadDeinitFn = *const fn (?*anyopaque, std.mem.Allocator) void;
 
     const SyntheticHeader = struct {
         name: []u8,
@@ -55,10 +57,16 @@ pub const Request = struct {
         cookie,
     };
 
+    const RawDependencyCleanupPayload = struct {
+        value: []u8,
+        cleanup: DependencyCleanupFn,
+    };
+
     const DependencyCleanup = struct {
         key: []u8,
-        value: []u8,
-        run: DependencyCleanupFn,
+        payload: ?*anyopaque,
+        run: DependencyCleanupRunFn,
+        payload_deinit: DependencyCleanupPayloadDeinitFn,
     };
 
     pub const DependencyOverride = struct {
@@ -197,7 +205,7 @@ pub const Request = struct {
 
         for (self.dependency_cleanups.items) |cleanup| {
             self.allocator.free(cleanup.key);
-            self.allocator.free(cleanup.value);
+            cleanup.payload_deinit(cleanup.payload, self.allocator);
         }
         self.dependency_cleanups.deinit(self.allocator);
 
@@ -590,16 +598,39 @@ pub const Request = struct {
         value: []const u8,
         cleanup: DependencyCleanupFn,
     ) !void {
-        const owned_key = try self.allocator.dupe(u8, key);
-        errdefer self.allocator.free(owned_key);
-        const owned_value = try self.allocator.dupe(u8, value);
-        errdefer self.allocator.free(owned_value);
+        const payload = try self.allocator.create(RawDependencyCleanupPayload);
+        errdefer self.allocator.destroy(payload);
 
-        try self.dependency_cleanups.append(self.allocator, .{
-            .key = owned_key,
-            .value = owned_value,
-            .run = cleanup,
-        });
+        payload.value = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(payload.value);
+        payload.cleanup = cleanup;
+
+        try self.registerCleanupEntry(key, payload, runRawDependencyCleanup, deinitRawDependencyCleanupPayload);
+    }
+
+    pub fn registerAutoDependencyCleanup(self: *Request, comptime T: type, key: []const u8, value: T) !void {
+        if (!comptime supportsAutoDependencyCleanup(T)) {
+            @compileError("automatic dependency cleanup requires a zigmund_cleanup, deinit, or close method");
+        }
+
+        const Cleanup = struct {
+            fn run(req: *Request, cleanup_key: []const u8, payload: ?*anyopaque, allocator: std.mem.Allocator) anyerror!void {
+                _ = cleanup_key;
+                const typed: *T = @ptrCast(@alignCast(payload orelse return));
+                return callAutoDependencyCleanup(T, typed, req, allocator);
+            }
+
+            fn deinitPayload(payload: ?*anyopaque, allocator: std.mem.Allocator) void {
+                const typed: *T = @ptrCast(@alignCast(payload orelse return));
+                allocator.destroy(typed);
+            }
+        };
+
+        const payload = try self.allocator.create(T);
+        errdefer self.allocator.destroy(payload);
+        payload.* = value;
+
+        try self.registerCleanupEntry(key, payload, Cleanup.run, Cleanup.deinitPayload);
     }
 
     pub fn runDependencyCleanups(self: *Request, allocator: std.mem.Allocator) !void {
@@ -611,12 +642,183 @@ pub const Request = struct {
         while (idx > 0) {
             idx -= 1;
             const cleanup = self.dependency_cleanups.items[idx];
-            cleanup.run(self, cleanup.key, cleanup.value, allocator) catch |err| {
+            cleanup.run(self, cleanup.key, cleanup.payload, allocator) catch |err| {
                 std.log.debug("dependency cleanup failed for '{s}': {s}", .{ cleanup.key, @errorName(err) });
                 if (first_err == null) first_err = err;
             };
         }
         if (first_err) |err| return err;
+    }
+
+    fn registerCleanupEntry(
+        self: *Request,
+        key: []const u8,
+        payload: ?*anyopaque,
+        run: DependencyCleanupRunFn,
+        payload_deinit: DependencyCleanupPayloadDeinitFn,
+    ) !void {
+        const owned_key = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(owned_key);
+
+        try self.dependency_cleanups.append(self.allocator, .{
+            .key = owned_key,
+            .payload = payload,
+            .run = run,
+            .payload_deinit = payload_deinit,
+        });
+    }
+
+    fn runRawDependencyCleanup(
+        req: *Request,
+        key: []const u8,
+        payload: ?*anyopaque,
+        allocator: std.mem.Allocator,
+    ) anyerror!void {
+        const typed: *RawDependencyCleanupPayload = @ptrCast(@alignCast(payload orelse return));
+        return typed.cleanup(req, key, typed.value, allocator);
+    }
+
+    fn deinitRawDependencyCleanupPayload(payload: ?*anyopaque, allocator: std.mem.Allocator) void {
+        const typed: *RawDependencyCleanupPayload = @ptrCast(@alignCast(payload orelse return));
+        allocator.free(typed.value);
+        allocator.destroy(typed);
+    }
+
+    const AutoCleanupCallKind = enum {
+        value_only,
+        value_with_allocator,
+        value_with_request_allocator,
+        pointer_only,
+        pointer_with_allocator,
+        pointer_with_request_allocator,
+    };
+
+    const AutoCleanupSpec = struct {
+        decl_name: []const u8,
+        call_kind: AutoCleanupCallKind,
+    };
+
+    pub fn supportsAutoDependencyCleanup(comptime T: type) bool {
+        return autoCleanupSpecFor(T, T) != null or
+            (autoCleanupPointeeType(T) != null and autoCleanupSpecFor(T, autoCleanupPointeeType(T).?) != null);
+    }
+
+    fn callAutoDependencyCleanup(
+        comptime T: type,
+        value: *T,
+        req: *Request,
+        allocator: std.mem.Allocator,
+    ) anyerror!void {
+        if (comptime autoCleanupSpecFor(T, T)) |spec| {
+            return invokeAutoCleanup(T, T, value, req, allocator, spec);
+        }
+        if (comptime autoCleanupPointeeType(T)) |Owner| {
+            if (comptime autoCleanupSpecFor(T, Owner)) |spec| {
+                return invokeAutoCleanup(T, Owner, value, req, allocator, spec);
+            }
+        }
+        unreachable;
+    }
+
+    fn invokeAutoCleanup(
+        comptime T: type,
+        comptime Owner: type,
+        value: *T,
+        req: *Request,
+        allocator: std.mem.Allocator,
+        comptime spec: AutoCleanupSpec,
+    ) anyerror!void {
+        const cleanup = @field(Owner, spec.decl_name);
+        switch (spec.call_kind) {
+            .value_only => try finishAutoCleanupCall(@call(.auto, cleanup, .{value.*})),
+            .value_with_allocator => try finishAutoCleanupCall(@call(.auto, cleanup, .{ value.*, allocator })),
+            .value_with_request_allocator => try finishAutoCleanupCall(@call(.auto, cleanup, .{ value.*, req, allocator })),
+            .pointer_only => try finishAutoCleanupCall(@call(.auto, cleanup, .{value})),
+            .pointer_with_allocator => try finishAutoCleanupCall(@call(.auto, cleanup, .{ value, allocator })),
+            .pointer_with_request_allocator => try finishAutoCleanupCall(@call(.auto, cleanup, .{ value, req, allocator })),
+        }
+    }
+
+    fn finishAutoCleanupCall(result: anytype) anyerror!void {
+        const ResultType = @TypeOf(result);
+        if (@typeInfo(ResultType) == .error_union) {
+            try result;
+            return;
+        }
+    }
+
+    fn autoCleanupSpecFor(comptime T: type, comptime Owner: type) ?AutoCleanupSpec {
+        if (!isAutoCleanupOwnerType(Owner)) return null;
+
+        inline for ([_][]const u8{ "zigmund_cleanup", "deinit", "close" }) |decl_name| {
+            if (!@hasDecl(Owner, decl_name)) continue;
+            const FnType = @TypeOf(@field(Owner, decl_name));
+            if (autoCleanupCallKind(FnType, T)) |call_kind| {
+                return .{
+                    .decl_name = decl_name,
+                    .call_kind = call_kind,
+                };
+            }
+        }
+        return null;
+    }
+
+    fn autoCleanupCallKind(comptime FnType: type, comptime T: type) ?AutoCleanupCallKind {
+        if (@typeInfo(FnType) != .@"fn") return null;
+        const info = @typeInfo(FnType).@"fn";
+        const ReturnType = info.return_type orelse return null;
+        if (!isVoidLikeType(ReturnType)) return null;
+
+        if (info.params.len == 1 and info.params[0].type == T) return .value_only;
+        if (info.params.len == 2 and info.params[0].type == T and info.params[1].type == std.mem.Allocator) {
+            return .value_with_allocator;
+        }
+        if (info.params.len == 3 and
+            info.params[0].type == T and
+            info.params[1].type == *Request and
+            info.params[2].type == std.mem.Allocator)
+        {
+            return .value_with_request_allocator;
+        }
+
+        if (isPointerType(T)) return null;
+
+        if (info.params.len == 1 and info.params[0].type == *T) return .pointer_only;
+        if (info.params.len == 2 and info.params[0].type == *T and info.params[1].type == std.mem.Allocator) {
+            return .pointer_with_allocator;
+        }
+        if (info.params.len == 3 and
+            info.params[0].type == *T and
+            info.params[1].type == *Request and
+            info.params[2].type == std.mem.Allocator)
+        {
+            return .pointer_with_request_allocator;
+        }
+        return null;
+    }
+
+    fn autoCleanupPointeeType(comptime T: type) ?type {
+        if (@typeInfo(T) != .pointer) return null;
+        const child = @typeInfo(T).pointer.child;
+        if (!isAutoCleanupOwnerType(child)) return null;
+        return child;
+    }
+
+    fn isAutoCleanupOwnerType(comptime T: type) bool {
+        return switch (@typeInfo(T)) {
+            .@"struct", .@"union", .@"enum", .@"opaque" => true,
+            else => false,
+        };
+    }
+
+    fn isVoidLikeType(comptime T: type) bool {
+        if (T == void) return true;
+        if (@typeInfo(T) != .error_union) return false;
+        return @typeInfo(T).error_union.payload == void;
+    }
+
+    fn isPointerType(comptime T: type) bool {
+        return @typeInfo(T) == .pointer;
     }
 
     pub fn setRequestId(self: *Request, request_id: []const u8) !void {
@@ -968,7 +1170,7 @@ pub const Request = struct {
 
         var out: Base = undefined;
         inline for (@typeInfo(Base).@"struct".fields) |field| {
-            const key = parameterModelFieldName(source, field.name, convert_underscores);
+            const key = parameterModelFieldName(Base, source, field.name, convert_underscores);
 
             if (comptime source == .query and isRepeatedQueryFieldType(field.type)) {
                 const raw_values = try self.queryParamsAllLeaky(key);
@@ -1049,10 +1251,12 @@ pub const Request = struct {
     }
 
     fn parameterModelFieldName(
+        comptime Model: type,
         comptime source: ParamModelSource,
         comptime field_name: []const u8,
         comptime convert_underscores: bool,
     ) []const u8 {
+        if (parameterModelFieldAlias(Model, source, field_name)) |alias| return alias;
         if (source != .header or !convert_underscores) return field_name;
 
         const Holder = struct {
@@ -1067,6 +1271,63 @@ pub const Request = struct {
             const value = build();
         };
         return Holder.value[0..];
+    }
+
+    fn parameterModelFieldAlias(
+        comptime Model: type,
+        comptime source: ParamModelSource,
+        comptime field_name: []const u8,
+    ) ?[]const u8 {
+        const decl_name = switch (source) {
+            .query => "zigmund_query_aliases",
+            .header => "zigmund_header_aliases",
+            .cookie => "zigmund_cookie_aliases",
+        };
+        if (!@hasDecl(Model, decl_name)) return null;
+
+        const raw = @field(Model, decl_name);
+        const RawType = @TypeOf(raw);
+        switch (@typeInfo(RawType)) {
+            .pointer => |ptr| {
+                if (ptr.size == .slice) {
+                    inline for (raw) |entry| {
+                        validateParameterModelAliasEntry(@TypeOf(entry));
+                        if (std.mem.eql(u8, entry.field, field_name)) return entry.alias;
+                    }
+                } else if (@typeInfo(ptr.child) == .array) {
+                    inline for (raw.*) |entry| {
+                        validateParameterModelAliasEntry(@TypeOf(entry));
+                        if (std.mem.eql(u8, entry.field, field_name)) return entry.alias;
+                    }
+                } else if (ptr.size == .one and @typeInfo(ptr.child) == .@"struct") {
+                    const entry = raw.*;
+                    validateParameterModelAliasEntry(@TypeOf(entry));
+                    if (std.mem.eql(u8, entry.field, field_name)) return entry.alias;
+                } else {
+                    @compileError("parameter model aliases must be slices, arrays, or pointers to alias entries");
+                }
+            },
+            .array => {
+                inline for (raw[0..]) |entry| {
+                    validateParameterModelAliasEntry(@TypeOf(entry));
+                    if (std.mem.eql(u8, entry.field, field_name)) return entry.alias;
+                }
+            },
+            else => @compileError("parameter model aliases must be a slice or array"),
+        }
+        return null;
+    }
+
+    fn validateParameterModelAliasEntry(comptime EntryType: type) void {
+        if (@typeInfo(EntryType) != .@"struct") {
+            @compileError("parameter model alias entries must be structs with `field` and `alias`");
+        }
+        if (!@hasField(EntryType, "field") or !@hasField(EntryType, "alias")) {
+            @compileError("parameter model alias entries must define `field` and `alias`");
+        }
+        if (@FieldType(EntryType, "field") != []const u8 or @FieldType(EntryType, "alias") != []const u8) {
+            @compileError("parameter model alias entry fields must be []const u8");
+        }
     }
 
     fn isRepeatedQueryFieldType(comptime T: type) bool {
