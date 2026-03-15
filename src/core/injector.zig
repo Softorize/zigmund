@@ -1423,6 +1423,7 @@ fn parameterSpecForMarker(comptime Marker: type) types.InjectedParameter {
         .pattern = Marker.options.pattern,
         .enum_values = Marker.options.enum_values,
         .strict = Marker.options.strict,
+        .openapi_examples = Marker.options.openapi_examples,
     };
 }
 
@@ -1452,6 +1453,7 @@ fn parameterSpecForModelField(
         .schema_type = schema.schema_type,
         .schema_format = schema.schema_format,
         .is_array = schema.is_array,
+        .default_json = compileTimeDefaultJson(field.type, field.default_value_ptr),
     };
 }
 
@@ -1979,4 +1981,38 @@ fn adaptVoidReturn(comptime HandlerType: type, result: anytype) anyerror!void {
         @compileError("WebSocket handler return type must be void or !void");
     }
     return result;
+}
+
+/// Produce a comptime JSON literal for the default value of a struct field,
+/// or null if no default is present or the type is not representable.
+fn compileTimeDefaultJson(
+    comptime FieldType: type,
+    comptime default_value_ptr: ?*const anyopaque,
+) ?[]const u8 {
+    if (default_value_ptr == null) return null;
+    const ptr: *const FieldType = @ptrCast(@alignCast(default_value_ptr.?));
+    return compileTimeValueJson(FieldType, ptr.*);
+}
+
+fn compileTimeValueJson(comptime T: type, comptime value: T) ?[]const u8 {
+    if (@typeInfo(T) == .optional) {
+        if (value == null) return "null";
+        const Child = @typeInfo(T).optional.child;
+        return compileTimeValueJson(Child, value.?);
+    }
+
+    return switch (@typeInfo(T)) {
+        .bool => if (value) "true" else "false",
+        .int => std.fmt.comptimePrint("{d}", .{value}),
+        .comptime_int => std.fmt.comptimePrint("{d}", .{value}),
+        .float, .comptime_float => std.fmt.comptimePrint("{d}", .{value}),
+        .pointer => |ptr_info| blk: {
+            if (ptr_info.size == .slice and ptr_info.child == u8) {
+                break :blk std.fmt.comptimePrint("\"{s}\"", .{value});
+            }
+            break :blk null;
+        },
+        .@"enum" => std.fmt.comptimePrint("\"{s}\"", .{@tagName(value)}),
+        else => null,
+    };
 }

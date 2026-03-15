@@ -952,6 +952,14 @@ fn sameInjectedParameter(lhs: types.InjectedParameter, rhs: types.InjectedParame
     if (!optionalStringEql(lhs.pattern, rhs.pattern)) return false;
     if (!stringSliceArrayEql(lhs.enum_values, rhs.enum_values)) return false;
     if (lhs.strict != rhs.strict) return false;
+    if (!optionalStringEql(lhs.default_json, rhs.default_json)) return false;
+    if (lhs.openapi_examples.len != rhs.openapi_examples.len) return false;
+    for (lhs.openapi_examples, rhs.openapi_examples) |lhs_ex, rhs_ex| {
+        if (!std.mem.eql(u8, lhs_ex.name, rhs_ex.name)) return false;
+        if (!std.mem.eql(u8, lhs_ex.value_json, rhs_ex.value_json)) return false;
+        if (!optionalStringEql(lhs_ex.summary, rhs_ex.summary)) return false;
+        if (!optionalStringEql(lhs_ex.description, rhs_ex.description)) return false;
+    }
     return true;
 }
 
@@ -1424,6 +1432,11 @@ fn writeInjectedParameter(writer: anytype, parameter: types.InjectedParameter) !
             try writeJsonString(writer, fmt);
         }
     }
+    if (parameter.default_json) |default_value| {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "default");
+        try writer.writeAll(default_value);
+    }
     try writeSchemaConstraints(
         writer,
         parameter.gt,
@@ -1437,6 +1450,11 @@ fn writeInjectedParameter(writer: anytype, parameter: types.InjectedParameter) !
         parameter.strict,
     );
     try writer.writeAll("}");
+    if (parameter.openapi_examples.len > 0) {
+        try writer.writeAll(",");
+        try writeFieldName(writer, "examples");
+        try writeOpenApiExamples(writer, parameter.openapi_examples);
+    }
     try writer.writeAll("}");
 }
 

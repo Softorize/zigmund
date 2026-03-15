@@ -124,6 +124,7 @@ corsMw
 csrfMw
 decodeBasicCredentials
 deps
+docs_ui
 http
 httpsRedirectMw
 integrations

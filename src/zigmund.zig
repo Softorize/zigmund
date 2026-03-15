@@ -7,6 +7,7 @@ pub const params = @import("params/mod.zig");
 pub const deps = @import("deps/mod.zig");
 pub const schema = @import("schema/mod.zig");
 pub const openapi = @import("openapi/mod.zig");
+pub const docs_ui = @import("openapi/docs_ui.zig");
 pub const security = @import("security/mod.zig");
 pub const integrations = @import("integrations/mod.zig");
 pub const testing = @import("testing/mod.zig");

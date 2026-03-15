@@ -118,6 +118,7 @@ pub fn build(b: *std.Build) void {
         "tests/conformance/json_lines_test.zig",
         "tests/conformance/computed_fields_test.zig",
         "tests/conformance/discriminated_union_test.zig",
+        "tests/conformance/openapi_defaults_test.zig",
         "tests/parity/matrix_test.zig",
         "tests/perf/smoke_test.zig",
         "tests/perf/microbench_test.zig",

@@ -161,11 +161,11 @@ test "openapi expands query header and cookie parameter models into flat paramet
     try app.get("/models", modelParamHandler, .{});
 
     const doc = try app.openapi();
-    try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_page\":{\"name\":\"page\",\"in\":\"query\",\"required\":false,\"schema\":{\"type\":\"integer\",\"format\":\"int32\"}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_search\":{\"name\":\"search\",\"in\":\"query\",\"required\":false,\"schema\":{\"type\":\"string\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_page\":{\"name\":\"page\",\"in\":\"query\",\"required\":false,\"schema\":{\"type\":\"integer\",\"format\":\"int32\",\"default\":1}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_search\":{\"name\":\"search\",\"in\":\"query\",\"required\":false,\"schema\":{\"type\":\"string\",\"default\":null}") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_tags\":{\"name\":\"tags\",\"in\":\"query\",\"required\":true,\"schema\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"header_x_token\":{\"name\":\"x-token\",\"in\":\"header\",\"required\":true,\"schema\":{\"type\":\"string\"}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, doc, "\"header_save_data\":{\"name\":\"save-data\",\"in\":\"header\",\"required\":false,\"schema\":{\"type\":\"string\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"header_save_data\":{\"name\":\"save-data\",\"in\":\"header\",\"required\":false,\"schema\":{\"type\":\"string\",\"default\":null}") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"cookie_session_id\":{\"name\":\"session_id\",\"in\":\"cookie\",\"required\":true,\"schema\":{\"type\":\"string\"}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, doc, "\"cookie_theme\":{\"name\":\"theme\",\"in\":\"cookie\",\"required\":false,\"schema\":{\"type\":\"string\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"cookie_theme\":{\"name\":\"theme\",\"in\":\"cookie\",\"required\":false,\"schema\":{\"type\":\"string\",\"default\":null}") != null);
 }

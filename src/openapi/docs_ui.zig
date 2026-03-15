@@ -50,6 +50,18 @@ pub fn renderSwagger(
         .dark => swagger_dark_theme_css,
     };
 
+    var oauth2_redirect_line: ?[]u8 = null;
+    defer if (oauth2_redirect_line) |line| allocator.free(line);
+    if (cfg.oauth2_redirect_url) |redirect_url| {
+        const url_json = try jsonString(allocator, redirect_url);
+        defer allocator.free(url_json);
+        oauth2_redirect_line = try std.fmt.allocPrint(
+            allocator,
+            "oauth2RedirectUrl: {s},\n        ",
+            .{url_json},
+        );
+    }
+
     return applyReplacements(allocator, swagger_template, &.{
         .{ .needle = "__DOC_TITLE__", .value = doc_title },
         .{ .needle = "__OPENAPI_URL_JSON__", .value = openapi_url_json },
@@ -57,6 +69,7 @@ pub fn renderSwagger(
         .{ .needle = "__PERSIST_AUTHORIZATION__", .value = boolLiteral(cfg.persist_authorization) },
         .{ .needle = "__DISPLAY_OPERATION_ID__", .value = boolLiteral(cfg.display_operation_id) },
         .{ .needle = "__DOC_EXPANSION_JSON__", .value = doc_expansion_json },
+        .{ .needle = "__OAUTH2_REDIRECT_URL__", .value = if (oauth2_redirect_line) |line| line else "" },
         .{ .needle = "__SWAGGER_CSS__", .value = swagger_css },
         .{ .needle = "__SWAGGER_BUNDLE_JS__", .value = swagger_bundle_js },
         .{ .needle = "__SWAGGER_STANDALONE_JS__", .value = swagger_standalone_js },

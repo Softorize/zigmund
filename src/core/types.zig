@@ -18,6 +18,7 @@ pub const SwaggerUiConfig = struct {
     display_operation_id: bool = false,
     doc_expansion: SwaggerDocExpansion = .list,
     theme: DocsTheme = .light,
+    oauth2_redirect_url: ?[]const u8 = null,
 };
 
 pub const RedocUiConfig = struct {
@@ -172,6 +173,8 @@ pub const InjectedParameter = struct {
     pattern: ?[]const u8 = null,
     enum_values: []const []const u8 = &.{},
     strict: bool = false,
+    openapi_examples: []const OpenApiExample = &.{},
+    default_json: ?[]const u8 = null,
 };
 
 pub const OpenApiSchemaField = struct {
