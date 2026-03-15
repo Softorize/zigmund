@@ -64,6 +64,7 @@ OpenApiWebhook
 OpenIdConnect
 Path
 PathOptions
+ProblemDetail
 Query
 QueryOptions
 RateLimitOptions
@@ -121,6 +122,14 @@ openapi
 params
 parseAuthorizationHeader
 parseScopesRawAlloc
+problemBadRequest
+problemConflict
+problemForbidden
+problemInternalServerError
+problemNotFound
+problemResponse
+problemUnauthorized
+problemUnprocessableEntity
 rateLimitMw
 renderJinjaString
 runtime
