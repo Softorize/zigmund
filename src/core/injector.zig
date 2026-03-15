@@ -146,6 +146,33 @@ pub fn deriveOpenApiRequestBodies(comptime handler: anytype) []const types.Injec
     return &Derived.specs;
 }
 
+/// Returns the @typeName of the first Body parameter's inner type, or null if
+/// the handler has no Body parameter.  Used by the OpenAPI generator to detect
+/// when the same struct type appears in both request-body and response-model
+/// positions so that it can emit distinct Input/Output schemas.
+pub fn deriveRequestBodyTypeName(comptime handler: anytype) ?[]const u8 {
+    const HandlerType = @TypeOf(handler);
+    if (@typeInfo(HandlerType) != .@"fn") return null;
+    return comptime findBodyTypeName(HandlerType);
+}
+
+fn findBodyTypeName(comptime HandlerType: type) ?[]const u8 {
+    const fn_info = @typeInfo(HandlerType).@"fn";
+    inline for (fn_info.params) |param| {
+        if (param.type) |ParamType| {
+            if (isContainerType(ParamType) and
+                @hasDecl(ParamType, "Location") and
+                @hasDecl(ParamType, "ValueType") and
+                @hasDecl(ParamType, "options") and
+                @hasField(ParamType, "value"))
+            {
+                if (ParamType.Location == .body) return @typeName(ParamType.ValueType);
+            }
+        }
+    }
+    return null;
+}
+
 // NOTE (audit #21): `invokeInjected` and `invokeWebSocketInjected` below are
 // intentionally kept as separate functions despite their structural similarity.
 // Key differences:

@@ -106,9 +106,20 @@ pub fn generate(
     }
     for (websocket_routes) |route| try appendUniquePath(allocator, &unique_paths, route.path);
 
+    var dual_use_type_names = try collectDualUseTypeNames(allocator, http_routes);
+    defer {
+        for (dual_use_type_names.items) |name| allocator.free(name);
+        dual_use_type_names.deinit(allocator);
+    }
+
     var response_components: std.ArrayList(ComponentSchema) = .empty;
     defer response_components.deinit(allocator);
-    try collectResponseComponents(allocator, &response_components, http_routes);
+    var owned_response_component_names: std.ArrayList([]u8) = .empty;
+    defer {
+        for (owned_response_component_names.items) |name| allocator.free(name);
+        owned_response_component_names.deinit(allocator);
+    }
+    try collectResponseComponents(allocator, &response_components, &owned_response_component_names, http_routes, dual_use_type_names.items);
 
     var parameter_components: std.ArrayList(ParameterComponent) = .empty;
     defer parameter_components.deinit(allocator);
@@ -157,6 +168,7 @@ pub fn generate(
         &owned_response_entry_component_names,
         http_routes,
         response_components.items,
+        dual_use_type_names.items,
     );
 
     var operation_ids = OperationIdRegistry.init(allocator);
@@ -316,6 +328,7 @@ pub fn generate(
                         request_body_components.items,
                         response_entry_components.items,
                         &operation_ids,
+                        dual_use_type_names.items,
                     );
                 }
             }
@@ -335,6 +348,7 @@ pub fn generate(
                     request_body_components.items,
                     response_entry_components.items,
                     &operation_ids,
+                    dual_use_type_names.items,
                 );
             }
         }
@@ -402,6 +416,7 @@ fn writeHttpOperation(
     request_body_components: []const RequestBodyComponent,
     response_entry_components: []const ResponseEntryComponent,
     operation_ids: *OperationIdRegistry,
+    dual_use_type_names: []const []const u8,
 ) !void {
     try writeJsonString(writer, route.method.asString());
     try writer.writeAll(":{");
@@ -543,7 +558,7 @@ fn writeHttpOperation(
 
     try writer.writeAll(",");
     try writeFieldName(writer, "responses");
-    const response_component_name = responseComponentName(route.options, response_components);
+    const response_component_name = responseComponentName(route.options, response_components, dual_use_type_names);
     try writeResponsesObject(
         writer,
         allocator,
@@ -687,29 +702,142 @@ fn appendUniquePath(allocator: std.mem.Allocator, list: *std.ArrayList([]const u
 fn collectResponseComponents(
     allocator: std.mem.Allocator,
     list: *std.ArrayList(ComponentSchema),
+    owned_names: *std.ArrayList([]u8),
     routes: []const router_mod.HttpRoute,
+    dual_use_type_names: []const []const u8,
 ) !void {
     for (routes) |route| {
         if (!route.options.include_in_schema) continue;
         const model_name = route.options.response_model_name orelse continue;
         const model_schema = route.options.response_model_schema orelse continue;
 
-        if (responseComponentName(route.options, list.items) != null) continue;
-        try list.append(allocator, .{
-            .name = model_name,
-            .schema = model_schema,
-        });
+        if (responseComponentName(route.options, list.items, dual_use_type_names) != null) continue;
+
+        if (isDualUseTypeName(model_name, dual_use_type_names)) {
+            const output_name = try std.fmt.allocPrint(allocator, "{s}_Output", .{model_name});
+            errdefer allocator.free(output_name);
+            try owned_names.append(allocator, output_name);
+            try list.append(allocator, .{
+                .name = output_name,
+                .schema = model_schema,
+            });
+
+            const input_name = try std.fmt.allocPrint(allocator, "{s}_Input", .{model_name});
+            errdefer allocator.free(input_name);
+            try owned_names.append(allocator, input_name);
+            // Find the input schema from the route that has this body type.
+            // Since it is the same Zig type, the schema is structurally identical.
+            const input_schema = findInputSchemaForTypeName(model_name, routes) orelse model_schema;
+            try list.append(allocator, .{
+                .name = input_name,
+                .schema = input_schema,
+            });
+        } else {
+            try list.append(allocator, .{
+                .name = model_name,
+                .schema = model_schema,
+            });
+        }
     }
+}
+
+/// Collect type names that appear in both input_body_type_name and response_model_name
+/// positions across all routes.
+fn collectDualUseTypeNames(
+    allocator: std.mem.Allocator,
+    routes: []const router_mod.HttpRoute,
+) !std.ArrayList([]u8) {
+    var input_names: std.ArrayList([]const u8) = .empty;
+    defer input_names.deinit(allocator);
+    var output_names: std.ArrayList([]const u8) = .empty;
+    defer output_names.deinit(allocator);
+
+    for (routes) |route| {
+        if (!route.options.include_in_schema) continue;
+        if (route.options.input_body_type_name) |name| {
+            var found = false;
+            for (input_names.items) |existing| {
+                if (std.mem.eql(u8, existing, name)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) try input_names.append(allocator, name);
+        }
+        if (route.options.response_model_name) |name| {
+            var found = false;
+            for (output_names.items) |existing| {
+                if (std.mem.eql(u8, existing, name)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) try output_names.append(allocator, name);
+        }
+    }
+
+    var result: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (result.items) |name| allocator.free(name);
+        result.deinit(allocator);
+    }
+    for (input_names.items) |input_name| {
+        for (output_names.items) |output_name| {
+            if (std.mem.eql(u8, input_name, output_name)) {
+                const owned = try allocator.dupe(u8, input_name);
+                try result.append(allocator, owned);
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+fn isDualUseTypeName(name: []const u8, dual_use_type_names: []const []const u8) bool {
+    for (dual_use_type_names) |dual_name| {
+        if (std.mem.eql(u8, name, dual_name)) return true;
+    }
+    return false;
+}
+
+/// Find the input schema for a body type by looking at routes that use this
+/// type name as their input_body_type_name and have a response_model_schema
+/// derived from the same Zig type (which shares the same structural schema).
+fn findInputSchemaForTypeName(
+    type_name: []const u8,
+    routes: []const router_mod.HttpRoute,
+) ?types.OpenApiSchema {
+    for (routes) |route| {
+        if (!route.options.include_in_schema) continue;
+        const body_type_name = route.options.input_body_type_name orelse continue;
+        if (!std.mem.eql(u8, body_type_name, type_name)) continue;
+
+        // Since the same Zig type is used for both body and response_model,
+        // the response_model_schema is structurally identical to the input
+        // type's schema.  We use it directly.
+        if (route.options.response_model_schema) |schema| return schema;
+    }
+    return null;
 }
 
 // AUDIT #28: O(n) linear scan — acceptable for typical API sizes (<100 routes), consider HashMap for >500 routes.
 fn responseComponentName(
     route_options: types.StoredRouteOptions,
     components: []const ComponentSchema,
+    dual_use_type_names: []const []const u8,
 ) ?[]const u8 {
     const model_name = route_options.response_model_name orelse return null;
+    const is_dual = isDualUseTypeName(model_name, dual_use_type_names);
     for (components) |component| {
-        if (std.mem.eql(u8, component.name, model_name)) return component.name;
+        if (is_dual) {
+            // For dual-use types, the component was stored with _Output suffix
+            if (component.name.len > 7 and std.mem.endsWith(u8, component.name, "_Output")) {
+                const base = component.name[0 .. component.name.len - 7];
+                if (std.mem.eql(u8, base, model_name)) return component.name;
+            }
+        } else {
+            if (std.mem.eql(u8, component.name, model_name)) return component.name;
+        }
     }
     return null;
 }
@@ -979,10 +1107,11 @@ fn collectResponseEntryComponents(
     owned_names: *std.ArrayList([]u8),
     routes: []const router_mod.HttpRoute,
     response_schema_components: []const ComponentSchema,
+    dual_use_type_names: []const []const u8,
 ) !void {
     for (routes) |route| {
         if (!route.options.include_in_schema) continue;
-        const schema_component_name = responseComponentName(route.options, response_schema_components);
+        const schema_component_name = responseComponentName(route.options, response_schema_components, dual_use_type_names);
 
         var entries: std.ArrayList(GeneratedResponseEntry) = .empty;
         defer entries.deinit(allocator);
