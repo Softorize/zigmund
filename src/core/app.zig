@@ -16,6 +16,8 @@ const dispatch_helpers = @import("dispatch_helpers.zig");
 const state_store = @import("state_store.zig");
 
 pub const App = struct {
+    const Self = @This();
+
     allocator: std.mem.Allocator,
     include_router_options_arena: std.heap.ArenaAllocator,
     cfg: types.AppConfig,
@@ -29,6 +31,7 @@ pub const App = struct {
     security_schemes: std.ArrayListUnmanaged(security.NamedScheme) = .empty,
     startup_hooks: std.ArrayListUnmanaged(LifecycleHook) = .empty,
     shutdown_hooks: std.ArrayListUnmanaged(LifecycleHook) = .empty,
+    mounted_apps: std.ArrayListUnmanaged(MountEntry) = .empty,
     middleware: std.ArrayListUnmanaged(MiddlewareEntry) = .empty,
     exception_handlers: std.ArrayListUnmanaged(ExceptionHandlerRegistration) = .empty,
     telemetry_sink: ?TelemetryFn = null,
@@ -131,6 +134,11 @@ pub const App = struct {
         run: LifecycleFn,
     };
 
+    const MountEntry = struct {
+        prefix: []u8,
+        subapp: *Self,
+    };
+
     const MiddlewareEntry = struct {
         name: []const u8,
         context: ?*anyopaque = null,
@@ -170,6 +178,8 @@ pub const App = struct {
 
         self.startup_hooks.deinit(self.allocator);
         self.shutdown_hooks.deinit(self.allocator);
+        for (self.mounted_apps.items) |entry| self.allocator.free(entry.prefix);
+        self.mounted_apps.deinit(self.allocator);
 
         for (self.middleware.items) |entry| {
             if (entry.deinit_hook) |hook| hook(entry.context, self.allocator);
@@ -413,7 +423,14 @@ pub const App = struct {
     }
 
     pub fn mount(self: *App, prefix: []const u8, subapp: *const App) !void {
-        try self.includeRouter(prefix, &subapp.router, .{});
+        const normalized = try normalizeMountedPrefix(self.allocator, prefix);
+        errdefer self.allocator.free(normalized);
+
+        try self.mounted_apps.append(self.allocator, .{
+            .prefix = normalized,
+            .subapp = @constCast(subapp),
+        });
+        self.invalidateGeneratedCaches();
     }
 
     pub fn addMiddleware(self: *App, mw: anytype) !void {
@@ -499,12 +516,20 @@ pub const App = struct {
         };
     }
 
-    pub fn runStartupLifecycle(self: *App) !void {
+    pub fn runStartupLifecycle(self: *App) anyerror!void {
         self.emitAudit(.{
             .category = "lifecycle",
             .action = "startup_begin",
         });
         self.runHooks(self.startup_hooks.items) catch |err| {
+            self.emitAudit(.{
+                .category = "lifecycle",
+                .action = "startup_failed",
+                .detail = @errorName(err),
+            });
+            return err;
+        };
+        self.runMountedStartupHooks() catch |err| {
             self.emitAudit(.{
                 .category = "lifecycle",
                 .action = "startup_failed",
@@ -518,15 +543,24 @@ pub const App = struct {
         });
     }
 
-    pub fn runStartupHooksOnly(self: *App) !void {
+    pub fn runStartupHooksOnly(self: *App) anyerror!void {
         try self.runHooks(self.startup_hooks.items);
+        try self.runMountedStartupHooks();
     }
 
-    pub fn runShutdownLifecycle(self: *App) !void {
+    pub fn runShutdownLifecycle(self: *App) anyerror!void {
         self.emitAudit(.{
             .category = "lifecycle",
             .action = "shutdown_begin",
         });
+        self.runMountedShutdownHooksReverse() catch |err| {
+            self.emitAudit(.{
+                .category = "lifecycle",
+                .action = "shutdown_failed",
+                .detail = @errorName(err),
+            });
+            return err;
+        };
         self.runHooksReverse(self.shutdown_hooks.items) catch |err| {
             self.emitAudit(.{
                 .category = "lifecycle",
@@ -541,7 +575,8 @@ pub const App = struct {
         });
     }
 
-    pub fn runShutdownHooksOnly(self: *App) !void {
+    pub fn runShutdownHooksOnly(self: *App) anyerror!void {
+        try self.runMountedShutdownHooksReverse();
         try self.runHooksReverse(self.shutdown_hooks.items);
     }
 
@@ -862,7 +897,7 @@ pub const App = struct {
             return response;
         };
 
-        var response = self.dispatchCore(req) catch |err| {
+        var response = self.dispatchCoreWithPrefix(req, null) catch |err| {
             std.log.warn("dispatch failed: {s}", .{@errorName(err)});
             var fallback = Response.text("internal server error").withStatus(.internal_server_error);
             self.finalizeResponse(req, &fallback, start_ns);
@@ -881,7 +916,29 @@ pub const App = struct {
         return response;
     }
 
+    fn dispatchNestedWithinParent(self: *App, req: *Request, public_prefix: ?[]const u8) !Response {
+        self.prepareRequestContext(req);
+
+        self.runRequestMiddleware(req) catch |err| {
+            return auth_response.middlewareErrorToResponse(self.allocator, err);
+        };
+
+        var response = try self.dispatchCoreWithPrefix(req, public_prefix);
+        errdefer response.deinit(self.allocator);
+
+        self.runResponseMiddleware(req, &response) catch |err| {
+            response.deinit(self.allocator);
+            return auth_response.middlewareErrorToResponse(self.allocator, err);
+        };
+
+        return response;
+    }
+
     fn dispatchCore(self: *App, req: *Request) !Response {
+        return self.dispatchCoreWithPrefix(req, null);
+    }
+
+    fn dispatchCoreWithPrefix(self: *App, req: *Request, public_prefix: ?[]const u8) !Response {
         const original_path = req.path;
         req.path = self.effectiveRoutePath(req.path);
         defer req.path = original_path;
@@ -899,10 +956,11 @@ pub const App = struct {
 
         if (self.cfg.docs_url) |docs_url| {
             if (std.mem.eql(u8, req.path, docs_url)) {
-                const html = try self.docsHtml();
+                const html = try self.docsHtml(public_prefix);
                 return .{
                     .status = .ok,
                     .body = html,
+                    .owned_body = if (public_prefix != null) html else null,
                     .content_type = "text/html; charset=utf-8",
                 };
             }
@@ -910,10 +968,11 @@ pub const App = struct {
 
         if (self.cfg.redoc_url) |redoc_url| {
             if (std.mem.eql(u8, req.path, redoc_url)) {
-                const html = try self.redocHtml();
+                const html = try self.redocHtml(public_prefix);
                 return .{
                     .status = .ok,
                     .body = html,
+                    .owned_body = if (public_prefix != null) html else null,
                     .content_type = "text/html; charset=utf-8",
                 };
             }
@@ -1002,6 +1061,24 @@ pub const App = struct {
                 return Response.text("internal server error").withStatus(.internal_server_error);
             };
             return route_response;
+        }
+
+        for (self.mounted_apps.items) |entry| {
+            const sub_path = mountedSubPath(req.path, entry.prefix) orelse continue;
+            const mounted_prefix = try self.allocMountedPublicPrefix(entry.prefix, public_prefix);
+            defer self.allocator.free(mounted_prefix);
+
+            const mounted_original_path = req.path;
+            req.path = sub_path;
+            defer req.path = mounted_original_path;
+
+            return entry.subapp.dispatchNestedWithinParent(req, mounted_prefix);
+        }
+
+        if (self.cfg.redirect_slashes) {
+            if (try self.redirectSlashResponse(req, original_path, public_prefix)) |response| {
+                return response;
+            }
         }
 
         return Response.text("not found").withStatus(.not_found);
@@ -1254,17 +1331,31 @@ pub const App = struct {
         return @typeInfo(T).error_union.payload == Response;
     }
 
-    fn runHooks(self: *App, hooks: []const LifecycleHook) !void {
+    fn runHooks(self: *App, hooks: []const LifecycleHook) anyerror!void {
         _ = self;
         for (hooks) |hook| try hook.run();
     }
 
-    fn runHooksReverse(self: *App, hooks: []const LifecycleHook) !void {
+    fn runHooksReverse(self: *App, hooks: []const LifecycleHook) anyerror!void {
         _ = self;
         var idx = hooks.len;
         while (idx > 0) {
             idx -= 1;
             try hooks[idx].run();
+        }
+    }
+
+    fn runMountedStartupHooks(self: *App) anyerror!void {
+        for (self.mounted_apps.items) |entry| {
+            try entry.subapp.runStartupHooksOnly();
+        }
+    }
+
+    fn runMountedShutdownHooksReverse(self: *App) anyerror!void {
+        var idx = self.mounted_apps.items.len;
+        while (idx > 0) {
+            idx -= 1;
+            try self.mounted_apps.items[idx].subapp.runShutdownHooksOnly();
         }
     }
 
@@ -2071,40 +2162,54 @@ pub const App = struct {
         return @typeInfo(return_type).error_union.payload == Response;
     }
 
-    fn docsHtml(self: *App) ![]const u8 {
+    fn docsHtml(self: *App, public_prefix: ?[]const u8) ![]u8 {
+        if (public_prefix != null) {
+            return self.renderDocsHtml(public_prefix);
+        }
+
         self.cache_mutex.lock();
         defer self.cache_mutex.unlock();
 
         if (self.docs_cache) |html| return html;
+        const html = try self.renderDocsHtml(null);
+        self.docs_cache = html;
+        return html;
+    }
 
-        const openapi_url = try self.allocPublicPath(self.cfg.openapi_url orelse "/openapi.json");
+    fn redocHtml(self: *App, public_prefix: ?[]const u8) ![]u8 {
+        if (public_prefix != null) {
+            return self.renderRedocHtml(public_prefix);
+        }
+
+        self.cache_mutex.lock();
+        defer self.cache_mutex.unlock();
+
+        if (self.redoc_cache) |html| return html;
+        const html = try self.renderRedocHtml(null);
+        self.redoc_cache = html;
+        return html;
+    }
+
+    fn renderDocsHtml(self: *App, public_prefix: ?[]const u8) ![]u8 {
+        const openapi_url = try self.allocPublicPathWithPrefix(self.cfg.openapi_url orelse "/openapi.json", public_prefix);
         defer self.allocator.free(openapi_url);
-        const html = try docs_ui.renderSwagger(
+        return docs_ui.renderSwagger(
             self.allocator,
             self.cfg.title,
             openapi_url,
             self.cfg.docs,
         );
-        self.docs_cache = html;
-        return html;
     }
 
-    fn redocHtml(self: *App) ![]const u8 {
-        self.cache_mutex.lock();
-        defer self.cache_mutex.unlock();
-
-        if (self.redoc_cache) |html| return html;
-
-        const openapi_url = try self.allocPublicPath(self.cfg.openapi_url orelse "/openapi.json");
+    fn renderRedocHtml(self: *App, public_prefix: ?[]const u8) ![]u8 {
+        const openapi_url = try self.allocPublicPathWithPrefix(self.cfg.openapi_url orelse "/openapi.json", public_prefix);
         defer self.allocator.free(openapi_url);
-        const html = try docs_ui.renderRedoc(
+        return docs_ui.renderRedoc(
             self.allocator,
             self.cfg.title,
             openapi_url,
             self.cfg.redoc,
         );
-        self.redoc_cache = html;
-        return html;
     }
 
     fn invalidateGeneratedCaches(self: *App) void {
@@ -2160,8 +2265,125 @@ pub const App = struct {
     }
 
     fn allocPublicPath(self: *App, path: []const u8) ![]u8 {
-        const root_path = self.normalizedRootPath() orelse return self.allocator.dupe(u8, path);
-        return dispatch_helpers.joinPaths(self.allocator, root_path, path);
+        return self.allocPublicPathWithPrefix(path, null);
+    }
+
+    fn allocPublicPathWithPrefix(self: *App, path: []const u8, public_prefix: ?[]const u8) ![]u8 {
+        const root_path = self.normalizedRootPath();
+        if (public_prefix == null and root_path == null) {
+            return self.allocator.dupe(u8, path);
+        }
+
+        var prefix_buf = std.ArrayList(u8).empty;
+        defer prefix_buf.deinit(self.allocator);
+
+        if (public_prefix) |prefix| {
+            try prefix_buf.appendSlice(self.allocator, prefix);
+        }
+        if (root_path) |root| {
+            const combined = if (prefix_buf.items.len == 0)
+                try self.allocator.dupe(u8, root)
+            else
+                try dispatch_helpers.joinPaths(self.allocator, prefix_buf.items, root);
+            defer self.allocator.free(combined);
+            prefix_buf.clearRetainingCapacity();
+            try prefix_buf.appendSlice(self.allocator, combined);
+        }
+
+        return dispatch_helpers.joinPaths(self.allocator, prefix_buf.items, path);
+    }
+
+    fn allocMountedPublicPrefix(self: *App, mount_prefix: []const u8, public_prefix: ?[]const u8) ![]u8 {
+        if (public_prefix) |prefix| {
+            return dispatch_helpers.joinPaths(self.allocator, prefix, mount_prefix);
+        }
+        if (self.normalizedRootPath()) |root| {
+            return dispatch_helpers.joinPaths(self.allocator, root, mount_prefix);
+        }
+        return self.allocator.dupe(u8, mount_prefix);
+    }
+
+    fn normalizeMountedPrefix(allocator: std.mem.Allocator, prefix: []const u8) ![]u8 {
+        if (prefix.len == 0 or prefix[0] != '/') return error.InvalidPath;
+        var end = prefix.len;
+        while (end > 1 and prefix[end - 1] == '/') {
+            end -= 1;
+        }
+        return allocator.dupe(u8, prefix[0..end]);
+    }
+
+    fn mountedSubPath(path: []const u8, prefix: []const u8) ?[]const u8 {
+        if (!std.mem.startsWith(u8, path, prefix)) return null;
+        if (path.len == prefix.len) return "/";
+        if (prefix.len == 1) return path;
+        if (path[prefix.len] != '/') return null;
+        return path[prefix.len..];
+    }
+
+    fn redirectSlashResponse(self: *App, req: *Request, original_public_path: []const u8, public_prefix: ?[]const u8) !?Response {
+        _ = public_prefix;
+        if (req.path.len <= 1) return null;
+
+        const alternate_internal = if (std.mem.endsWith(u8, req.path, "/"))
+            req.path[0 .. req.path.len - 1]
+        else
+            try std.fmt.allocPrint(self.allocator, "{s}/", .{req.path});
+        defer if (!std.mem.endsWith(u8, req.path, "/")) self.allocator.free(alternate_internal);
+
+        if (!try self.hasDispatchTarget(req.method, alternate_internal)) return null;
+
+        const alternate_public = if (std.mem.endsWith(u8, original_public_path, "/"))
+            original_public_path[0 .. original_public_path.len - 1]
+        else
+            try std.fmt.allocPrint(self.allocator, "{s}/", .{original_public_path});
+        defer if (!std.mem.endsWith(u8, original_public_path, "/")) self.allocator.free(alternate_public);
+
+        const location = if (req.query.len == 0)
+            alternate_public
+        else
+            try std.fmt.allocPrint(self.allocator, "{s}?{s}", .{ alternate_public, req.query });
+        defer if (req.query.len != 0) self.allocator.free(location);
+
+        return try Response.redirect(self.allocator, location, .temporary_redirect);
+    }
+
+    fn hasDispatchTarget(self: *App, method: std.http.Method, path: []const u8) !bool {
+        const target = try self.allocator.dupe(u8, path);
+        defer self.allocator.free(target);
+
+        var probe = try Request.initSynthetic(self.allocator, method, target, "");
+        defer probe.deinit();
+        return self.hasDispatchTargetProbe(&probe);
+    }
+
+    fn hasDispatchTargetProbe(self: *App, req: *Request) !bool {
+        const original_path = req.path;
+        req.path = self.effectiveRoutePath(req.path);
+        defer req.path = original_path;
+
+        if (self.cfg.openapi_url) |openapi_url| {
+            if (std.mem.eql(u8, req.path, openapi_url)) return true;
+        }
+        if (self.cfg.docs_url) |docs_url| {
+            if (std.mem.eql(u8, req.path, docs_url)) return true;
+        }
+        if (self.cfg.redoc_url) |redoc_url| {
+            if (std.mem.eql(u8, req.path, redoc_url)) return true;
+        }
+        if (self.cfg.metrics_url) |metrics_url| {
+            if (req.method == .GET and std.mem.eql(u8, req.path, metrics_url)) return true;
+        }
+        if (try self.router.findHttp(req)) |_| return true;
+
+        for (self.mounted_apps.items) |entry| {
+            const sub_path = mountedSubPath(req.path, entry.prefix) orelse continue;
+            const mounted_original_path = req.path;
+            req.path = sub_path;
+            defer req.path = mounted_original_path;
+            return entry.subapp.hasDispatchTargetProbe(req);
+        }
+
+        return false;
     }
 
     fn maybeRequestMiddleware(mw: anytype) ?RequestMiddlewareFn {

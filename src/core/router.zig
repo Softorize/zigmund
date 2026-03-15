@@ -172,6 +172,10 @@ pub const Router = struct {
         return path[start..end];
     }
 
+    fn hasSignificantTrailingSlash(path: []const u8) bool {
+        return path.len > 1 and path[path.len - 1] == '/';
+    }
+
     const Segment = struct {
         value: []const u8,
         start: usize,
@@ -238,6 +242,10 @@ pub const Router = struct {
     }
 
     fn matchPath(pattern: []const u8, concrete: []const u8, request: *Request) !bool {
+        if (hasSignificantTrailingSlash(pattern) != hasSignificantTrailingSlash(concrete)) {
+            return false;
+        }
+
         const pattern_trimmed = trimSlashes(pattern);
         const concrete_trimmed = trimSlashes(concrete);
 
