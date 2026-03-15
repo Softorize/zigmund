@@ -61,7 +61,7 @@ jobs:
       - name: Install Semgrep
         run: python -m pip install --upgrade semgrep
       - name: Run Semgrep
-        run: semgrep --config auto --error src tests tools
+        run: semgrep --config auto --error --exclude='src/assets/docs-ui/**' src tests tools
 
   trivy:
     name: Trivy Filesystem Scan

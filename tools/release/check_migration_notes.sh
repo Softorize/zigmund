@@ -2,7 +2,7 @@
 set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-MIGRATIONS_DIR="$ROOT_DIR/docs/migrations"
+MIGRATIONS_DIR="$ROOT_DIR/docs/internal/migrations"
 
 if [ ! -d "$MIGRATIONS_DIR" ]; then
   echo "missing docs/migrations directory" >&2
