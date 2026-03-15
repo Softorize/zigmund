@@ -110,9 +110,9 @@ TlsProtocolVersion
 TrustedHostConfig
 UploadFile
 Uuid
+VerifiedHS256Bearer
 VersionConfig
 VersionedRouter
-VerifiedHS256Bearer
 WebSocketException
 WebSocketRouteOptions
 WebSocketSession
