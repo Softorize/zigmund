@@ -91,6 +91,10 @@ pub const Request = struct {
     owned_request_id: ?[]u8 = null,
     request_id_inline: [64]u8 = undefined,
     request_id_inline_len: usize = 0,
+    correlation_id: ?[]const u8 = null,
+    owned_correlation_id: ?[]u8 = null,
+    correlation_id_inline: [64]u8 = undefined,
+    correlation_id_inline_len: usize = 0,
     path_params: std.StringHashMapUnmanaged([]const u8) = .empty,
     query_params: std.StringHashMapUnmanaged([]const u8) = .empty,
     synthetic_headers: std.ArrayListUnmanaged(SyntheticHeader) = .empty,
@@ -196,6 +200,11 @@ pub const Request = struct {
             self.allocator.free(id);
             self.owned_request_id = null;
             self.request_id = null;
+        }
+        if (self.owned_correlation_id) |id| {
+            self.allocator.free(id);
+            self.owned_correlation_id = null;
+            self.correlation_id = null;
         }
 
         for (self.dependency_owned_values.items) |item| {
@@ -857,6 +866,43 @@ pub const Request = struct {
 
     pub fn requestId(self: *const Request) ?[]const u8 {
         return self.request_id;
+    }
+
+    pub fn correlationId(self: *const Request) ?[]const u8 {
+        return self.correlation_id;
+    }
+
+    pub fn setCorrelationId(self: *Request, id: []const u8) !void {
+        const owned = try self.allocator.dupe(u8, id);
+        errdefer self.allocator.free(owned);
+
+        if (self.owned_correlation_id) |current| {
+            self.allocator.free(current);
+        }
+
+        self.owned_correlation_id = owned;
+        self.correlation_id = owned;
+        self.correlation_id_inline_len = 0;
+    }
+
+    pub fn setCorrelationIdBorrowed(self: *Request, id: []const u8) void {
+        if (self.owned_correlation_id) |current| {
+            self.allocator.free(current);
+            self.owned_correlation_id = null;
+        }
+        self.correlation_id = id;
+        self.correlation_id_inline_len = 0;
+    }
+
+    pub fn setCorrelationIdInline(self: *Request, id: []const u8) !void {
+        if (id.len > self.correlation_id_inline.len) return error.CorrelationIdTooLong;
+        if (self.owned_correlation_id) |current| {
+            self.allocator.free(current);
+            self.owned_correlation_id = null;
+        }
+        @memcpy(self.correlation_id_inline[0..id.len], id);
+        self.correlation_id_inline_len = id.len;
+        self.correlation_id = self.correlation_id_inline[0..id.len];
     }
 
     pub fn setPeerAddress(self: *Request, peer_address: std.net.Address) void {

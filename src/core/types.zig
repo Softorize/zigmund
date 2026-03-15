@@ -55,6 +55,7 @@ pub const AppConfig = struct {
     redirect_slashes: bool = true,
     request_id_enabled: bool = true,
     request_id_header: []const u8 = "x-request-id",
+    correlation_id_header: []const u8 = "x-correlation-id",
     docs: SwaggerUiConfig = .{},
     redoc: RedocUiConfig = .{},
     servers: []const []const u8 = &.{},
