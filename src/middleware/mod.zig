@@ -6,6 +6,7 @@ pub const session = @import("session.zig");
 pub const health = @import("health.zig");
 pub const timeout = @import("timeout.zig");
 pub const content_negotiation = @import("content_negotiation.zig");
+pub const trusted_host = @import("trusted_host.zig");
 
 pub const CorsOptions = cors.CorsOptions;
 pub const RateLimitOptions = rate_limit.RateLimitOptions;
@@ -22,3 +23,4 @@ pub const TimeoutConfig = timeout.TimeoutConfig;
 pub const HttpsRedirectConfig = https_redirect.HttpsRedirectConfig;
 pub const ContentNegotiationConfig = content_negotiation.ContentNegotiationConfig;
 pub const ContentType = content_negotiation.ContentType;
+pub const TrustedHostConfig = trusted_host.TrustedHostConfig;
