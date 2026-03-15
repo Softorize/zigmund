@@ -39,6 +39,11 @@ pub const OpenApiResponseExamples = core.OpenApiResponseExamples;
 pub const OpenApiCallback = core.OpenApiCallback;
 pub const OpenApiWebhook = core.OpenApiWebhook;
 
+pub const VersionConfig = core.VersionConfig;
+pub const VersionedRouter = core.VersionedRouter;
+pub const mountVersionedRouters = core.mountVersionedRouters;
+pub const versionFromHeader = core.versionFromHeader;
+
 pub const Request = http.Request;
 pub const Response = http.Response;
 pub const UploadFile = http.Request.UploadFile;
@@ -97,12 +102,14 @@ pub const CompressionOptions = mw.CompressionOptions;
 pub const SessionOptions = mw.SessionOptions;
 pub const SessionStore = mw.SessionStore;
 pub const InMemoryStore = mw.InMemoryStore;
+pub const TimeoutConfig = mw.TimeoutConfig;
 pub const corsMw = mw.cors.middleware;
 pub const rateLimitMw = mw.rate_limit.middleware;
 pub const csrfMw = mw.csrf.middleware;
 pub const compressionMw = mw.compression.middleware;
 pub const sessionMw = mw.session.middleware;
 pub const sessionMwWithStore = mw.session.middlewareWithStore;
+pub const timeoutMw = mw.timeout.middleware;
 pub const HealthCheckFn = mw.HealthCheckFn;
 pub const HealthCheckEntry = mw.HealthCheckEntry;
 

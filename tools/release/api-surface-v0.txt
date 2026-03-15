@@ -96,10 +96,13 @@ TemplateBinding
 TemplateValue
 TemplatesIntegration
 TestClient
+TimeoutConfig
 TlsClientAuth
 TlsConfig
 TlsProtocolVersion
 UploadFile
+VersionConfig
+VersionedRouter
 VerifiedHS256Bearer
 WebSocketException
 WebSocketRouteOptions
@@ -117,6 +120,7 @@ loadSettings
 loadSettingsFromEnvMap
 mountGraphQl
 mountStaticFiles
+mountVersionedRouters
 mw
 openapi
 params
@@ -140,4 +144,6 @@ sessionMwWithStore
 status
 template
 testing
+timeoutMw
 validateHs256JwtToken
+versionFromHeader
