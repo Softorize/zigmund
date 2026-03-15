@@ -100,6 +100,8 @@ TlsClientAuth
 TlsConfig
 TlsProtocolVersion
 UploadFile
+VersionConfig
+VersionedRouter
 VerifiedHS256Bearer
 WebSocketException
 WebSocketRouteOptions
@@ -117,6 +119,7 @@ loadSettings
 loadSettingsFromEnvMap
 mountGraphQl
 mountStaticFiles
+mountVersionedRouters
 mw
 openapi
 params
@@ -141,3 +144,4 @@ status
 template
 testing
 validateHs256JwtToken
+versionFromHeader

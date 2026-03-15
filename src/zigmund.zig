@@ -39,6 +39,11 @@ pub const OpenApiResponseExamples = core.OpenApiResponseExamples;
 pub const OpenApiCallback = core.OpenApiCallback;
 pub const OpenApiWebhook = core.OpenApiWebhook;
 
+pub const VersionConfig = core.VersionConfig;
+pub const VersionedRouter = core.VersionedRouter;
+pub const mountVersionedRouters = core.mountVersionedRouters;
+pub const versionFromHeader = core.versionFromHeader;
+
 pub const Request = http.Request;
 pub const Response = http.Response;
 pub const UploadFile = http.Request.UploadFile;

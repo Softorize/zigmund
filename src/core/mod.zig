@@ -29,6 +29,12 @@ pub const OpenApiCallback = @import("types.zig").OpenApiCallback;
 pub const OpenApiWebhook = @import("types.zig").OpenApiWebhook;
 pub const RouteMethod = @import("types.zig").RouteMethod;
 
+pub const versioning = @import("versioning.zig");
+pub const VersionConfig = versioning.VersionConfig;
+pub const VersionedRouter = versioning.VersionedRouter;
+pub const mountVersionedRouters = versioning.mountVersionedRouters;
+pub const versionFromHeader = versioning.versionFromHeader;
+
 pub const BackgroundTasks = @import("background.zig").BackgroundTasks;
 pub const HTTPException = @import("exceptions.zig").HTTPException;
 pub const WebSocketException = @import("exceptions.zig").WebSocketException;
