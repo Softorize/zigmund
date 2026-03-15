@@ -10,6 +10,8 @@ Body
 BodyOptions
 CompatibilityAdapters
 CompressionOptions
+ComputedFieldEntry
+ComputedFieldFn
 ContentNegotiationConfig
 ContentType
 Cookie
