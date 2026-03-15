@@ -13,7 +13,7 @@ test "trusted host middleware allows matching host" {
     });
     defer app.deinit();
 
-    try app.addMiddleware(zigmund.trustedHostMw(.{
+    try app.addMiddleware(zigmund.trustedHostMw(std.testing.allocator, .{
         .allowed_hosts = &.{"example.com"},
     }));
     try app.get("/test", echoHandler, .{});
@@ -35,7 +35,7 @@ test "trusted host middleware rejects disallowed host with 400" {
     });
     defer app.deinit();
 
-    try app.addMiddleware(zigmund.trustedHostMw(.{
+    try app.addMiddleware(zigmund.trustedHostMw(std.testing.allocator, .{
         .allowed_hosts = &.{"example.com"},
     }));
     try app.get("/test", echoHandler, .{});
@@ -57,7 +57,7 @@ test "trusted host middleware wildcard allows everything" {
     });
     defer app.deinit();
 
-    try app.addMiddleware(zigmund.trustedHostMw(.{
+    try app.addMiddleware(zigmund.trustedHostMw(std.testing.allocator, .{
         .allowed_hosts = &.{"*"},
     }));
     try app.get("/test", echoHandler, .{});
@@ -79,7 +79,7 @@ test "trusted host middleware subdomain wildcard matching" {
     });
     defer app.deinit();
 
-    try app.addMiddleware(zigmund.trustedHostMw(.{
+    try app.addMiddleware(zigmund.trustedHostMw(std.testing.allocator, .{
         .allowed_hosts = &.{".example.com"},
     }));
     try app.get("/test", echoHandler, .{});
@@ -116,7 +116,7 @@ test "trusted host middleware rejects missing host header by default" {
     });
     defer app.deinit();
 
-    try app.addMiddleware(zigmund.trustedHostMw(.{
+    try app.addMiddleware(zigmund.trustedHostMw(std.testing.allocator, .{
         .allowed_hosts = &.{"example.com"},
         .allow_missing_host = false,
     }));
@@ -137,7 +137,7 @@ test "trusted host middleware allows missing host when configured" {
     });
     defer app.deinit();
 
-    try app.addMiddleware(zigmund.trustedHostMw(.{
+    try app.addMiddleware(zigmund.trustedHostMw(std.testing.allocator, .{
         .allowed_hosts = &.{"example.com"},
         .allow_missing_host = true,
     }));

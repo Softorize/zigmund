@@ -36,11 +36,8 @@ fn requestHookWithContext(req: *Request, allocator: std.mem.Allocator, context: 
     // Build the redirect URL: "https://" + host + path + query
     const host_raw = req.header("host") orelse return;
 
-    // Strip any existing port from the host.
-    const host = if (std.mem.indexOfScalar(u8, host_raw, ':')) |colon_pos|
-        host_raw[0..colon_pos]
-    else
-        host_raw;
+    // Strip any existing port from the host (handles IPv6 bracket notation).
+    const host = stripPort(host_raw);
 
     // Build the URL into a stack buffer to avoid allocation.
     var buf: [4096]u8 = undefined;
@@ -84,6 +81,25 @@ fn deinitContext(context: ?*anyopaque, allocator: std.mem.Allocator) void {
 fn contextToState(context: ?*anyopaque) ?*HttpsRedirectState {
     const ptr = context orelse return null;
     return @ptrCast(@alignCast(ptr));
+}
+
+fn stripPort(host: []const u8) []const u8 {
+    if (host.len > 0 and host[0] == '[') {
+        if (std.mem.indexOfScalar(u8, host, ']')) |close| {
+            return host[0 .. close + 1];
+        }
+        return host;
+    }
+    if (std.mem.lastIndexOfScalar(u8, host, ':')) |colon| {
+        const after = host[colon + 1 ..];
+        if (after.len > 0) {
+            for (after) |c| {
+                if (c < '0' or c > '9') return host;
+            }
+            return host[0..colon];
+        }
+    }
+    return host;
 }
 
 /// Create a Middleware struct ready to register with the app.
