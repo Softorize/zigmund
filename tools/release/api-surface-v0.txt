@@ -14,12 +14,14 @@ Cookie
 CookieOptions
 CorsOptions
 CsrfOptions
+DateTime
 DependencyCacheScope
 DependencySpec
 Depends
 DependsCacheScope
 DependsOptions
 DocsTheme
+Duration
 File
 FileOptions
 Form
@@ -101,6 +103,7 @@ TlsClientAuth
 TlsConfig
 TlsProtocolVersion
 UploadFile
+Uuid
 VersionConfig
 VersionedRouter
 VerifiedHS256Bearer
