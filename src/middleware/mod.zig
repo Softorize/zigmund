@@ -4,6 +4,7 @@ pub const csrf = @import("csrf.zig");
 pub const compression = @import("compression.zig");
 pub const session = @import("session.zig");
 pub const health = @import("health.zig");
+pub const timeout = @import("timeout.zig");
 
 pub const CorsOptions = cors.CorsOptions;
 pub const RateLimitOptions = rate_limit.RateLimitOptions;
@@ -14,3 +15,4 @@ pub const SessionStore = session.SessionStore;
 pub const InMemoryStore = session.InMemoryStore;
 pub const HealthCheckFn = health.HealthCheckFn;
 pub const HealthCheckEntry = health.HealthCheckEntry;
+pub const TimeoutConfig = timeout.TimeoutConfig;

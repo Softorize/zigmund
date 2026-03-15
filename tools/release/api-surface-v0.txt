@@ -96,6 +96,7 @@ TemplateBinding
 TemplateValue
 TemplatesIntegration
 TestClient
+TimeoutConfig
 TlsClientAuth
 TlsConfig
 TlsProtocolVersion
@@ -140,4 +141,5 @@ sessionMwWithStore
 status
 template
 testing
+timeoutMw
 validateHs256JwtToken
