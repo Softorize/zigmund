@@ -93,6 +93,8 @@ pub const csrfMw = mw.csrf.middleware;
 pub const compressionMw = mw.compression.middleware;
 pub const sessionMw = mw.session.middleware;
 pub const sessionMwWithStore = mw.session.middlewareWithStore;
+pub const HealthCheckFn = mw.HealthCheckFn;
+pub const HealthCheckEntry = mw.HealthCheckEntry;
 
 pub const APIKeyQuery = security.APIKeyQuery;
 pub const APIKeyHeader = security.APIKeyHeader;

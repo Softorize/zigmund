@@ -14,6 +14,7 @@ const auth_response = @import("auth_response.zig");
 const response_shaping = @import("response_shaping.zig");
 const dispatch_helpers = @import("dispatch_helpers.zig");
 const state_store = @import("state_store.zig");
+const health_mod = @import("../middleware/health.zig");
 
 pub const App = struct {
     const Self = @This();
@@ -48,6 +49,8 @@ pub const App = struct {
     docs_cache: ?[]u8 = null,
     redoc_cache: ?[]u8 = null,
     cache_mutex: std.Thread.Mutex = .{},
+    health_checks: std.ArrayListUnmanaged(health_mod.HealthCheckEntry) = .empty,
+    health_endpoints_enabled: bool = false,
 
     const LifecycleFn = *const fn () anyerror!void;
     const RequestMiddlewareFn = *const fn (*Request, std.mem.Allocator) anyerror!void;
@@ -201,6 +204,9 @@ pub const App = struct {
             self.allocator.free(header);
             self.trace_context_header = null;
         }
+
+        for (self.health_checks.items) |entry| self.allocator.free(entry.name);
+        self.health_checks.deinit(self.allocator);
 
         self.freeGeneratedCaches();
         self.state.deinit();
@@ -492,6 +498,21 @@ pub const App = struct {
     pub fn lifespan(self: *App, startup: anytype, shutdown: anytype) !void {
         try self.onStartup(startup);
         try self.onShutdown(shutdown);
+    }
+
+    /// Register a named health check function for readiness probes.
+    pub fn addHealthCheck(self: *App, name: []const u8, check: health_mod.HealthCheckFn) !void {
+        const owned_name = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_name);
+        try self.health_checks.append(self.allocator, .{
+            .name = owned_name,
+            .check = check,
+        });
+    }
+
+    /// Enable the built-in /health/live and /health/ready endpoints.
+    pub fn enableHealthEndpoints(self: *App) void {
+        self.health_endpoints_enabled = true;
     }
 
     pub fn requestShutdown(self: *App) void {
@@ -1005,6 +1026,27 @@ pub const App = struct {
                     .body = payload,
                     .owned_body = payload,
                     .content_type = "text/plain; version=0.0.4; charset=utf-8",
+                };
+            }
+        }
+
+        if (self.health_endpoints_enabled and req.method == .GET) {
+            if (std.mem.eql(u8, req.path, "/health/live")) {
+                const result = try health_mod.liveResponse(self.allocator);
+                return .{
+                    .status = result.status,
+                    .body = result.body,
+                    .owned_body = result.body,
+                    .content_type = "application/json",
+                };
+            }
+            if (std.mem.eql(u8, req.path, "/health/ready")) {
+                const result = try health_mod.readyResponse(self.allocator, self.health_checks.items);
+                return .{
+                    .status = result.status,
+                    .body = result.body,
+                    .owned_body = result.body,
+                    .content_type = "application/json",
                 };
             }
         }
@@ -2428,6 +2470,9 @@ pub const App = struct {
         }
         if (self.cfg.metrics_url) |metrics_url| {
             if (req.method == .GET and std.mem.eql(u8, req.path, metrics_url)) return true;
+        }
+        if (self.health_endpoints_enabled and req.method == .GET) {
+            if (std.mem.eql(u8, req.path, "/health/live") or std.mem.eql(u8, req.path, "/health/ready")) return true;
         }
         if (try self.router.findHttp(req)) |_| return true;
 
