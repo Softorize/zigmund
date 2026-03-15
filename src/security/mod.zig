@@ -239,6 +239,19 @@ pub const OpenIdConnect = struct {
     }
 };
 
+pub const TokenResponse = struct {
+    access_token: []const u8,
+    token_type: []const u8 = "bearer",
+    expires_in: ?u64 = null,
+};
+
+pub const JwtClaims = struct {
+    sub: ?[]const u8 = null,
+    iss: ?[]const u8 = null,
+    exp: ?i64 = null,
+    iat: ?i64 = null,
+};
+
 pub const JwtValidationOptions = struct {
     issuer: ?[]const u8 = null,
     audience: ?[]const u8 = null,
@@ -380,6 +393,18 @@ pub fn validateHs256JwtToken(
     }
 
     try validateJwtClaims(payload_json, options);
+}
+
+pub fn signHs256JwtToken(
+    allocator: std.mem.Allocator,
+    claims_payload: anytype,
+    secret: []const u8,
+) ![]u8 {
+    const header_json = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
+    const payload_json = try std.json.stringifyAlloc(allocator, claims_payload, .{ .emit_null_optional_fields = false });
+    defer allocator.free(payload_json);
+
+    return makeHs256Jwt(allocator, header_json, payload_json, secret);
 }
 
 pub fn bearerTokenFromHeader(raw: ?[]const u8) ?[]const u8 {
@@ -797,4 +822,52 @@ test "verified hs256 bearer maps invalid auth and missing scopes" {
         .secret = "wrong-secret",
     };
     try std.testing.expectError(error.Unauthorized, bad_secret.resolve(&req));
+}
+
+test "signHs256JwtToken round-trip with validateHs256JwtToken" {
+    const claims = .{
+        .sub = "user-42",
+        .iss = "https://auth.example.com",
+        .exp = @as(i64, 4102444800),
+        .iat = @as(i64, 1700000000),
+        .scope = "read write",
+    };
+
+    const token = try signHs256JwtToken(std.testing.allocator, claims, "test-secret-key");
+    defer std.testing.allocator.free(token);
+
+    // Validate the signed token succeeds with correct secret and matching options
+    try validateHs256JwtToken(token, "test-secret-key", .{
+        .issuer = "https://auth.example.com",
+        .required_scopes = &.{ "read", "write" },
+        .current_time_seconds = 1_800_000_000,
+    });
+
+    // Validate the signed token fails with wrong secret
+    try std.testing.expectError(error.JwtSignatureMismatch, validateHs256JwtToken(token, "wrong-key", .{
+        .current_time_seconds = 1_800_000_000,
+    }));
+
+    // Validate the signed token fails with wrong issuer
+    try std.testing.expectError(error.JwtIssuerMismatch, validateHs256JwtToken(token, "test-secret-key", .{
+        .issuer = "https://wrong-issuer.example.com",
+        .current_time_seconds = 1_800_000_000,
+    }));
+}
+
+test "signHs256JwtToken with JwtClaims struct" {
+    const claims = JwtClaims{
+        .sub = "user-99",
+        .iss = "zigmund",
+        .exp = 4102444800,
+        .iat = 1700000000,
+    };
+
+    const token = try signHs256JwtToken(std.testing.allocator, claims, "my-secret");
+    defer std.testing.allocator.free(token);
+
+    try validateHs256JwtToken(token, "my-secret", .{
+        .issuer = "zigmund",
+        .current_time_seconds = 1_800_000_000,
+    });
 }
