@@ -290,6 +290,12 @@ pub const ResponseModelFieldRule = struct {
 
 pub const ResponseModelTransformFn = *const fn (*std.json.Value, std.mem.Allocator) anyerror!void;
 pub const ResponseModelValidateFn = *const fn (*const std.json.Value, std.mem.Allocator) anyerror!void;
+pub const ComputedFieldFn = *const fn (std.json.ObjectMap, std.mem.Allocator) anyerror!std.json.Value;
+
+pub const ComputedFieldEntry = struct {
+    name: []const u8,
+    compute: ComputedFieldFn,
+};
 
 pub const RouteOptions = struct {
     name: ?[]const u8 = null,
@@ -343,6 +349,7 @@ pub const StoredRouteOptions = struct {
     response_model_field_rules: []const ResponseModelFieldRule = &.{},
     response_model_transform: ?ResponseModelTransformFn = null,
     response_model_validate: ?ResponseModelValidateFn = null,
+    response_model_computed_fields: []const ComputedFieldEntry = &.{},
     response_model_include: []const []const u8 = &.{},
     response_model_exclude: []const []const u8 = &.{},
     response_model_by_alias: bool = true,
@@ -382,6 +389,7 @@ pub fn storeRouteOptions(opts: RouteOptions) StoredRouteOptions {
         .response_model_field_rules = if (opts.response_model) |T| deriveResponseModelFieldRules(T) else &.{},
         .response_model_transform = if (opts.response_model) |T| deriveResponseModelTransformFn(T) else null,
         .response_model_validate = if (opts.response_model) |T| deriveResponseModelValidateFn(T) else null,
+        .response_model_computed_fields = if (opts.response_model) |T| deriveComputedFields(T) else &.{},
         .response_model_include = opts.response_model_include,
         .response_model_exclude = opts.response_model_exclude,
         .response_model_by_alias = opts.response_model_by_alias,
@@ -539,6 +547,17 @@ fn deriveResponseModelValidateFn(comptime T: type) ?ResponseModelValidateFn {
             break :blk validate;
         },
         else => null,
+    };
+}
+
+fn deriveComputedFields(comptime T: type) []const ComputedFieldEntry {
+    const Root = responseModelRuleRootType(T);
+    return switch (@typeInfo(Root)) {
+        .@"struct", .@"enum", .@"union", .@"opaque" => blk: {
+            if (!@hasDecl(Root, "zigmund_computed_fields")) break :blk &.{};
+            break :blk Root.zigmund_computed_fields;
+        },
+        else => &.{},
     };
 }
 

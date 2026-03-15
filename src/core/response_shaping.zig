@@ -4,6 +4,7 @@ const types = @import("types.zig");
 pub fn needsResponseShaping(options: types.StoredRouteOptions) bool {
     if (options.response_model_transform != null) return true;
     if (options.response_model_validate != null) return true;
+    if (options.response_model_computed_fields.len != 0) return true;
     if (options.response_model_field_rules.len != 0) return true;
     if (options.response_model_include.len != 0) return true;
     if (options.response_model_exclude.len != 0) return true;
@@ -25,6 +26,29 @@ pub fn applyTopLevelIncludeExclude(
     defer path_buf.deinit(allocator);
 
     try applyIncludeExcludeRecursive(allocator, value, include, exclude, &path_buf);
+}
+
+pub fn applyComputedFields(
+    allocator: std.mem.Allocator,
+    value: *std.json.Value,
+    computed_fields: []const types.ComputedFieldEntry,
+) !void {
+    if (computed_fields.len == 0) return;
+
+    switch (value.*) {
+        .object => |*object| {
+            for (computed_fields) |entry| {
+                const computed_value = try entry.compute(object.*, allocator);
+                try object.put(entry.name, computed_value);
+            }
+        },
+        .array => |*array| {
+            for (array.items) |*item| {
+                try applyComputedFields(allocator, item, computed_fields);
+            }
+        },
+        else => {},
+    }
 }
 
 pub fn applyResponseModelFieldFilter(

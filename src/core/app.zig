@@ -2002,6 +2002,12 @@ pub const App = struct {
             );
         }
 
+        try response_shaping.applyComputedFields(
+            parsed.arena.allocator(),
+            &shaped,
+            route_options.response_model_computed_fields,
+        );
+
         if (route_options.response_model_validate) |validate| {
             try validate(&shaped, self.allocator);
         }
