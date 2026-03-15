@@ -109,6 +109,7 @@ pub fn build(b: *std.Build) void {
         "tests/conformance/health_check_test.zig",
         "tests/conformance/problem_details_test.zig",
         "tests/conformance/api_versioning_test.zig",
+        "tests/conformance/content_negotiation_test.zig",
         "tests/conformance/correlation_id_test.zig",
         "tests/parity/matrix_test.zig",
         "tests/perf/smoke_test.zig",

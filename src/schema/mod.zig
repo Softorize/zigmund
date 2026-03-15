@@ -1,5 +1,8 @@
 const std = @import("std");
 
+pub const encoder = @import("encoder.zig");
+pub const jsonableEncode = encoder.jsonableEncode;
+
 pub fn schemaForType(comptime T: type, allocator: std.mem.Allocator) ![]u8 {
     return switch (@typeInfo(T)) {
         .bool => allocator.dupe(u8, "{\"type\":\"boolean\"}"),
