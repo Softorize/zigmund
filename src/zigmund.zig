@@ -145,6 +145,10 @@ pub const OAuthFlow = security.OAuthFlow;
 pub const OAuthFlows = security.OAuthFlows;
 pub const OpenApiSecurityScheme = security.OpenApiSecurityScheme;
 pub const NamedSecurityScheme = security.NamedScheme;
+pub const Uuid = schema.Uuid;
+pub const DateTime = schema.DateTime;
+pub const Duration = schema.Duration;
+
 pub const QueryOptions = params.QueryOptions;
 pub const PathOptions = params.PathOptions;
 pub const HeaderOptions = params.HeaderOptions;

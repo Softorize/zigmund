@@ -303,10 +303,12 @@ fn resolveParamMarker(comptime Marker: type, req: *Request) anyerror!Marker {
                 const wrapped = try req.bodyJsonLeaky(Wrapper);
                 const parsed = wrapped.body;
                 try validateMarkerInput(Marker, req, .body, "body", null, parsed, strict_mode);
+                try validateModelConstraints(ValueType, parsed, req, .body, "body");
                 out.value = parsed;
             } else {
                 const parsed = try req.bodyJsonLeaky(ValueType);
                 try validateMarkerInput(Marker, req, .body, "body", null, parsed, strict_mode);
+                try validateModelConstraints(ValueType, parsed, req, .body, "body");
                 out.value = parsed;
             }
         },
@@ -314,12 +316,14 @@ fn resolveParamMarker(comptime Marker: type, req: *Request) anyerror!Marker {
             try ensureFormContentType(req, Marker.options.media_type);
             const parsed = try req.formAsLeaky(ValueType);
             try validateMarkerInput(Marker, req, .body, "form", null, parsed, strict_mode);
+            try validateModelConstraints(ValueType, parsed, req, .body, "form");
             out.value = parsed;
         },
         .file => {
             try ensureFileRequestContentType(req);
             const parsed = try req.fileAsWithMediaType(ValueType, Marker.options.media_type);
             try validateMarkerInput(Marker, req, .body, "file", null, parsed, strict_mode);
+            try validateModelConstraints(ValueType, parsed, req, .body, "file");
             out.value = parsed;
         },
     }
@@ -613,6 +617,187 @@ fn modelValidatorCallKind(comptime FnType: type, comptime ValueType: type) ?Mode
 fn isErrorUnionVoid(comptime T: type) bool {
     if (@typeInfo(T) != .error_union) return false;
     return @typeInfo(T).error_union.payload == void;
+}
+
+/// Recursively validates a parsed struct value against `zigmund_field_constraints`
+/// declarations.  Each constrained field is checked for gt/ge/lt/le, min_length,
+/// max_length, and pattern.  Nested struct fields are validated recursively so
+/// that deeply-nested models propagate constraints automatically.
+fn validateModelConstraints(
+    comptime T: type,
+    value: T,
+    req: *Request,
+    comptime location: Request.ValidationLocation,
+    comptime field_prefix: []const u8,
+) !void {
+    const Base = stripOptionalType(T);
+    if (@typeInfo(Base) != .@"struct") return;
+
+    // If T is optional, unwrap or skip if null.
+    if (@typeInfo(T) == .optional) {
+        if (value) |inner| {
+            try validateModelConstraints(Base, inner, req, location, field_prefix);
+        }
+        return;
+    }
+
+    // Check zigmund_field_constraints on this type.
+    if (@hasDecl(T, "zigmund_field_constraints")) {
+        const constraints = T.zigmund_field_constraints;
+        inline for (std.meta.fields(@TypeOf(constraints))) |cfield| {
+            const field_constraint = @field(constraints, cfield.name);
+            const field_value = @field(value, cfield.name);
+            const field_path = field_prefix ++ "." ++ cfield.name;
+
+            // String length / pattern constraints
+            if (comptime hasConstraintField(@TypeOf(field_constraint), "min_length")) {
+                if (@field(field_constraint, "min_length")) |min_len| {
+                    if (constraintStringValue(@TypeOf(field_value), field_value)) |sv| {
+                        if (sv.len < min_len) {
+                            return failValidation(req, .{
+                                .location = location,
+                                .field = field_path,
+                                .message = "String is shorter than min_length",
+                                .issue_type = "min_length",
+                                .input = sv,
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (comptime hasConstraintField(@TypeOf(field_constraint), "max_length")) {
+                if (@field(field_constraint, "max_length")) |max_len| {
+                    if (constraintStringValue(@TypeOf(field_value), field_value)) |sv| {
+                        if (sv.len > max_len) {
+                            return failValidation(req, .{
+                                .location = location,
+                                .field = field_path,
+                                .message = "String is longer than max_length",
+                                .issue_type = "max_length",
+                                .input = sv,
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (comptime hasConstraintField(@TypeOf(field_constraint), "pattern")) {
+                if (@field(field_constraint, "pattern")) |pat| {
+                    if (constraintStringValue(@TypeOf(field_value), field_value)) |sv| {
+                        if (!patternMatches(sv, pat)) {
+                            return failValidation(req, .{
+                                .location = location,
+                                .field = field_path,
+                                .message = "String does not match required pattern",
+                                .issue_type = "pattern",
+                                .input = sv,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Numeric constraints
+            if (comptime hasConstraintField(@TypeOf(field_constraint), "gt")) {
+                if (@field(field_constraint, "gt")) |threshold| {
+                    if (numericAsF64(@TypeOf(field_value), field_value)) |numeric| {
+                        if (!(numeric > threshold)) {
+                            return failValidation(req, .{
+                                .location = location,
+                                .field = field_path,
+                                .message = "Value must be greater than gt",
+                                .issue_type = "gt",
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (comptime hasConstraintField(@TypeOf(field_constraint), "ge")) {
+                if (@field(field_constraint, "ge")) |threshold| {
+                    if (numericAsF64(@TypeOf(field_value), field_value)) |numeric| {
+                        if (!(numeric >= threshold)) {
+                            return failValidation(req, .{
+                                .location = location,
+                                .field = field_path,
+                                .message = "Value must be greater than or equal to ge",
+                                .issue_type = "ge",
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (comptime hasConstraintField(@TypeOf(field_constraint), "lt")) {
+                if (@field(field_constraint, "lt")) |threshold| {
+                    if (numericAsF64(@TypeOf(field_value), field_value)) |numeric| {
+                        if (!(numeric < threshold)) {
+                            return failValidation(req, .{
+                                .location = location,
+                                .field = field_path,
+                                .message = "Value must be less than lt",
+                                .issue_type = "lt",
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (comptime hasConstraintField(@TypeOf(field_constraint), "le")) {
+                if (@field(field_constraint, "le")) |threshold| {
+                    if (numericAsF64(@TypeOf(field_value), field_value)) |numeric| {
+                        if (!(numeric <= threshold)) {
+                            return failValidation(req, .{
+                                .location = location,
+                                .field = field_path,
+                                .message = "Value must be less than or equal to le",
+                                .issue_type = "le",
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Recurse into nested struct fields.
+    inline for (std.meta.fields(T)) |field| {
+        const FieldBase = stripOptionalType(field.type);
+        if (@typeInfo(FieldBase) == .@"struct") {
+            const nested_path = field_prefix ++ "." ++ field.name;
+            if (@typeInfo(field.type) == .optional) {
+                if (@field(value, field.name)) |inner| {
+                    try validateModelConstraints(FieldBase, inner, req, location, nested_path);
+                }
+            } else {
+                try validateModelConstraints(field.type, @field(value, field.name), req, location, nested_path);
+            }
+        }
+    }
+}
+
+/// Returns the string value from a field for constraint checking, unwrapping
+/// optionals and checking for `[]const u8` slices.
+fn constraintStringValue(comptime T: type, value: T) ?[]const u8 {
+    if (@typeInfo(T) == .optional) {
+        if (value == null) return null;
+        const Child = @typeInfo(T).optional.child;
+        return constraintStringValue(Child, value.?);
+    }
+    if (@typeInfo(T) == .pointer) {
+        const ptr = @typeInfo(T).pointer;
+        if (ptr.size == .slice and ptr.child == u8) return value;
+    }
+    return null;
+}
+
+/// Checks whether a constraint struct type has a given field name.
+fn hasConstraintField(comptime T: type, comptime name: []const u8) bool {
+    inline for (std.meta.fields(T)) |f| {
+        if (std.mem.eql(u8, f.name, name)) return true;
+    }
+    return false;
 }
 
 fn numericAsF64(comptime T: type, value: T) ?f64 {
