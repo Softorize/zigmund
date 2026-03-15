@@ -69,6 +69,8 @@ pub const TlsClientAuth = runtime.TlsClientAuth;
 pub const TestClient = testing.TestClient;
 pub const WebSocketSession = testing.WebSocketSession;
 
+pub const jsonableEncode = schema.jsonableEncode;
+
 pub const status = std.http.Status;
 
 pub const SettingSpec = integrations.SettingSpec;
@@ -103,6 +105,10 @@ pub const SessionOptions = mw.SessionOptions;
 pub const SessionStore = mw.SessionStore;
 pub const InMemoryStore = mw.InMemoryStore;
 pub const TimeoutConfig = mw.TimeoutConfig;
+pub const ContentNegotiationConfig = mw.ContentNegotiationConfig;
+pub const ContentType = mw.ContentType;
+pub const contentNegotiationMw = mw.content_negotiation.middleware;
+pub const negotiateContentType = mw.content_negotiation.negotiateContentType;
 pub const corsMw = mw.cors.middleware;
 pub const rateLimitMw = mw.rate_limit.middleware;
 pub const csrfMw = mw.csrf.middleware;

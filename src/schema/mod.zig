@@ -1,5 +1,8 @@
 const std = @import("std");
 
+pub const encoder = @import("encoder.zig");
+pub const jsonableEncode = encoder.jsonableEncode;
+
 pub const extra_types = @import("extra_types.zig");
 pub const Uuid = extra_types.Uuid;
 pub const DateTime = extra_types.DateTime;
