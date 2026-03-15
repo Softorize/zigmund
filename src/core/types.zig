@@ -319,6 +319,7 @@ pub const StoredRouteOptions = struct {
     include_in_schema: bool = true,
     response_model_name: ?[]const u8 = null,
     response_model_schema: ?OpenApiSchema = null,
+    input_body_type_name: ?[]const u8 = null,
     openapi_request_examples: []const OpenApiExample = &.{},
     openapi_response_examples: []const OpenApiResponseExamples = &.{},
     openapi_callbacks: []const OpenApiCallback = &.{},

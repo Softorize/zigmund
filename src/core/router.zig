@@ -61,6 +61,7 @@ pub const Router = struct {
         stored_opts.injected_dependencies = injector.deriveOpenApiDependencies(handler);
         stored_opts.injected_parameters = injector.deriveOpenApiParameters(handler);
         stored_opts.injected_request_bodies = injector.deriveOpenApiRequestBodies(handler);
+        stored_opts.input_body_type_name = injector.deriveRequestBodyTypeName(handler);
         try self.http_routes.append(self.allocator, .{
             .method = method,
             .path = owned_path,
