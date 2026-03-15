@@ -3,18 +3,22 @@ const zigmund = @import("zigmund");
 
 const source_page = "tutorial/header-params/";
 
-fn implemented(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
-    _ = req;
+fn readItems(
+    user_agent: zigmund.Header([]const u8, .{ .alias = "user-agent" }),
+    accept: zigmund.Header(?[]const u8, .{ .alias = "accept" }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
-        .parity = "implemented",
         .page = source_page,
-        .status = "ok",
+        .user_agent = user_agent.value.?,
+        .accept = accept.value.? orelse "not provided",
     });
 }
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.get("/tutorial/header-params", implemented, .{
-        .summary = "Parity implementation for tutorial/header-params/",
+    try app.get("/tutorial/header-params", readItems, .{
+        .summary = "Extract header parameters with typed markers",
         .tags = &.{ "parity", "tutorial" },
+        .operation_id = "tutorial_read_items_with_headers",
     });
 }
