@@ -99,6 +99,21 @@ pub const InjectedRequestBody = struct {
         file,
     },
     fields: []const InjectedBodyField = &.{},
+
+    /// When set, the request body is a discriminated union.  The schema should
+    /// be rendered as `oneOf` with a `discriminator` object instead of a flat
+    /// `object` with `properties`.
+    discriminator_property: ?[]const u8 = null,
+    /// Each variant maps a discriminator value to the inline object schema
+    /// for that variant's payload type.
+    discriminator_variants: []const DiscriminatorVariant = &.{},
+
+    pub const DiscriminatorVariant = struct {
+        /// Discriminator field value (= union tag name).
+        name: []const u8,
+        /// Fields of the variant's struct payload.
+        fields: []const InjectedBodyField,
+    };
 };
 
 /// NOTE: Constraint fields (gt, ge, lt, le, min_length, max_length, pattern, enum_values, strict)

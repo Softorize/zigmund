@@ -1772,6 +1772,15 @@ fn writeRequestBodySchema(
     media_type: []const u8,
     specs: []const types.InjectedRequestBody,
 ) !void {
+    // Check if any spec for this media type is a discriminated union
+    for (specs) |spec| {
+        if (!std.ascii.eqlIgnoreCase(spec.media_type, media_type)) continue;
+        if (spec.discriminator_property != null) {
+            try writeDiscriminatedUnionSchema(writer, spec);
+            return;
+        }
+    }
+
     const properties_count = countRequestBodyProperties(media_type, specs);
     const required_count = countRequestBodyRequiredProperties(media_type, specs);
 
@@ -1820,6 +1829,78 @@ fn writeRequestBodySchema(
         }
         try writer.writeAll("]");
     }
+
+    try writer.writeAll("}");
+}
+
+/// Emit an OpenAPI schema for a discriminated union request body using
+/// `oneOf` with a `discriminator` object.
+fn writeDiscriminatedUnionSchema(
+    writer: anytype,
+    spec: types.InjectedRequestBody,
+) !void {
+    const property_name = spec.discriminator_property orelse return;
+
+    try writer.writeAll("{");
+
+    // oneOf array -- one entry per variant
+    try writeFieldName(writer, "oneOf");
+    try writer.writeAll("[");
+    for (spec.discriminator_variants, 0..) |variant, idx| {
+        if (idx != 0) try writer.writeAll(",");
+
+        // Each variant is an inline object schema
+        try writer.writeAll("{");
+        try writeFieldName(writer, "type");
+        try writeJsonString(writer, "object");
+
+        // Properties: discriminator field + variant fields
+        try writer.writeAll(",");
+        try writeFieldName(writer, "properties");
+        try writer.writeAll("{");
+
+        // discriminator property itself
+        try writeJsonString(writer, property_name);
+        try writer.writeAll(":{");
+        try writeFieldName(writer, "type");
+        try writeJsonString(writer, "string");
+        try writer.writeAll(",");
+        try writeFieldName(writer, "enum");
+        try writer.writeAll("[");
+        try writeJsonString(writer, variant.name);
+        try writer.writeAll("]}");
+
+        for (variant.fields) |field| {
+            try writer.writeAll(",");
+            try writeJsonString(writer, field.name);
+            try writer.writeAll(":");
+            try writeRequestBodyFieldSchema(writer, field);
+        }
+        try writer.writeAll("}");
+
+        // required array
+        try writer.writeAll(",");
+        try writeFieldName(writer, "required");
+        try writer.writeAll("[");
+        try writeJsonString(writer, property_name);
+        for (variant.fields) |field| {
+            if (!field.required) continue;
+            try writer.writeAll(",");
+            try writeJsonString(writer, field.name);
+        }
+        try writer.writeAll("]");
+
+        try writer.writeAll("}");
+    }
+    try writer.writeAll("]");
+
+    // discriminator object
+    try writer.writeAll(",");
+    try writeFieldName(writer, "discriminator");
+    try writer.writeAll("{");
+    try writeFieldName(writer, "propertyName");
+    try writeJsonString(writer, property_name);
+    try writer.writeAll("}");
 
     try writer.writeAll("}");
 }

@@ -332,6 +332,19 @@ fn resolveParamMarker(comptime Marker: type, req: *Request) anyerror!Marker {
                 try validateMarkerInput(Marker, req, .body, "body", null, parsed, strict_mode);
                 try validateModelConstraints(ValueType, parsed, req, .body, "body");
                 out.value = parsed;
+            } else if (comptime isDiscriminatedUnion(ValueType)) {
+                const parsed = parseDiscriminatedUnion(ValueType, req.body, req.arena.allocator()) catch {
+                    try req.addValidationIssue(.{
+                        .location = .body,
+                        .field = "body",
+                        .message = "Invalid discriminated union body",
+                        .issue_type = "json_invalid",
+                        .input = req.body,
+                    });
+                    return error.ValidationFailed;
+                };
+                try validateMarkerInput(Marker, req, .body, "body", null, parsed, strict_mode);
+                out.value = parsed;
             } else {
                 const parsed = try req.bodyJsonLeaky(ValueType);
                 try validateMarkerInput(Marker, req, .body, "body", null, parsed, strict_mode);
@@ -1580,6 +1593,23 @@ fn requestBodySpecForMarker(comptime Marker: type, comptime has_file: bool) type
         else => @compileError("Invalid request body marker location"),
     };
     const required = @typeInfo(Marker.ValueType) != .optional;
+
+    if (comptime isDiscriminatedUnion(Marker.ValueType)) {
+        const disc_info = deriveDiscriminatorInfo(Marker.ValueType);
+        return .{
+            .media_type = media_type,
+            .required = required,
+            .source = switch (location) {
+                .body => .body,
+                .form => .form,
+                .file => .file,
+                else => unreachable,
+            },
+            .discriminator_property = disc_info.property,
+            .discriminator_variants = &disc_info.variants,
+        };
+    }
+
     const fields = deriveBodyFields(Marker, has_file);
 
     return .{
@@ -1721,6 +1751,115 @@ fn EmbeddedBodyWrapper(comptime ValueType: type) type {
         struct { body: ValueType = null }
     else
         struct { body: ValueType };
+}
+
+/// Returns true if `T` is a `union(enum)` that carries a `zigmund_discriminator`
+/// declaration, indicating it should be parsed via discriminated-union logic.
+fn isDiscriminatedUnion(comptime T: type) bool {
+    const Base = stripOptionalType(T);
+    if (@typeInfo(Base) != .@"union") return false;
+    return @hasDecl(Base, "zigmund_discriminator");
+}
+
+/// Generates a helper struct with a single field whose name matches the
+/// discriminator declaration on `T`.  Used to extract just the discriminator
+/// value from the raw JSON body without parsing the full payload.
+fn DiscriminatorExtractor(comptime T: type) type {
+    const Base = stripOptionalType(T);
+    const field_name = Base.zigmund_discriminator;
+    return @Type(.{ .@"struct" = .{
+        .layout = .auto,
+        .fields = &.{.{
+            .name = field_name,
+            .type = []const u8,
+            .default_value_ptr = null,
+            .is_comptime = false,
+            .alignment = @alignOf([]const u8),
+        }},
+        .decls = &.{},
+        .is_tuple = false,
+    } });
+}
+
+/// Parse a JSON body into a discriminated `union(enum)`.
+///
+/// 1. Extract the discriminator field value using a lightweight helper struct.
+/// 2. Match the value against the union's field (tag) names at comptime.
+/// 3. Parse the full body into the matched variant's payload type.
+fn parseDiscriminatedUnion(comptime T: type, json_body: []const u8, allocator: std.mem.Allocator) !T {
+    const Base = stripOptionalType(T);
+    const Extractor = DiscriminatorExtractor(T);
+
+    // Step 1: Extract discriminator value
+    const extractor = std.json.parseFromSliceLeaky(Extractor, allocator, json_body, .{
+        .ignore_unknown_fields = true,
+    }) catch return error.UnknownDiscriminatorValue;
+
+    const discriminator_value = @field(extractor, Base.zigmund_discriminator);
+
+    // Step 2 & 3: Match against union field names and parse
+    inline for (std.meta.fields(Base)) |field| {
+        if (std.mem.eql(u8, discriminator_value, field.name)) {
+            const payload = try std.json.parseFromSliceLeaky(
+                field.type,
+                allocator,
+                json_body,
+                .{ .ignore_unknown_fields = true },
+            );
+            return @unionInit(T, field.name, payload);
+        }
+    }
+
+    return error.UnknownDiscriminatorValue;
+}
+
+/// Comptime helper that builds discriminator metadata for OpenAPI schema generation.
+/// Returns the discriminator property name and an array of variant descriptors,
+/// each carrying the variant's tag name and its struct fields for schema emission.
+fn deriveDiscriminatorInfo(comptime T: type) struct {
+    property: []const u8,
+    variants: [std.meta.fields(stripOptionalType(T)).len]types.InjectedRequestBody.DiscriminatorVariant,
+} {
+    const Base = stripOptionalType(T);
+    const union_fields = std.meta.fields(Base);
+    var variants: [union_fields.len]types.InjectedRequestBody.DiscriminatorVariant = undefined;
+
+    inline for (union_fields, 0..) |field, idx| {
+        variants[idx] = .{
+            .name = field.name,
+            .fields = deriveVariantFields(field.type),
+        };
+    }
+
+    return .{
+        .property = Base.zigmund_discriminator,
+        .variants = variants,
+    };
+}
+
+/// Derive `InjectedBodyField` entries for a single union variant's payload struct.
+fn deriveVariantFields(comptime T: type) []const types.InjectedBodyField {
+    if (@typeInfo(T) != .@"struct") return &.{};
+    const struct_fields = @typeInfo(T).@"struct".fields;
+    if (struct_fields.len == 0) return &.{};
+
+    const Holder = struct {
+        const fields = blk: {
+            var out: [struct_fields.len]types.InjectedBodyField = undefined;
+            for (struct_fields, 0..) |field, idx| {
+                const field_schema = schemaForType(field.type);
+                out[idx] = .{
+                    .name = field.name,
+                    .required = !isOptionalType(field.type) and field.default_value_ptr == null,
+                    .schema_type = field_schema.schema_type,
+                    .schema_format = field_schema.schema_format,
+                    .is_array = field_schema.is_array,
+                };
+            }
+            break :blk out;
+        };
+    };
+    return &Holder.fields;
 }
 
 fn schemaForFileType(comptime T: type) SchemaDescriptor {
