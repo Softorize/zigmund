@@ -32,3 +32,13 @@ pub const RouteMethod = @import("types.zig").RouteMethod;
 pub const BackgroundTasks = @import("background.zig").BackgroundTasks;
 pub const HTTPException = @import("exceptions.zig").HTTPException;
 pub const WebSocketException = @import("exceptions.zig").WebSocketException;
+
+pub const ProblemDetail = @import("problem_details.zig").ProblemDetail;
+pub const problemResponse = @import("problem_details.zig").problemResponse;
+pub const problemNotFound = @import("problem_details.zig").notFound;
+pub const problemBadRequest = @import("problem_details.zig").badRequest;
+pub const problemUnauthorized = @import("problem_details.zig").unauthorized;
+pub const problemForbidden = @import("problem_details.zig").forbidden;
+pub const problemConflict = @import("problem_details.zig").conflict;
+pub const problemUnprocessableEntity = @import("problem_details.zig").unprocessableEntity;
+pub const problemInternalServerError = @import("problem_details.zig").internalServerError;

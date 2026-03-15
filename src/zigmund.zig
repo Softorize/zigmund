@@ -46,6 +46,16 @@ pub const BackgroundTasks = core.BackgroundTasks;
 pub const HTTPException = core.HTTPException;
 pub const WebSocketException = core.WebSocketException;
 
+pub const ProblemDetail = core.ProblemDetail;
+pub const problemResponse = core.problemResponse;
+pub const problemNotFound = core.problemNotFound;
+pub const problemBadRequest = core.problemBadRequest;
+pub const problemUnauthorized = core.problemUnauthorized;
+pub const problemForbidden = core.problemForbidden;
+pub const problemConflict = core.problemConflict;
+pub const problemUnprocessableEntity = core.problemUnprocessableEntity;
+pub const problemInternalServerError = core.problemInternalServerError;
+
 pub const ServerConfig = runtime.ServerConfig;
 pub const TlsConfig = runtime.TlsConfig;
 pub const TlsProtocolVersion = runtime.TlsProtocolVersion;
