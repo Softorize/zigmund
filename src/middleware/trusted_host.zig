@@ -1,4 +1,5 @@
 const std = @import("std");
+const App = @import("../core/app.zig").App;
 const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
 
@@ -9,11 +10,19 @@ pub const TrustedHostConfig = struct {
     allow_missing_host: bool = false,
 };
 
-var global_config: TrustedHostConfig = .{};
+const TrustedHostState = struct {
+    config: TrustedHostConfig,
 
-pub fn configure(config: TrustedHostConfig) void {
-    global_config = config;
-}
+    fn init(allocator: std.mem.Allocator, config: TrustedHostConfig) !*TrustedHostState {
+        const state = try allocator.create(TrustedHostState);
+        state.* = .{ .config = config };
+        return state;
+    }
+
+    fn deinit(self: *TrustedHostState, allocator: std.mem.Allocator) void {
+        allocator.destroy(self);
+    }
+};
 
 /// Check whether the given host matches any entry in the allowlist.
 /// Supports exact match and wildcard subdomain match (entries starting
@@ -68,27 +77,32 @@ fn isAllDigits(s: []const u8) bool {
     return true;
 }
 
-/// Request hook: validate the Host header against the allowlist.
-pub fn requestHook(req: *Request, allocator: std.mem.Allocator) !void {
+fn requestHookWithContext(req: *Request, allocator: std.mem.Allocator, context: ?*anyopaque) !void {
     _ = allocator;
+    const state = contextToState(context) orelse return;
 
     const host = req.header("host");
 
     if (host == null) {
-        if (!global_config.allow_missing_host) {
+        if (!state.config.allow_missing_host) {
             try req.setDependencyValue("_trusted_host_rejected", "true");
         }
         return;
     }
 
-    if (!isHostAllowed(global_config, host.?)) {
+    if (!isHostAllowed(state.config, host.?)) {
         try req.setDependencyValue("_trusted_host_rejected", "true");
     }
 }
 
-/// Response hook: reject the request if the host was not trusted.
-pub fn responseHook(req: *Request, response: *Response, allocator: std.mem.Allocator) !void {
+fn responseHookWithContext(
+    req: *Request,
+    response: *Response,
+    allocator: std.mem.Allocator,
+    context: ?*anyopaque,
+) !void {
     _ = allocator;
+    _ = context;
 
     if (req.dependency("_trusted_host_rejected")) |_| {
         response.status = .bad_request;
@@ -97,13 +111,25 @@ pub fn responseHook(req: *Request, response: *Response, allocator: std.mem.Alloc
     }
 }
 
+fn deinitContext(context: ?*anyopaque, allocator: std.mem.Allocator) void {
+    const state = contextToState(context) orelse return;
+    state.deinit(allocator);
+}
+
+fn contextToState(context: ?*anyopaque) ?*TrustedHostState {
+    const ptr = context orelse return null;
+    return @ptrCast(@alignCast(ptr));
+}
+
 /// Create a Middleware struct ready to register with the app.
-pub fn middleware(config: TrustedHostConfig) @import("../core/app.zig").App.Middleware {
-    configure(config);
+pub fn middleware(allocator: std.mem.Allocator, config: TrustedHostConfig) App.Middleware {
+    const state = TrustedHostState.init(allocator, config) catch @panic("failed to initialize trusted_host middleware");
     return .{
         .name = "trusted_host",
-        .request_hook = &requestHook,
-        .response_hook = &responseHook,
+        .context = @ptrCast(state),
+        .request_hook_with_context = &requestHookWithContext,
+        .response_hook_with_context = &responseHookWithContext,
+        .deinit_hook = &deinitContext,
     };
 }
 
