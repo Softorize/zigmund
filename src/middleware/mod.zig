@@ -17,7 +17,10 @@ pub const SessionStore = session.SessionStore;
 pub const InMemoryStore = session.InMemoryStore;
 pub const HealthCheckFn = health.HealthCheckFn;
 pub const HealthCheckEntry = health.HealthCheckEntry;
+pub const https_redirect = @import("https_redirect.zig");
+
 pub const TimeoutConfig = timeout.TimeoutConfig;
+pub const HttpsRedirectConfig = https_redirect.HttpsRedirectConfig;
 pub const ContentNegotiationConfig = content_negotiation.ContentNegotiationConfig;
 pub const ContentType = content_negotiation.ContentType;
 pub const TrustedHostConfig = trusted_host.TrustedHostConfig;

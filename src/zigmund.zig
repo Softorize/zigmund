@@ -105,6 +105,7 @@ pub const SessionOptions = mw.SessionOptions;
 pub const SessionStore = mw.SessionStore;
 pub const InMemoryStore = mw.InMemoryStore;
 pub const TimeoutConfig = mw.TimeoutConfig;
+pub const HttpsRedirectConfig = mw.HttpsRedirectConfig;
 pub const ContentNegotiationConfig = mw.ContentNegotiationConfig;
 pub const ContentType = mw.ContentType;
 pub const TrustedHostConfig = mw.TrustedHostConfig;
@@ -118,6 +119,7 @@ pub const sessionMw = mw.session.middleware;
 pub const sessionMwWithStore = mw.session.middlewareWithStore;
 pub const timeoutMw = mw.timeout.middleware;
 pub const trustedHostMw = mw.trusted_host.middleware;
+pub const httpsRedirectMw = mw.https_redirect.middleware;
 pub const HealthCheckFn = mw.HealthCheckFn;
 pub const HealthCheckEntry = mw.HealthCheckEntry;
 

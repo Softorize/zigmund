@@ -111,6 +111,50 @@ pub const Response = struct {
         };
     }
 
+    /// Create a JSON Lines (NDJSON) response.
+    /// Each item in the slice is serialized as a JSON object followed by a newline.
+    /// Content-Type: application/x-ndjson
+    pub fn jsonLines(allocator: std.mem.Allocator, items: anytype) !Response {
+        var out: std.ArrayList(u8) = .empty;
+        errdefer out.deinit(allocator);
+
+        var writer = out.writer(allocator);
+        for (items) |item| {
+            try writer.print("{f}", .{std.json.fmt(item, .{})});
+            try writer.writeByte('\n');
+        }
+
+        const payload = try out.toOwnedSlice(allocator);
+        return .{
+            .status = .ok,
+            .body = payload,
+            .content_type = "application/x-ndjson",
+            .owned_body = payload,
+        };
+    }
+
+    /// Create a JSON Lines response from pre-formatted lines.
+    /// Each line should be a valid JSON string (newlines are added automatically).
+    /// Content-Type: application/x-ndjson
+    pub fn jsonLinesRaw(allocator: std.mem.Allocator, lines: []const []const u8) !Response {
+        var out: std.ArrayList(u8) = .empty;
+        errdefer out.deinit(allocator);
+
+        var writer = out.writer(allocator);
+        for (lines) |line| {
+            try writer.writeAll(line);
+            try writer.writeByte('\n');
+        }
+
+        const payload = try out.toOwnedSlice(allocator);
+        return .{
+            .status = .ok,
+            .body = payload,
+            .content_type = "application/x-ndjson",
+            .owned_body = payload,
+        };
+    }
+
     pub fn streamChunks(
         allocator: std.mem.Allocator,
         chunks: []const []const u8,
@@ -392,6 +436,52 @@ test "event stream response formats events and headers" {
     try std.testing.expect(std.mem.indexOf(u8, res.body, "event: message\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "retry: 1500\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, res.body, "data: hello\ndata: world\n\n") != null);
+}
+
+test "jsonLines serializes structs as newline-delimited JSON" {
+    const Item = struct { id: u32, name: []const u8 };
+    const items = [_]Item{
+        .{ .id = 1, .name = "alpha" },
+        .{ .id = 2, .name = "beta" },
+    };
+
+    var res = try Response.jsonLines(std.testing.allocator, &items);
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("application/x-ndjson", res.content_type);
+
+    // Verify each line is valid JSON by splitting on newlines
+    var line_iter = std.mem.splitScalar(u8, res.body, '\n');
+    const line1 = line_iter.next().?;
+    const line2 = line_iter.next().?;
+    const trailing = line_iter.next().?;
+
+    // After the last newline there should be nothing left (or empty)
+    try std.testing.expectEqualStrings("", trailing);
+
+    // Parse each line to verify it is valid JSON
+    const parsed1 = try std.json.parseFromSlice(Item, std.testing.allocator, line1, .{});
+    defer parsed1.deinit();
+    try std.testing.expectEqual(@as(u32, 1), parsed1.value.id);
+    try std.testing.expectEqualStrings("alpha", parsed1.value.name);
+
+    const parsed2 = try std.json.parseFromSlice(Item, std.testing.allocator, line2, .{});
+    defer parsed2.deinit();
+    try std.testing.expectEqual(@as(u32, 2), parsed2.value.id);
+    try std.testing.expectEqualStrings("beta", parsed2.value.name);
+}
+
+test "jsonLinesRaw joins pre-formatted lines with newlines" {
+    const lines = [_][]const u8{
+        "{\"status\":\"ok\"}",
+        "{\"status\":\"done\"}",
+    };
+
+    var res = try Response.jsonLinesRaw(std.testing.allocator, &lines);
+    defer res.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("application/x-ndjson", res.content_type);
+    try std.testing.expectEqualStrings("{\"status\":\"ok\"}\n{\"status\":\"done\"}\n", res.body);
 }
 
 test "conditionalNotModified returns 304 with cache validators" {

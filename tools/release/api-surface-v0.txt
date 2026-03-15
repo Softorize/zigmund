@@ -40,6 +40,7 @@ Header
 HeaderOptions
 HealthCheckEntry
 HealthCheckFn
+HttpsRedirectConfig
 InMemoryStore
 IncludeRouterOptions
 JinjaEngine
@@ -122,6 +123,7 @@ csrfMw
 decodeBasicCredentials
 deps
 http
+httpsRedirectMw
 integrations
 jsonableEncode
 loadSettings
