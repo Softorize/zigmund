@@ -104,6 +104,7 @@ TimeoutConfig
 TlsClientAuth
 TlsConfig
 TlsProtocolVersion
+TrustedHostConfig
 UploadFile
 Uuid
 VersionConfig
@@ -153,5 +154,6 @@ status
 template
 testing
 timeoutMw
+trustedHostMw
 validateHs256JwtToken
 versionFromHeader
