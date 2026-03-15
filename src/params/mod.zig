@@ -1,5 +1,6 @@
 const std = @import("std");
 const Request = @import("../http/request.zig").Request;
+const types = @import("../core/types.zig");
 
 pub const QueryOptions = struct {
     alias: ?[]const u8 = null,
@@ -15,6 +16,7 @@ pub const QueryOptions = struct {
     pattern: ?[]const u8 = null,
     enum_values: []const []const u8 = &.{},
     strict: bool = false,
+    openapi_examples: []const types.OpenApiExample = &.{},
 };
 
 pub const PathOptions = struct {
@@ -29,6 +31,7 @@ pub const PathOptions = struct {
     pattern: ?[]const u8 = null,
     enum_values: []const []const u8 = &.{},
     strict: bool = false,
+    openapi_examples: []const types.OpenApiExample = &.{},
 };
 
 pub const HeaderOptions = struct {
@@ -44,6 +47,7 @@ pub const HeaderOptions = struct {
     pattern: ?[]const u8 = null,
     enum_values: []const []const u8 = &.{},
     strict: bool = false,
+    openapi_examples: []const types.OpenApiExample = &.{},
 };
 
 pub const CookieOptions = struct {
@@ -58,6 +62,7 @@ pub const CookieOptions = struct {
     pattern: ?[]const u8 = null,
     enum_values: []const []const u8 = &.{},
     strict: bool = false,
+    openapi_examples: []const types.OpenApiExample = &.{},
 };
 
 pub const BodyOptions = struct {
