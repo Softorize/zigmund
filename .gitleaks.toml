@@ -1,0 +1,6 @@
+[allowlist]
+description = "Allowlist for false positives"
+paths = [
+  '''tools/release/check_sast_baseline\.sh''',
+  '''tests/conformance/websocket_security_test\.zig''',
+]

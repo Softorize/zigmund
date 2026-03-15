@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -31,6 +35,8 @@ jobs:
         run: zig build run -- sbom --out zigmund.sbom.json
       - name: Governance checks
         run: sh tools/release/check_governance.sh
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
       - name: Build release artifacts
         run: sh tools/release/build_release_artifacts.sh
       - name: Upload SBOM artifact

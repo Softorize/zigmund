@@ -72,9 +72,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Trivy
-        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
-        with:
-          version: v0.68.2
-          cache: true
+        env:
+          TRIVY_VERSION: "0.69.3"
+        run: |
+          curl -sSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            -o "$RUNNER_TEMP/trivy.tar.gz"
+          tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP" trivy
+          chmod +x "$RUNNER_TEMP/trivy"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Run Trivy filesystem scan
         run: trivy fs --scanners vuln --vuln-type os,library --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 .
