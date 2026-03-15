@@ -37,8 +37,8 @@ fn lifecycleStatus(_: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.R
 ///   try client.close();   // triggers onShutdown hook
 
 pub fn buildExample(app: *zigmund.App) !void {
-    try app.addStartupHook(onStartup);
-    try app.addShutdownHook(onShutdown);
+    try app.onStartup(onStartup);
+    try app.onShutdown(onShutdown);
 
     try app.get("/advanced/testing-events", lifecycleStatus, .{
         .summary = "Lifecycle event testing with startup and shutdown hooks",
