@@ -1,5 +1,10 @@
 const std = @import("std");
 
+pub const extra_types = @import("extra_types.zig");
+pub const Uuid = extra_types.Uuid;
+pub const DateTime = extra_types.DateTime;
+pub const Duration = extra_types.Duration;
+
 pub fn schemaForType(comptime T: type, allocator: std.mem.Allocator) ![]u8 {
     return switch (@typeInfo(T)) {
         .bool => allocator.dupe(u8, "{\"type\":\"boolean\"}"),
