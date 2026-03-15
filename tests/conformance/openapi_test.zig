@@ -52,3 +52,32 @@ test "openapi document allows disabling jsonSchemaDialect emission" {
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"openapi\":\"3.1.0\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"jsonSchemaDialect\"") == null);
 }
+
+test "openapi document includes app metadata in info object" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "Metadata API",
+        .version = "1.2.3",
+        .summary = "Short summary",
+        .description = "Longer API description",
+        .terms_of_service = "https://example.com/terms",
+        .contact = .{
+            .name = "API Team",
+            .url = "https://example.com/contact",
+            .email = "team@example.com",
+        },
+        .license_info = .{
+            .name = "Apache-2.0",
+            .identifier = "Apache-2.0",
+        },
+    });
+    defer app.deinit();
+
+    try app.get("/hello", helloHandler, .{});
+
+    const doc = try app.openapi();
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"summary\":\"Short summary\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"description\":\"Longer API description\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"termsOfService\":\"https://example.com/terms\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"contact\":{\"name\":\"API Team\",\"url\":\"https://example.com/contact\",\"email\":\"team@example.com\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"license\":{\"name\":\"Apache-2.0\",\"identifier\":\"Apache-2.0\"}") != null);
+}

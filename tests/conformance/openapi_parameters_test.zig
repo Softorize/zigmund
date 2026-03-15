@@ -22,6 +22,19 @@ fn plainHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Re
     return zigmund.Response.text("ok");
 }
 
+fn richParamHandler(
+    next: zigmund.Query(std.Uri, .{ .alias = "next", .description = "Next page URI" }),
+    ip: zigmund.Query(std.net.Ip4Address, .{ .alias = "ip", .description = "Client IPv4" }),
+    peer: zigmund.Query(std.net.Ip6Address, .{ .alias = "peer", .description = "Peer IPv6" }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .has_next = next.value != null,
+        .has_ip = ip.value != null,
+        .has_peer = peer.value != null,
+    });
+}
+
 fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
     var count: usize = 0;
     var idx: usize = 0;
@@ -92,4 +105,19 @@ test "openapi path fallback strips converter suffix from placeholder name" {
 
     const doc = try app.openapi();
     try std.testing.expect(std.mem.indexOf(u8, doc, "\"name\":\"file_path\",\"in\":\"path\",\"required\":true,\"schema\":{\"type\":\"string\"}") != null);
+}
+
+test "openapi emits schema formats for uri and ip parameters" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "openapi-rich-params",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/resolve", richParamHandler, .{});
+
+    const doc = try app.openapi();
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_next\":{\"name\":\"next\",\"in\":\"query\",\"required\":true,\"description\":\"Next page URI\",\"schema\":{\"type\":\"string\",\"format\":\"uri\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_ip\":{\"name\":\"ip\",\"in\":\"query\",\"required\":true,\"description\":\"Client IPv4\",\"schema\":{\"type\":\"string\",\"format\":\"ipv4\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "\"query_peer\":{\"name\":\"peer\",\"in\":\"query\",\"required\":true,\"description\":\"Peer IPv6\",\"schema\":{\"type\":\"string\",\"format\":\"ipv6\"}") != null);
 }

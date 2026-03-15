@@ -27,9 +27,27 @@ pub const RedocUiConfig = struct {
     theme: DocsTheme = .light,
 };
 
+pub const OpenApiContact = struct {
+    name: ?[]const u8 = null,
+    url: ?[]const u8 = null,
+    email: ?[]const u8 = null,
+};
+
+pub const OpenApiLicense = struct {
+    name: []const u8,
+    identifier: ?[]const u8 = null,
+    url: ?[]const u8 = null,
+};
+
 pub const AppConfig = struct {
     title: []const u8,
     version: []const u8,
+    summary: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    terms_of_service: ?[]const u8 = null,
+    contact: ?OpenApiContact = null,
+    license_info: ?OpenApiLicense = null,
+    root_path: ?[]const u8 = null,
     openapi_url: ?[]const u8 = "/openapi.json",
     docs_url: ?[]const u8 = "/docs",
     redoc_url: ?[]const u8 = "/redoc",
@@ -397,6 +415,28 @@ pub const IncludeRouterOptions = struct {
 
 fn deriveOpenApiSchema(comptime T: type) OpenApiSchema {
     const Base = stripOptionalType(T);
+    if (Base == std.Uri) {
+        return .{
+            .schema_type = "string",
+            .schema_format = "uri",
+        };
+    }
+    if (Base == std.net.Ip4Address) {
+        return .{
+            .schema_type = "string",
+            .schema_format = "ipv4",
+        };
+    }
+    if (Base == std.net.Ip6Address) {
+        return .{
+            .schema_type = "string",
+            .schema_format = "ipv6",
+        };
+    }
+    if (Base == std.net.Address) {
+        return .{ .schema_type = "string" };
+    }
+
     return switch (@typeInfo(Base)) {
         .bool => .{ .schema_type = "boolean" },
         .int => |info| .{

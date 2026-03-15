@@ -13,6 +13,7 @@ const observability = @import("observability.zig");
 const auth_response = @import("auth_response.zig");
 const response_shaping = @import("response_shaping.zig");
 const dispatch_helpers = @import("dispatch_helpers.zig");
+const state_store = @import("state_store.zig");
 
 pub const App = struct {
     allocator: std.mem.Allocator,
@@ -20,6 +21,8 @@ pub const App = struct {
     cfg: types.AppConfig,
     router: router_mod.Router,
     dependency_registry: deps.Registry,
+    dependency_overrides: deps.Registry,
+    state: state_store.Store,
     request_id_counter: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
     shutdown_requested: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     active_server_cfg: ?runtime.ServerConfig = null,
@@ -150,6 +153,8 @@ pub const App = struct {
             .cfg = cfg,
             .router = router_mod.Router.init(allocator),
             .dependency_registry = deps.Registry.init(allocator),
+            .dependency_overrides = deps.Registry.init(allocator),
+            .state = state_store.Store.init(allocator),
             .metrics = metrics_registry.Registry.init(allocator),
         };
     }
@@ -158,6 +163,7 @@ pub const App = struct {
         self.include_router_options_arena.deinit();
         self.router.deinit();
         self.dependency_registry.deinit();
+        self.dependency_overrides.deinit();
         self.metrics.deinit();
         for (self.security_schemes.items) |scheme| self.allocator.free(scheme.name);
         self.security_schemes.deinit(self.allocator);
@@ -185,6 +191,7 @@ pub const App = struct {
         }
 
         self.freeGeneratedCaches();
+        self.state.deinit();
     }
 
     pub fn get(self: *App, path: []const u8, handler: anytype, opts: types.RouteOptions) !void {
@@ -243,6 +250,47 @@ pub const App = struct {
         cleanup: anytype,
     ) !void {
         try self.dependency_registry.registerWithCleanup(name, resolver, cleanup);
+    }
+
+    pub fn overrideDependency(self: *App, name: []const u8, resolver: anytype) !void {
+        try self.dependency_overrides.registerOrReplace(name, resolver);
+    }
+
+    pub fn overrideDependencyWithCleanup(
+        self: *App,
+        name: []const u8,
+        resolver: anytype,
+        cleanup: anytype,
+    ) !void {
+        try self.dependency_overrides.registerOrReplaceWithCleanup(name, resolver, cleanup);
+    }
+
+    pub fn clearDependencyOverride(self: *App, name: []const u8) bool {
+        return self.dependency_overrides.remove(name);
+    }
+
+    pub fn clearDependencyOverrides(self: *App) void {
+        self.dependency_overrides.clear();
+    }
+
+    pub fn setStateBorrowed(self: *App, key: []const u8, value: anytype) !void {
+        try self.state.setBorrowed(key, state_store.Store.erasePointer(value));
+    }
+
+    pub fn setStateOwned(self: *App, key: []const u8, value: anytype, cleanup: anytype) !void {
+        try self.state.setOwned(
+            key,
+            state_store.Store.erasePointer(value),
+            state_store.Store.normalizeCleanup(cleanup),
+        );
+    }
+
+    pub fn removeState(self: *App, key: []const u8) bool {
+        return self.state.remove(key);
+    }
+
+    pub fn stateAs(self: *App, comptime Ptr: type, key: []const u8) ?Ptr {
+        return self.state.getAs(Ptr, key);
     }
 
     pub fn addSecurityScheme(self: *App, name: []const u8, scheme: security.OpenApiSecurityScheme) !void {
@@ -414,6 +462,11 @@ pub const App = struct {
         try self.shutdown_hooks.append(self.allocator, .{ .run = normalizeLifecycleHook(handler) });
     }
 
+    pub fn lifespan(self: *App, startup: anytype, shutdown: anytype) !void {
+        try self.onStartup(startup);
+        try self.onShutdown(shutdown);
+    }
+
     pub fn requestShutdown(self: *App) void {
         self.shutdown_requested.store(true, .release);
     }
@@ -474,7 +527,7 @@ pub const App = struct {
             .category = "lifecycle",
             .action = "shutdown_begin",
         });
-        self.runHooks(self.shutdown_hooks.items) catch |err| {
+        self.runHooksReverse(self.shutdown_hooks.items) catch |err| {
             self.emitAudit(.{
                 .category = "lifecycle",
                 .action = "shutdown_failed",
@@ -489,7 +542,7 @@ pub const App = struct {
     }
 
     pub fn runShutdownHooksOnly(self: *App) !void {
-        try self.runHooks(self.shutdown_hooks.items);
+        try self.runHooksReverse(self.shutdown_hooks.items);
     }
 
     pub fn openapi(self: *App) ![]const u8 {
@@ -612,9 +665,14 @@ pub const App = struct {
         defer req.runBackgroundTasks() catch |err| {
             std.log.warn("background task failed: {s}", .{@errorName(err)});
         };
+        self.prepareRequestContext(&req);
         self.seedProxyContext(&req);
 
         if (raw_request.upgradeRequested() == .websocket) {
+            const original_path = req.path;
+            req.path = self.effectiveRoutePath(req.path);
+            defer req.path = original_path;
+
             if (try self.router.findWebSocket(req.path, &req)) |ws_route| {
                 if (self.cfg.request_id_enabled) {
                     try self.ensureRequestId(&req);
@@ -630,7 +688,8 @@ pub const App = struct {
                 );
                 defer if (runtime_ws_deps.owned) self.allocator.free(runtime_ws_deps.items);
 
-                self.dependency_registry.runRouteDependencies(
+                self.dependency_registry.runRouteDependenciesWithOverrides(
+                    &self.dependency_overrides,
                     &req,
                     runtime_ws_deps.items,
                     self.allocator,
@@ -790,6 +849,7 @@ pub const App = struct {
     }
 
     fn dispatchWithPipeline(self: *App, req: *Request) !Response {
+        self.prepareRequestContext(req);
         if (self.cfg.request_id_enabled) {
             try self.ensureRequestId(req);
         }
@@ -822,6 +882,10 @@ pub const App = struct {
     }
 
     fn dispatchCore(self: *App, req: *Request) !Response {
+        const original_path = req.path;
+        req.path = self.effectiveRoutePath(req.path);
+        defer req.path = original_path;
+
         if (self.cfg.openapi_url) |openapi_url| {
             if (std.mem.eql(u8, req.path, openapi_url)) {
                 const doc = try self.openapi();
@@ -872,6 +936,7 @@ pub const App = struct {
                 std.log.warn("failed to set route template dependency: {s}", .{@errorName(err)});
             };
             self.seedRouteValidationMode(req, route.options);
+            self.seedRouteResponseContext(req, route.options);
             defer req.runDependencyCleanups(self.allocator) catch |err| {
                 std.log.err("dependency cleanup failed: {s}", .{@errorName(err)});
             };
@@ -882,7 +947,12 @@ pub const App = struct {
             );
             defer if (runtime_deps.owned) self.allocator.free(runtime_deps.items);
 
-            self.dependency_registry.runRouteDependencies(req, runtime_deps.items, self.allocator) catch |err| {
+            self.dependency_registry.runRouteDependenciesWithOverrides(
+                &self.dependency_overrides,
+                req,
+                runtime_deps.items,
+                self.allocator,
+            ) catch |err| {
                 if (err == error.Unauthorized) {
                     self.emitAuthAudit(req, "http_unauthorized", "dependency");
                     return self.unauthorizedResponseForRoute(req, route.options);
@@ -942,6 +1012,24 @@ pub const App = struct {
         req.setDependencyValueBorrowed("zigmund.validation.strict", if (strict_enabled) "true" else "false") catch |err| {
             std.log.warn("failed to set validation strict mode dependency: {s}", .{@errorName(err)});
         };
+    }
+
+    fn seedRouteResponseContext(self: *const App, req: *Request, route_options: types.StoredRouteOptions) void {
+        _ = self;
+
+        if (route_options.default_response_class) |class_name| {
+            req.setDependencyValueBorrowed("zigmund.route.default_response_class", class_name) catch |err| {
+                std.log.warn("failed to set route response class dependency: {s}", .{@errorName(err)});
+            };
+        }
+
+        if (route_options.status_code) |status_code| {
+            var buf: [8]u8 = undefined;
+            const rendered = std.fmt.bufPrint(&buf, "{d}", .{@intFromEnum(status_code)}) catch return;
+            req.setDependencyValue("zigmund.route.status_code", rendered) catch |err| {
+                std.log.warn("failed to set route status dependency: {s}", .{@errorName(err)});
+            };
+        }
     }
 
     fn seedProxyContext(self: *const App, req: *Request) void {
@@ -1169,6 +1257,28 @@ pub const App = struct {
     fn runHooks(self: *App, hooks: []const LifecycleHook) !void {
         _ = self;
         for (hooks) |hook| try hook.run();
+    }
+
+    fn runHooksReverse(self: *App, hooks: []const LifecycleHook) !void {
+        _ = self;
+        var idx = hooks.len;
+        while (idx > 0) {
+            idx -= 1;
+            try hooks[idx].run();
+        }
+    }
+
+    pub fn prepareRequestContext(self: *App, req: *Request) void {
+        req.attachAppState(&self.state);
+        req.attachDependencyOverrideLookup(@ptrCast(&self.dependency_overrides), dependencyOverrideLookup);
+    }
+
+    pub fn effectiveRoutePath(self: *const App, path: []const u8) []const u8 {
+        const root_path = self.normalizedRootPath() orelse return path;
+        if (!std.mem.startsWith(u8, path, root_path)) return path;
+        if (path.len == root_path.len) return "/";
+        if (path[root_path.len] != '/') return path;
+        return path[root_path.len..];
     }
 
     fn runRequestMiddleware(self: *App, req: *Request) !void {
@@ -1653,6 +1763,16 @@ pub const App = struct {
         response.owned_body = payload;
     }
 
+    fn dependencyOverrideLookup(ctx: ?*anyopaque, key: []const u8) ?Request.DependencyOverride {
+        const registry_ptr = ctx orelse return null;
+        const registry: *const deps.Registry = @ptrCast(@alignCast(registry_ptr));
+        const resolved = registry.lookupResolved(key) orelse return null;
+        return .{
+            .resolver = resolved.resolver,
+            .cleanup = resolved.cleanup,
+        };
+    }
+
     fn unauthorizedResponseForRoute(
         self: *const App,
         req: *const Request,
@@ -1957,7 +2077,8 @@ pub const App = struct {
 
         if (self.docs_cache) |html| return html;
 
-        const openapi_url = self.cfg.openapi_url orelse "/openapi.json";
+        const openapi_url = try self.allocPublicPath(self.cfg.openapi_url orelse "/openapi.json");
+        defer self.allocator.free(openapi_url);
         const html = try docs_ui.renderSwagger(
             self.allocator,
             self.cfg.title,
@@ -1974,7 +2095,8 @@ pub const App = struct {
 
         if (self.redoc_cache) |html| return html;
 
-        const openapi_url = self.cfg.openapi_url orelse "/openapi.json";
+        const openapi_url = try self.allocPublicPath(self.cfg.openapi_url orelse "/openapi.json");
+        defer self.allocator.free(openapi_url);
         const html = try docs_ui.renderRedoc(
             self.allocator,
             self.cfg.title,
@@ -2021,6 +2143,25 @@ pub const App = struct {
             return ptr;
         }
         @compileError("Lifecycle hook must be fn() !void");
+    }
+
+    fn normalizedRootPath(self: *const App) ?[]const u8 {
+        const configured = self.cfg.root_path orelse return null;
+        if (configured.len == 0 or configured[0] != '/') return null;
+
+        var end = configured.len;
+        while (end > 1 and configured[end - 1] == '/') {
+            end -= 1;
+        }
+
+        const normalized = configured[0..end];
+        if (std.mem.eql(u8, normalized, "/")) return null;
+        return normalized;
+    }
+
+    fn allocPublicPath(self: *App, path: []const u8) ![]u8 {
+        const root_path = self.normalizedRootPath() orelse return self.allocator.dupe(u8, path);
+        return dispatch_helpers.joinPaths(self.allocator, root_path, path);
     }
 
     fn maybeRequestMiddleware(mw: anytype) ?RequestMiddlewareFn {

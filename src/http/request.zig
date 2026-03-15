@@ -1,5 +1,6 @@
 const std = @import("std");
 const BackgroundTasks = @import("../core/background.zig").BackgroundTasks;
+const state_store = @import("../core/state_store.zig");
 
 pub const Request = struct {
     pub const ValidationLocation = enum {
@@ -54,6 +55,13 @@ pub const Request = struct {
         run: DependencyCleanupFn,
     };
 
+    pub const DependencyOverride = struct {
+        resolver: *const fn (*Request, std.mem.Allocator) anyerror!?[]const u8,
+        cleanup: ?DependencyCleanupFn = null,
+    };
+
+    pub const DependencyOverrideLookupFn = *const fn (?*anyopaque, []const u8) ?DependencyOverride;
+
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
     raw: ?*std.http.Server.Request = null,
@@ -71,6 +79,10 @@ pub const Request = struct {
     path_params: std.StringHashMapUnmanaged([]const u8) = .empty,
     query_params: std.StringHashMapUnmanaged([]const u8) = .empty,
     synthetic_headers: std.ArrayListUnmanaged(SyntheticHeader) = .empty,
+    state: state_store.Store,
+    app_state: ?*state_store.Store = null,
+    dependency_override_ctx: ?*anyopaque = null,
+    dependency_override_lookup: ?DependencyOverrideLookupFn = null,
     dependency_values: std.StringHashMapUnmanaged([]const u8) = .empty,
     dependency_owned_values: std.ArrayListUnmanaged([]u8) = .empty,
     dependency_cleanups: std.ArrayListUnmanaged(DependencyCleanup) = .empty,
@@ -110,6 +122,7 @@ pub const Request = struct {
             .path = split.path,
             .query = split.query,
             .body = "",
+            .state = state_store.Store.init(allocator),
             .background_tasks = BackgroundTasks.init(allocator),
         };
         errdefer req.deinit();
@@ -146,6 +159,7 @@ pub const Request = struct {
             .path = split.path,
             .query = split.query,
             .body = body,
+            .state = state_store.Store.init(allocator),
             .background_tasks = BackgroundTasks.init(allocator),
         };
         errdefer req.deinit();
@@ -156,6 +170,7 @@ pub const Request = struct {
     }
 
     pub fn deinit(self: *Request) void {
+        self.state.deinit();
         self.arena.deinit();
 
         if (self.owned_body) |buf| {
@@ -190,6 +205,49 @@ pub const Request = struct {
 
         self.path_params.deinit(self.allocator);
         self.query_params.deinit(self.allocator);
+    }
+
+    pub fn setStateBorrowed(self: *Request, key: []const u8, value: anytype) !void {
+        try self.state.setBorrowed(key, state_store.Store.erasePointer(value));
+    }
+
+    pub fn setStateOwned(self: *Request, key: []const u8, value: anytype, cleanup: anytype) !void {
+        try self.state.setOwned(
+            key,
+            state_store.Store.erasePointer(value),
+            state_store.Store.normalizeCleanup(cleanup),
+        );
+    }
+
+    pub fn removeState(self: *Request, key: []const u8) bool {
+        return self.state.remove(key);
+    }
+
+    pub fn stateAs(self: *Request, comptime Ptr: type, key: []const u8) ?Ptr {
+        return self.state.getAs(Ptr, key);
+    }
+
+    pub fn attachAppState(self: *Request, app_state: *state_store.Store) void {
+        self.app_state = app_state;
+    }
+
+    pub fn appStateAs(self: *Request, comptime Ptr: type, key: []const u8) ?Ptr {
+        const store = self.app_state orelse return null;
+        return store.getAs(Ptr, key);
+    }
+
+    pub fn attachDependencyOverrideLookup(
+        self: *Request,
+        ctx: ?*anyopaque,
+        lookup: ?DependencyOverrideLookupFn,
+    ) void {
+        self.dependency_override_ctx = ctx;
+        self.dependency_override_lookup = lookup;
+    }
+
+    pub fn dependencyOverride(self: *const Request, key: []const u8) ?DependencyOverride {
+        const lookup = self.dependency_override_lookup orelse return null;
+        return lookup(self.dependency_override_ctx, key);
     }
 
     pub fn header(self: *const Request, name: []const u8) ?[]const u8 {
@@ -623,12 +681,14 @@ pub const Request = struct {
         while (pairs.next()) |pair| {
             if (pair.len == 0) continue;
             if (std.mem.indexOfScalar(u8, pair, '=')) |idx| {
-                const key = pair[0..idx];
-                const value = pair[idx + 1 ..];
+                const key = try self.decodeFormComponentLeaky(pair[0..idx]);
+                const value = try self.decodeFormComponentLeaky(pair[idx + 1 ..]);
                 if (key.len == 0) continue;
                 try self.query_params.put(self.allocator, key, value);
             } else {
-                try self.query_params.put(self.allocator, pair, "");
+                const decoded_key = try self.decodeFormComponentLeaky(pair);
+                if (decoded_key.len == 0) continue;
+                try self.query_params.put(self.allocator, decoded_key, "");
             }
         }
     }
@@ -821,6 +881,11 @@ pub const Request = struct {
     }
 
     fn parseScalar(comptime T: type, input: []const u8) !T {
+        if (T == std.Uri) return std.Uri.parse(input);
+        if (T == std.net.Address) return std.net.Address.parseIp(input, 0);
+        if (T == std.net.Ip4Address) return std.net.Ip4Address.parse(input, 0);
+        if (T == std.net.Ip6Address) return std.net.Ip6Address.parse(input, 0);
+
         switch (@typeInfo(T)) {
             .optional => |opt| return try parseScalar(opt.child, input),
             .int => return std.fmt.parseInt(T, input, 10),

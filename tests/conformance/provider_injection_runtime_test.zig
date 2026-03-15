@@ -8,6 +8,10 @@ var cleanup_provider_calls: usize = 0;
 var cleanup_calls: usize = 0;
 var cleanup_key_non_empty: bool = false;
 var cleanup_value_matches: bool = false;
+var runtime_override_original_calls: usize = 0;
+var runtime_override_override_calls: usize = 0;
+var marker_override_original_calls: usize = 0;
+var marker_override_override_calls: usize = 0;
 
 fn tokenProvider(req: *zigmund.Request) ?[]const u8 {
     return req.queryParam("token");
@@ -164,6 +168,49 @@ fn optionalScopedSecurityHandler(
 ) !zigmund.Response {
     return zigmund.Response.json(allocator, .{
         .auth = auth.value orelse "none",
+    });
+}
+
+fn runtimeOverrideOriginal(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = req;
+    _ = allocator;
+    runtime_override_original_calls += 1;
+    return "runtime-original";
+}
+
+fn runtimeOverrideReplacement(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = req;
+    _ = allocator;
+    runtime_override_override_calls += 1;
+    return "runtime-override";
+}
+
+fn runtimeOverrideHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .value = req.dependency("runtime_override") orelse "",
+    });
+}
+
+fn markerOverrideOriginal(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = req;
+    _ = allocator;
+    marker_override_original_calls += 1;
+    return "marker-original";
+}
+
+fn markerOverrideReplacement(req: *zigmund.Request, allocator: std.mem.Allocator) !?[]const u8 {
+    _ = req;
+    _ = allocator;
+    marker_override_override_calls += 1;
+    return "marker-override";
+}
+
+fn markerOverrideHandler(
+    dep: zigmund.Depends(markerOverrideOriginal, .{ .name = "marker_override" }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    return zigmund.Response.json(allocator, .{
+        .value = dep.value orelse "",
     });
 }
 
@@ -370,4 +417,69 @@ test "optional security marker still enforces auth when scopes are required" {
     defer ok.deinit(std.testing.allocator);
     try std.testing.expectEqual(.ok, ok.status);
     try std.testing.expect(std.mem.indexOf(u8, ok.body, "\"auth\":\"alice\"") != null);
+}
+
+test "app overrideDependency replaces named route dependency execution" {
+    runtime_override_original_calls = 0;
+    runtime_override_override_calls = 0;
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "runtime-override",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.addDependency("runtime_override", runtimeOverrideOriginal);
+    try app.get("/runtime-override", runtimeOverrideHandler, .{
+        .dependencies = &.{.{ .name = "runtime_override" }},
+    });
+    try app.overrideDependency("runtime_override", runtimeOverrideReplacement);
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var overridden = try client.get("/runtime-override");
+    defer overridden.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, overridden.status);
+    try std.testing.expect(std.mem.indexOf(u8, overridden.body, "\"value\":\"runtime-override\"") != null);
+    try std.testing.expectEqual(@as(usize, 0), runtime_override_original_calls);
+    try std.testing.expectEqual(@as(usize, 1), runtime_override_override_calls);
+
+    try std.testing.expect(app.clearDependencyOverride("runtime_override"));
+
+    var restored = try client.get("/runtime-override");
+    defer restored.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, restored.status);
+    try std.testing.expect(std.mem.indexOf(u8, restored.body, "\"value\":\"runtime-original\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), runtime_override_original_calls);
+}
+
+test "app overrideDependency replaces named depends provider execution" {
+    marker_override_original_calls = 0;
+    marker_override_override_calls = 0;
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "marker-override",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/marker-override", markerOverrideHandler, .{});
+    try app.overrideDependency("marker_override", markerOverrideReplacement);
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+
+    var overridden = try client.get("/marker-override");
+    defer overridden.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, overridden.status);
+    try std.testing.expect(std.mem.indexOf(u8, overridden.body, "\"value\":\"marker-override\"") != null);
+    try std.testing.expectEqual(@as(usize, 0), marker_override_original_calls);
+    try std.testing.expectEqual(@as(usize, 1), marker_override_override_calls);
+
+    try std.testing.expect(app.clearDependencyOverride("marker_override"));
+
+    var restored = try client.get("/marker-override");
+    defer restored.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, restored.status);
+    try std.testing.expect(std.mem.indexOf(u8, restored.body, "\"value\":\"marker-original\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), marker_override_original_calls);
 }

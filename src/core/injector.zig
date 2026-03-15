@@ -1,5 +1,6 @@
 const std = @import("std");
 const types = @import("types.zig");
+const response_runtime = @import("response_runtime.zig");
 const params = @import("../params/mod.zig");
 const security = @import("../security/mod.zig");
 const BackgroundTasks = @import("background.zig").BackgroundTasks;
@@ -149,7 +150,7 @@ fn invokeInjected(comptime handler: anytype, req: *Request, allocator: std.mem.A
     }
 
     const result = @call(.auto, handler, args);
-    return adaptReturn(HandlerType, result);
+    return adaptReturn(HandlerType, result, req, allocator);
 }
 
 fn invokeWebSocketInjected(
@@ -760,6 +761,7 @@ fn resolveProviderMarker(
     const cache_key = markerRuntimeCacheKey(Marker);
     const cleanup_fn = markerDependsCleanup(Marker);
     const optional_security = markerOptionalSecurity(Marker);
+    const override_entry = if (cache_key) |key| req.dependencyOverride(key) else null;
 
     if (use_cache and cache_key != null) {
         if (try loadCachedMarkerValue(Marker, req, context, cache_key.?)) |cached| {
@@ -782,7 +784,10 @@ fn resolveProviderMarker(
         try security.setRequiredScopes(req, Marker.required_scopes);
     }
 
-    const provider_result = try callProvider(Marker.Provider, req, allocator, context);
+    const provider_result = if (override_entry) |entry|
+        try callOverrideProvider(Marker.ProviderValueType, entry, req, allocator)
+    else
+        try callProvider(Marker.Provider, req, allocator, context);
 
     var out: Marker = .{};
     const value_opt: ?Marker.ProviderValueType = provider_result;
@@ -807,7 +812,9 @@ fn resolveProviderMarker(
 
     out.value = value_opt;
 
-    if (cleanup_fn) |cleanup| {
+    const effective_cleanup = if (override_entry) |entry| entry.cleanup orelse cleanup_fn else cleanup_fn;
+
+    if (effective_cleanup) |cleanup| {
         if (@hasDecl(Marker, "options") and Marker.options.cache_scope == .request) {
             if (value_opt) |value| {
                 if (cacheableProviderValue(Marker.ProviderValueType, value)) |cleanup_value| {
@@ -834,6 +841,16 @@ fn resolveProviderMarker(
     }
 
     return out;
+}
+
+fn callOverrideProvider(
+    comptime T: type,
+    override: Request.DependencyOverride,
+    req: *Request,
+    allocator: std.mem.Allocator,
+) anyerror!?T {
+    const raw = try override.resolver(req, allocator) orelse return null;
+    return parseCachedProviderValue(T, raw) orelse error.DependencyOverrideTypeMismatch;
 }
 
 fn callProvider(
@@ -1338,6 +1355,28 @@ fn schemaForFileType(comptime T: type) SchemaDescriptor {
 
 fn schemaForType(comptime T: type) SchemaDescriptor {
     const Base = stripOptionalType(T);
+    if (Base == std.Uri) {
+        return .{
+            .schema_type = "string",
+            .schema_format = "uri",
+        };
+    }
+    if (Base == std.net.Ip4Address) {
+        return .{
+            .schema_type = "string",
+            .schema_format = "ipv4",
+        };
+    }
+    if (Base == std.net.Ip6Address) {
+        return .{
+            .schema_type = "string",
+            .schema_format = "ipv6",
+        };
+    }
+    if (Base == std.net.Address) {
+        return .{ .schema_type = "string" };
+    }
+
     return switch (@typeInfo(Base)) {
         .bool => .{ .schema_type = "boolean" },
         .int => |info| .{
@@ -1376,21 +1415,26 @@ fn schemaForType(comptime T: type) SchemaDescriptor {
     };
 }
 
-fn adaptReturn(comptime HandlerType: type, result: anytype) anyerror!Response {
+fn adaptReturn(
+    comptime HandlerType: type,
+    result: anytype,
+    req: *Request,
+    allocator: std.mem.Allocator,
+) anyerror!Response {
     const ReturnType = @typeInfo(HandlerType).@"fn".return_type orelse @compileError("Handler must return a value");
 
     if (@typeInfo(ReturnType) == .error_union) {
         const payload = @typeInfo(ReturnType).error_union.payload;
-        if (payload != Response) {
-            @compileError("Handler error union payload must be zigmund.Response, got " ++ @typeName(payload));
+        if (payload == Response) {
+            return try result;
         }
-        return try result;
+        return response_runtime.serializeValue(req, allocator, try result);
     }
 
-    if (ReturnType != Response) {
-        @compileError("Handler return type must be zigmund.Response or !zigmund.Response");
+    if (ReturnType == Response) {
+        return result;
     }
-    return result;
+    return response_runtime.serializeValue(req, allocator, result);
 }
 
 fn adaptVoidReturn(comptime HandlerType: type, result: anytype) anyerror!void {

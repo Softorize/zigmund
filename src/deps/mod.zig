@@ -35,6 +35,11 @@ pub const Registry = struct {
         cleanup: ?CleanupFn = null,
     };
 
+    pub const ResolvedEntry = struct {
+        resolver: ResolverFn,
+        cleanup: ?CleanupFn = null,
+    };
+
     pub fn init(allocator: std.mem.Allocator) Registry {
         return .{ .allocator = allocator };
     }
@@ -68,9 +73,63 @@ pub const Registry = struct {
         return self.registerInternal(name, resolver, normalizeCleanup(cleanup));
     }
 
+    pub fn registerOrReplace(self: *Registry, name: []const u8, resolver: anytype) !void {
+        return self.registerOrReplaceInternal(name, resolver, null);
+    }
+
+    pub fn registerOrReplaceWithCleanup(
+        self: *Registry,
+        name: []const u8,
+        resolver: anytype,
+        cleanup: anytype,
+    ) !void {
+        return self.registerOrReplaceInternal(name, resolver, normalizeCleanup(cleanup));
+    }
+
     pub fn lookup(self: *const Registry, name: []const u8) ?ResolverFn {
         const entry = self.lookupEntry(name) orelse return null;
         return entry.resolver;
+    }
+
+    pub fn lookupResolved(self: *const Registry, name: []const u8) ?ResolvedEntry {
+        const entry = self.lookupEntry(name) orelse return null;
+        return .{
+            .resolver = entry.resolver,
+            .cleanup = entry.cleanup,
+        };
+    }
+
+    pub fn remove(self: *Registry, name: []const u8) bool {
+        for (self.entries.items, 0..) |entry, idx| {
+            if (!std.mem.eql(u8, entry.name, name)) continue;
+
+            self.allocator.free(entry.name);
+            _ = self.entries.swapRemove(idx);
+
+            self.app_cache_lock.lock();
+            if (self.app_cache.fetchRemove(name)) |removed| {
+                self.allocator.free(removed.value);
+            }
+            self.app_cache_lock.unlock();
+            return true;
+        }
+        return false;
+    }
+
+    pub fn clear(self: *Registry) void {
+        for (self.entries.items) |entry| {
+            self.allocator.free(entry.name);
+        }
+        self.entries.clearRetainingCapacity();
+
+        self.app_cache_lock.lock();
+        defer self.app_cache_lock.unlock();
+
+        var cache_it = self.app_cache.iterator();
+        while (cache_it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.app_cache.clearRetainingCapacity();
     }
 
     fn lookupEntry(self: *const Registry, name: []const u8) ?*const Entry {
@@ -82,6 +141,16 @@ pub const Registry = struct {
 
     pub fn runRouteDependencies(
         self: *Registry,
+        req: *Request,
+        specs: []const types.DependencySpec,
+        allocator: std.mem.Allocator,
+    ) RunError!void {
+        return self.runRouteDependenciesWithOverrides(null, req, specs, allocator);
+    }
+
+    pub fn runRouteDependenciesWithOverrides(
+        self: *Registry,
+        overrides: ?*Registry,
         req: *Request,
         specs: []const types.DependencySpec,
         allocator: std.mem.Allocator,
@@ -108,6 +177,7 @@ pub const Registry = struct {
 
         for (ordered) |idx| {
             const spec = graph.nodes.items[idx];
+            const resolved_registry = registryForName(self, overrides, spec.name);
 
             if (spec.use_cache) {
                 switch (spec.cache_scope) {
@@ -115,7 +185,7 @@ pub const Registry = struct {
                         if (req.dependency(spec.name) != null) continue;
                     },
                     .app => {
-                        const seeded_from_app_cache = self.seedFromAppCache(req, spec.name) catch {
+                        const seeded_from_app_cache = resolved_registry.seedFromAppCache(req, spec.name) catch {
                             return error.DependencyExecutionFailed;
                         };
                         if (seeded_from_app_cache) continue;
@@ -123,7 +193,7 @@ pub const Registry = struct {
                 }
             }
 
-            const has_prereqs = self.ensurePrerequisites(req, spec.depends_on) catch {
+            const has_prereqs = self.ensurePrerequisites(overrides, req, spec.depends_on) catch {
                 return error.DependencyExecutionFailed;
             };
             if (!has_prereqs) {
@@ -135,7 +205,7 @@ pub const Registry = struct {
                 security.setRequiredScopes(req, spec.scopes) catch return error.DependencyExecutionFailed;
             }
 
-            const entry = self.lookupEntry(spec.name) orelse {
+            const entry = resolved_registry.lookupEntry(spec.name) orelse {
                 if (spec.required) return error.MissingDependency;
                 continue;
             };
@@ -157,7 +227,7 @@ pub const Registry = struct {
                 }
 
                 if (spec.use_cache and spec.cache_scope == .app) {
-                    self.setAppCacheValue(spec.name, value) catch return error.DependencyExecutionFailed;
+                    resolved_registry.setAppCacheValue(spec.name, value) catch return error.DependencyExecutionFailed;
                 }
             }
 
@@ -169,12 +239,13 @@ pub const Registry = struct {
 
     fn ensurePrerequisites(
         self: *Registry,
+        overrides: ?*Registry,
         req: *Request,
         depends_on: []const []const u8,
     ) !bool {
         for (depends_on) |name| {
             if (req.dependency(name) != null) continue;
-            if (try self.seedFromAppCache(req, name)) continue;
+            if (try registryForName(self, overrides, name).seedFromAppCache(req, name)) continue;
             return false;
         }
         return true;
@@ -226,6 +297,31 @@ pub const Registry = struct {
         });
     }
 
+    fn registerOrReplaceInternal(
+        self: *Registry,
+        name: []const u8,
+        resolver: anytype,
+        cleanup: ?CleanupFn,
+    ) !void {
+        const resolver_fn = normalizeResolver(resolver);
+
+        for (self.entries.items) |*entry| {
+            if (!std.mem.eql(u8, entry.name, name)) continue;
+            entry.resolver = resolver_fn;
+            entry.cleanup = cleanup;
+            return;
+        }
+
+        const owned_name = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_name);
+
+        try self.entries.append(self.allocator, .{
+            .name = owned_name,
+            .resolver = resolver_fn,
+            .cleanup = cleanup,
+        });
+    }
+
     fn normalizeResolver(resolver: anytype) ResolverFn {
         const T = @TypeOf(resolver);
         if (T == ResolverFn) return resolver;
@@ -246,6 +342,13 @@ pub const Registry = struct {
         @compileError(
             "dependency cleanup must be fn(*Request, []const u8, []const u8, std.mem.Allocator) !void",
         );
+    }
+
+    fn registryForName(self: *Registry, overrides: ?*Registry, name: []const u8) *Registry {
+        if (overrides) |override_registry| {
+            if (override_registry.lookupEntry(name) != null) return override_registry;
+        }
+        return self;
     }
 };
 

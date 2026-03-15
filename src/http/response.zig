@@ -32,6 +32,25 @@ pub const Response = struct {
         retry_ms: ?u32 = null,
     };
 
+    pub const RedirectPayload = struct {
+        location: []const u8,
+        status_code: std.http.Status = .temporary_redirect,
+    };
+
+    pub const FilePayload = struct {
+        path: []const u8,
+        content_type: ?[]const u8 = null,
+    };
+
+    pub const StreamPayload = struct {
+        chunks: []const []const u8,
+        content_type: []const u8 = "application/octet-stream",
+    };
+
+    pub const EventStreamPayload = struct {
+        events: []const ServerSentEvent,
+    };
+
     status: std.http.Status = .ok,
     body: []const u8 = "",
     content_type: []const u8 = "text/plain; charset=utf-8",
@@ -75,11 +94,19 @@ pub const Response = struct {
     }
 
     pub fn fileFromPath(allocator: std.mem.Allocator, path: []const u8) !Response {
+        return fileFromPathWithContentType(allocator, path, null);
+    }
+
+    pub fn fileFromPathWithContentType(
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        content_type: ?[]const u8,
+    ) !Response {
         const payload = try std.fs.cwd().readFileAlloc(allocator, path, 64 * 1024 * 1024);
         return .{
             .status = .ok,
             .body = payload,
-            .content_type = guessContentType(path),
+            .content_type = content_type orelse guessContentType(path),
             .owned_body = payload,
         };
     }
@@ -246,6 +273,19 @@ pub const Response = struct {
 
     pub fn hasHeader(self: *const Response, name: []const u8) bool {
         return self.header(name) != null;
+    }
+
+    pub fn contentTypeForClassName(class_name: ?[]const u8) []const u8 {
+        const name = class_name orelse return "application/json";
+
+        if (std.ascii.eqlIgnoreCase(name, "PlainTextResponse")) return "text/plain; charset=utf-8";
+        if (std.ascii.eqlIgnoreCase(name, "HTMLResponse")) return "text/html; charset=utf-8";
+        if (std.ascii.eqlIgnoreCase(name, "FileResponse")) return "application/octet-stream";
+        if (std.ascii.eqlIgnoreCase(name, "StreamingResponse")) return "application/octet-stream";
+        if (std.ascii.eqlIgnoreCase(name, "EventSourceResponse")) return "text/event-stream; charset=utf-8";
+        if (std.ascii.eqlIgnoreCase(name, "RedirectResponse")) return "text/plain; charset=utf-8";
+
+        return "application/json";
     }
 
     pub fn deinit(self: *Response, allocator: std.mem.Allocator) void {

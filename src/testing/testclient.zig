@@ -193,6 +193,8 @@ pub const TestClient = struct {
         defer effective.deinit(self.allocator);
 
         var req = try Request.initSyntheticWithHeaders(self.allocator, .GET, target, "", effective.headers);
+        self.app.prepareRequestContext(&req);
+        req.path = self.app.effectiveRoutePath(req.path);
         var req_moved_to_state = false;
         defer if (!req_moved_to_state) req.deinit();
         defer if (!req_moved_to_state) req.runDependencyCleanups(self.allocator) catch |err| {
@@ -207,7 +209,12 @@ pub const TestClient = struct {
         );
         defer if (runtime_deps.owned) self.allocator.free(runtime_deps.items);
 
-        try self.app.dependency_registry.runRouteDependencies(&req, runtime_deps.items, self.allocator);
+        try self.app.dependency_registry.runRouteDependenciesWithOverrides(
+            &self.app.dependency_overrides,
+            &req,
+            runtime_deps.items,
+            self.allocator,
+        );
 
         if (!isWebSocketOriginAllowed(req.header("origin"), ws_route.options.allowed_origins)) {
             return error.WebSocketOriginForbidden;

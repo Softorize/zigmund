@@ -2,6 +2,7 @@ const std = @import("std");
 const types = @import("../core/types.zig");
 const router_mod = @import("../core/router.zig");
 const security = @import("../security/mod.zig");
+const Response = @import("../http/response.zig").Response;
 
 const ComponentSchema = struct {
     name: []const u8,
@@ -201,6 +202,61 @@ pub fn generate(
     try writer.writeAll(",");
     try writeFieldName(&writer, "version");
     try writeJsonString(&writer, cfg.version);
+    if (cfg.summary) |summary| {
+        try writer.writeAll(",");
+        try writeFieldName(&writer, "summary");
+        try writeJsonString(&writer, summary);
+    }
+    if (cfg.description) |description| {
+        try writer.writeAll(",");
+        try writeFieldName(&writer, "description");
+        try writeJsonString(&writer, description);
+    }
+    if (cfg.terms_of_service) |terms| {
+        try writer.writeAll(",");
+        try writeFieldName(&writer, "termsOfService");
+        try writeJsonString(&writer, terms);
+    }
+    if (cfg.contact) |contact| {
+        try writer.writeAll(",");
+        try writeFieldName(&writer, "contact");
+        try writer.writeAll("{");
+        var wrote_contact = false;
+        if (contact.name) |name| {
+            try writeFieldName(&writer, "name");
+            try writeJsonString(&writer, name);
+            wrote_contact = true;
+        }
+        if (contact.url) |url| {
+            if (wrote_contact) try writer.writeAll(",");
+            try writeFieldName(&writer, "url");
+            try writeJsonString(&writer, url);
+            wrote_contact = true;
+        }
+        if (contact.email) |email| {
+            if (wrote_contact) try writer.writeAll(",");
+            try writeFieldName(&writer, "email");
+            try writeJsonString(&writer, email);
+        }
+        try writer.writeAll("}");
+    }
+    if (cfg.license_info) |license_info| {
+        try writer.writeAll(",");
+        try writeFieldName(&writer, "license");
+        try writer.writeAll("{");
+        try writeFieldName(&writer, "name");
+        try writeJsonString(&writer, license_info.name);
+        if (license_info.identifier) |identifier| {
+            try writer.writeAll(",");
+            try writeFieldName(&writer, "identifier");
+            try writeJsonString(&writer, identifier);
+        } else if (license_info.url) |url| {
+            try writer.writeAll(",");
+            try writeFieldName(&writer, "url");
+            try writeJsonString(&writer, url);
+        }
+        try writer.writeAll("}");
+    }
     try writer.writeAll("}");
 
     if (cfg.servers.len > 0) {
@@ -2095,15 +2151,7 @@ fn renderResponseEntryValueJson(
 }
 
 fn defaultResponseContentType(options: types.StoredRouteOptions) []const u8 {
-    const class_name = options.default_response_class orelse return "application/json";
-
-    if (std.ascii.eqlIgnoreCase(class_name, "PlainTextResponse")) return "text/plain; charset=utf-8";
-    if (std.ascii.eqlIgnoreCase(class_name, "HTMLResponse")) return "text/html; charset=utf-8";
-    if (std.ascii.eqlIgnoreCase(class_name, "FileResponse")) return "application/octet-stream";
-    if (std.ascii.eqlIgnoreCase(class_name, "StreamingResponse")) return "application/octet-stream";
-    if (std.ascii.eqlIgnoreCase(class_name, "EventSourceResponse")) return "text/event-stream; charset=utf-8";
-
-    return "application/json";
+    return Response.contentTypeForClassName(options.default_response_class);
 }
 
 fn responseExamplesForStatusAndContentType(

@@ -3,6 +3,8 @@ const zigmund = @import("zigmund");
 
 var startup_calls: usize = 0;
 var shutdown_calls: usize = 0;
+var lifecycle_order: [8]u8 = undefined;
+var lifecycle_order_len: usize = 0;
 
 fn startupHook() !void {
     startup_calls += 1;
@@ -10,6 +12,31 @@ fn startupHook() !void {
 
 fn shutdownHook() !void {
     shutdown_calls += 1;
+}
+
+fn resetLifecycleOrder() void {
+    lifecycle_order_len = 0;
+}
+
+fn pushLifecycle(ch: u8) void {
+    lifecycle_order[lifecycle_order_len] = ch;
+    lifecycle_order_len += 1;
+}
+
+fn startupA() !void {
+    pushLifecycle('A');
+}
+
+fn shutdownA() !void {
+    pushLifecycle('a');
+}
+
+fn startupB() !void {
+    pushLifecycle('B');
+}
+
+fn shutdownB() !void {
+    pushLifecycle('b');
 }
 
 fn okHandler(req: *zigmund.Request, allocator: std.mem.Allocator) !zigmund.Response {
@@ -85,4 +112,29 @@ test "test client deinit closes lifespan automatically after requests" {
 
     try std.testing.expectEqual(@as(usize, 1), startup_calls);
     try std.testing.expectEqual(@as(usize, 1), shutdown_calls);
+}
+
+test "lifespan registers paired hooks and shutdown runs in reverse order" {
+    resetLifecycleOrder();
+
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "testclient-lifespan-paired",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.lifespan(startupA, shutdownA);
+    try app.lifespan(startupB, shutdownB);
+    try app.get("/ok", okHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
+
+    var res = try client.get("/ok");
+    defer res.deinit(std.testing.allocator);
+    try std.testing.expectEqual(.ok, res.status);
+
+    try client.close();
+
+    try std.testing.expectEqualSlices(u8, "ABba", lifecycle_order[0..lifecycle_order_len]);
 }

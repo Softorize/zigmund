@@ -58,3 +58,42 @@ test "typed handler argument injection" {
     try std.testing.expectEqual(.unprocessable_entity, bad_path.status);
     try std.testing.expect(std.mem.indexOf(u8, bad_path.body, "\"loc\":[\"path\",\"item_id\"]") != null);
 }
+
+fn richScalarHandler(
+    next: zigmund.Query(std.Uri, .{ .alias = "next" }),
+    ip: zigmund.Query(std.net.Ip4Address, .{ .alias = "ip" }),
+    allocator: std.mem.Allocator,
+) !zigmund.Response {
+    var host_buf: [64]u8 = undefined;
+    var ip_buf: [64]u8 = undefined;
+    return zigmund.Response.json(allocator, .{
+        .host = try next.value.?.getHost(&host_buf),
+        .ip = try std.fmt.bufPrint(&ip_buf, "{f}", .{ip.value.?}),
+    });
+}
+
+test "typed handler injection supports uri and ip query parameters" {
+    var app = try zigmund.App.init(std.testing.allocator, .{
+        .title = "inject-rich-scalars",
+        .version = "0.0.1",
+    });
+    defer app.deinit();
+
+    try app.get("/resolve", richScalarHandler, .{});
+
+    var client = zigmund.TestClient.init(std.testing.allocator, &app);
+    defer client.deinit();
+
+    var ok = try client.get("/resolve?next=https%3A%2F%2Fexample.com%2Fitems&ip=127.0.0.1");
+    defer ok.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.ok, ok.status);
+    try std.testing.expect(std.mem.indexOf(u8, ok.body, "\"host\":\"example.com\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ok.body, "\"ip\":\"127.0.0.1:0\"") != null);
+
+    var bad = try client.get("/resolve?next=http%3A%2F%2F%5B%3A%3A1&ip=127.0.0.1");
+    defer bad.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(.unprocessable_entity, bad.status);
+    try std.testing.expect(std.mem.indexOf(u8, bad.body, "\"loc\":[\"query\",\"next\"]") != null);
+}
